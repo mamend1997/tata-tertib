@@ -98,19 +98,20 @@ otomatis ikut ke folder tersebut supaya data produksi tidak tersentuh.
 
 ### AI Tutorial edupoin
 
-Widget bantuan sekolah memakai endpoint AI yang kompatibel dengan OpenAI. Atur variabel berikut pada
-Railway Variables; API key hanya dibaca server dan tidak pernah dikirim ke browser:
+Widget bantuan sekolah memakai endpoint AI yang kompatibel dengan OpenAI. API key dapat disimpan dari
+**Super Admin → Integrasi → AI Tutorial edupoin** (berlaku global pada database platform), atau diatur
+sebagai Railway Variable. Nilai environment `EDUPOIN_AI_API_KEY` memiliki prioritas atas nilai di panel:
 
 | Variabel | Nilai |
 |---|---|
-| `EDUPOIN_AI_API_KEY` | API key penyedia AI |
+| `EDUPOIN_AI_API_KEY` | Opsional; API key penyedia AI |
 | `EDUPOIN_AI_BASE_URL` | Opsional; default `https://api.openai.com/v1` |
 | `EDUPOIN_AI_MODEL` | Opsional; default `gpt-4o-mini` |
 
 Endpoint publik harus menggunakan HTTPS; HTTP hanya diizinkan untuk `localhost` saat pengembangan.
 Chat mengirim pertanyaan dan dokumentasi FAQ yang relevan saja, bukan database tenant atau data siswa.
-Target tombol yang dapat disorot dibatasi ke daftar dokumentasi dan izin role pengguna. Tanpa API key,
-widget tetap memberi tahu bahwa layanan belum dikonfigurasi.
+API key tidak pernah ditampilkan kembali pada halaman pengaturan. Target tombol yang dapat disorot dibatasi
+ke daftar dokumentasi dan izin role pengguna. Tanpa API key, widget memberi tahu bahwa layanan belum dikonfigurasi.
 
 ### Deploy di Railway
 

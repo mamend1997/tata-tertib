@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity, Bell, Building2, Database, Download, FileText, HelpCircle, Layers, LayoutDashboard, LifeBuoy,
+  Activity, Bell, Bot, Building2, Database, Download, FileText, HelpCircle, Layers, LayoutDashboard, LifeBuoy,
   LogOut, Menu, MessageCircle, Package, QrCode, RefreshCw, Server, Sparkles, UserCog, Wallet, X
 } from 'lucide-react';
 import { api, angka } from '../../api';
@@ -12,6 +12,7 @@ import { SuperMenu, SuperBranding, SuperLegal, SuperPengumuman } from './SuperSe
 import { SuperTiket, SuperPanduan, SuperAudit, SuperWa } from './SuperOps';
 import { SuperBackup, SuperDatabase } from './SuperSystem';
 import SuperProfil from './SuperProfil';
+import SuperAI from './SuperAI';
 
 const MENUS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, grup: 'Ringkasan' },
@@ -28,6 +29,7 @@ const MENUS = [
   { key: 'panduan', label: 'Petunjuk Pengguna', icon: HelpCircle, grup: 'Operasional' },
   { key: 'audit', label: 'Audit Logs', icon: Activity, grup: 'Operasional' },
   { key: 'wa', label: 'WhatsApp Gateway', icon: MessageCircle, grup: 'Integrasi' },
+  { key: 'ai', label: 'AI Tutorial edupoin', icon: Bot, grup: 'Integrasi' },
   { key: 'backup', label: 'Backup & Restore', icon: Download, grup: 'Sistem' },
   { key: 'database', label: 'Database Manager', icon: Database, grup: 'Sistem' }
 ];
@@ -36,7 +38,7 @@ export const SAAS_PAGES = {
   dashboard: SuperDashboard, sekolah: SuperSekolah, pembayaran: SuperPembayaran, paket: SuperPaket,
   menu: SuperMenu, branding: SuperBranding, qris: SuperQris, legal: SuperLegal, tiket: SuperTiket,
   pengumuman: SuperPengumuman, panduan: SuperPanduan, audit: SuperAudit, wa: SuperWa,
-  backup: SuperBackup, database: SuperDatabase, profil: SuperProfil
+  backup: SuperBackup, database: SuperDatabase, profil: SuperProfil, ai: SuperAI
 };
 
 export default function SuperAdmin({ boot, onReload, onLogout }) {

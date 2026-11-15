@@ -37,6 +37,8 @@ module.exports = function mount(apiCtx) {
     const s = saas.settings();
     s.telegram_bot_token = '';
     s.telegram_bot_token_set = Boolean(saas.telegramCfg().token_set);
+    s.edupoin_ai_api_key = '';
+    s.edupoin_ai_api_key_set = Boolean(saas.setting('edupoin_ai_api_key'));
     return s;
   };
   /* pembatas percobaan login portal Super Admin (per IP) */
@@ -842,6 +844,60 @@ module.exports = function mount(apiCtx) {
     json(res, 200, {
       ok: true, scope: 'super',
       user: { id: admin.id, nama: admin.nama, username: admin.username, role: 'super_admin', role_label: 'Super Admin' }
+    });
+  }, SAAS);
+
+  /* ---------- konfigurasi AI Tutorial edupoin ---------- */
+  get('/api/super/ai-config', (req, res) => {
+    if (!guardSuper(req, res)) return;
+    const config = saas.assistantConfig();
+    json(res, 200, {
+      ok: true,
+      api_key_set: !!config.apiKey,
+      api_key_source: config.apiKeySource,
+      env_key_set: config.envKeySet,
+      database_key_set: config.storedKeySet,
+      base_url: config.baseUrl,
+      model: config.model
+    });
+  }, SAAS);
+  post('/api/super/ai-config', async (req, res) => {
+    const admin = guardSuper(req, res);
+    if (!admin) return;
+    const b = await readBody(req, 16 * 1024);
+    const apiKey = String(b.api_key || '').trim();
+    if (apiKey.length > 500) return fail(res, 400, 'API key terlalu panjang.');
+
+    const baseUrl = String(b.base_url || '').trim().replace(/\/+$/, '');
+    if (baseUrl) {
+      try {
+        const parsed = new URL(baseUrl);
+        const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+        if ((parsed.protocol !== 'https:' && !localHttp) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+          throw new Error('invalid URL');
+        }
+      } catch (e) {
+        return fail(res, 400, 'Base URL harus HTTPS yang valid (HTTP hanya diizinkan untuk localhost).');
+      }
+    }
+    const model = String(b.model || '').trim();
+    if (model.length > 120 || /[\r\n]/.test(model)) return fail(res, 400, 'Nama model tidak valid.');
+
+    if (apiKey) saas.setSetting('edupoin_ai_api_key', apiKey);
+    if (bool(b.api_key_clear)) saas.setSetting('edupoin_ai_api_key', '');
+    saas.setSetting('edupoin_ai_base_url', baseUrl);
+    saas.setSetting('edupoin_ai_model', model);
+    saas.logAudit(admin.nama, 'UBAH KONFIGURASI AI', 'assistant', 'Pengaturan AI Tutorial edupoin diperbarui');
+    const config = saas.assistantConfig();
+    json(res, 200, {
+      ok: true,
+      pesan: 'Pengaturan AI Tutorial edupoin disimpan.',
+      api_key_set: !!config.apiKey,
+      api_key_source: config.apiKeySource,
+      env_key_set: config.envKeySet,
+      database_key_set: config.storedKeySet,
+      base_url: config.baseUrl,
+      model: config.model
     });
   }, SAAS);
 

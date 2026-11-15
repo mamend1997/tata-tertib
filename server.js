@@ -686,14 +686,15 @@ post('/api/assistant/chat', async (req, res) => {
     for (const [key, value] of assistantRate) if (now - value.start > 60_000) assistantRate.delete(key);
   }
 
-  const apiKey = String(process.env.EDUPOIN_AI_API_KEY || '').trim();
-  if (!apiKey) return fail(res, 503, 'Asisten AI belum dikonfigurasi. Administrator perlu menambahkan EDUPOIN_AI_API_KEY pada environment server.');
+  const aiConfig = saas.assistantConfig();
+  const apiKey = aiConfig.apiKey;
+  if (!apiKey) return fail(res, 503, 'Asisten AI belum dikonfigurasi. Atur API key di Super Admin → Integrasi → AI Tutorial edupoin atau melalui EDUPOIN_AI_API_KEY.');
 
   const allowedTargets = assistantHelp.TARGETS.filter(target =>
     (!target.feature || (dbm.can(user, target.feature, target.action || 'view') && fiturBoleh(req, target.feature)))
   );
-  const baseUrl = String(process.env.EDUPOIN_AI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  const model = String(process.env.EDUPOIN_AI_MODEL || 'gpt-4o-mini').trim();
+  const baseUrl = aiConfig.baseUrl.replace(/\/+$/, '');
+  const model = aiConfig.model;
   let endpoint;
   try {
     const parsed = new URL(baseUrl);

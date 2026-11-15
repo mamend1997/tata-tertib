@@ -33,7 +33,6 @@ const srv = () => spawn(process.execPath, [path.join(__dirname, '..', 'server.js
     PORT: APP_PORT,
     DB_PATH: DB,
     DEMO_SEED: '1',
-    EDUPOIN_AI_API_KEY: 'test-secret',
     EDUPOIN_AI_BASE_URL: `http://127.0.0.1:${providerPort}/v1`,
     EDUPOIN_AI_MODEL: 'fake-model'
   },
@@ -103,12 +102,43 @@ async function request(method, url, cookie, body) {
     ok('cuaca, matematika umum, dan coding di luar aplikasi ditolak tanpa memanggil AI', offTopicOk
       && providerCalls === callsBeforeOffTopic, JSON.stringify(result.json));
 
+    result = await request('POST', '/api/assistant/chat', cookie, { message: 'Bagaimana cara mencetak Kalender Akademik?' });
+    ok('pertanyaan fitur memberi petunjuk saat AI belum dikonfigurasi', result.status === 503
+      && /Super Admin/.test(result.json.error || result.json.pesan || ''));
+
+    result = await request('GET', '/api/super/ai-config', cookie);
+    ok('endpoint konfigurasi AI menolak sesi sekolah', result.status === 401, JSON.stringify(result.json));
+    result = await request('POST', '/api/super/login', '', { username: 'superadmin', password: 'superadmin123' });
+    const superCookie = result.cookie;
+    ok('login Super Admin untuk konfigurasi AI berhasil', result.status === 200 && !!superCookie, JSON.stringify(result.json));
+    result = await request('GET', '/api/super/ai-config', superCookie);
+    ok('konfigurasi awal tidak mengirim API key', result.status === 200 && !('api_key' in result.json)
+      && result.json.api_key_set === false);
+
+    const secret = 'test-secret-from-super-panel';
+    result = await request('POST', '/api/super/ai-config', superCookie, {
+      api_key: secret,
+      base_url: `http://127.0.0.1:${providerPort}/v1`,
+      model: 'fake-model'
+    });
+    const savedConfig = result.json;
+    ok('Super Admin dapat menyimpan API key dan konfigurasi model', result.status === 200
+      && savedConfig.database_key_set && savedConfig.api_key_source === 'super_admin'
+      && !JSON.stringify(savedConfig).includes(secret), JSON.stringify(savedConfig));
+    result = await request('GET', '/api/super/qris', superCookie);
+    ok('API key AI tidak bocor lewat endpoint pengaturan Super Admin lain',
+      result.status === 200 && !JSON.stringify(result.json).includes(secret));
+    result = await request('POST', '/api/super/ai-config', superCookie, {
+      base_url: 'http://example.com/v1', model: 'fake-model'
+    });
+    ok('Base URL HTTP non-localhost ditolak', result.status === 400);
+
     result = await request('POST', '/api/assistant/chat', cookie, {
       message: 'Bagaimana cara mencetak Kalender Akademik?',
       history: [{ role: 'user', content: 'Saya sedang mengelola kalender.' }]
     });
     ok('pertanyaan edupoin mengembalikan jawaban dan target yang valid', result.status === 200
-      && result.json.tour?.id === 'btn-cetak-kalender', JSON.stringify(result.json));
+      && result.json.tour?.id === 'btn-cetak-kalender' && providerCalls === callsBeforeOffTopic + 1, JSON.stringify(result.json));
     const systemPrompt = providerPayload?.messages?.[0]?.content || '';
     ok('system prompt membawa aturan penolakan, FAQ, dan daftar target', systemPrompt.includes(assistant.REFUSAL)
       && systemPrompt.includes('Kalender Akademik satu tahun')
@@ -131,6 +161,12 @@ async function request(method, url, cookie, body) {
 
     result = await request('POST', '/api/assistant/chat', cookie, { message: 'x'.repeat(1201) });
     ok('panjang pertanyaan dibatasi', result.status === 400, JSON.stringify(result.json));
+
+    result = await request('POST', '/api/super/ai-config', superCookie, {
+      api_key_clear: true, base_url: `http://127.0.0.1:${providerPort}/v1`, model: 'fake-model'
+    });
+    ok('API key tersimpan dapat dihapus tanpa mengirimkannya kembali', result.status === 200
+      && !result.json.database_key_set && !result.json.api_key_set);
   } catch (error) {
     console.error('FAIL assistant test execution →', error.stack || error.message);
     results.push(false);

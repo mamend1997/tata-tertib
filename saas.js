@@ -327,6 +327,18 @@ function settings() {
   for (const r of sdb.prepare('SELECT key,value FROM saas_settings').all()) out[r.key] = r.value;
   return out;
 }
+function assistantConfig() {
+  const envKey = clean(process.env.EDUPOIN_AI_API_KEY);
+  const storedKey = clean(setting('edupoin_ai_api_key'));
+  return {
+    apiKey: envKey || storedKey,
+    envKeySet: !!envKey,
+    storedKeySet: !!storedKey,
+    apiKeySource: envKey ? 'environment' : (storedKey ? 'super_admin' : ''),
+    baseUrl: clean(process.env.EDUPOIN_AI_BASE_URL || setting('edupoin_ai_base_url')) || 'https://api.openai.com/v1',
+    model: clean(process.env.EDUPOIN_AI_MODEL || setting('edupoin_ai_model')) || 'gpt-4o-mini'
+  };
+}
 /** penanda versi branding — dipakai untuk cache-busting favicon & judul tab */
 function brandingVersion() {
   return String(setting('branding_version', '') || '') || '1';
@@ -1960,7 +1972,7 @@ init();
 
 module.exports = {
   sdb, SAAS_DB, DATA_DIR, SEKOLAH_DIR, now, today, addDays, addMonths,
-  setting, setSetting, settings, branding, brandingVersion, bumpBranding, isOn, clearBrandCache, promos, promoFind,
+  setting, setSetting, settings, assistantConfig, branding, brandingVersion, bumpBranding, isOn, clearBrandCache, promos, promoFind,
   logAudit, auditList,
   paketList, paketByKode, savePaket, deletePaket, fiturPaket, allowedFeatures, parseFitur,
   tenants, tenantById, tenantUtama, tenantByKode, tenantBySlug, tenantByDomain, tenantByPortalSlug,
