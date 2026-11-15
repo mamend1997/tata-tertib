@@ -37,6 +37,10 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ✓ ' + n); } else { f
     console.log('\n== PORTAL LOGIN SUPER ADMIN (TERPISAH) ==');
     let ctx = await browser.newContext({ viewport: { width: 1440, height: 950 } });
     let page = await ctx.newPage();
+    let schoolListRequested = false;
+    page.on('request', request => {
+      if (request.url().includes('/api/public/sekolah')) schoolListRequested = true;
+    });
     page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message));
     page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 
@@ -52,6 +56,10 @@ const ok = (n, c, x) => { if (c) { pass++; console.log('  ✓ ' + n); } else { f
     ok('form login sekolah mewajibkan kode sekolah',
       (await page.locator('input[placeholder*="kode sekolah"]').count()) > 0 &&
       (await page.locator('label:has-text("Kode Sekolah")').count()) > 0);
+    ok('input kode sekolah tidak memiliki dropdown nama/kode sekolah',
+      (await page.locator('datalist#login-school-codes').count()) === 0 &&
+      (await page.locator('input[placeholder*="kode sekolah"]').getAttribute('list')) === null);
+    ok('halaman login tidak meminta daftar sekolah publik', !schoolListRequested);
 
     /* akun Super Admin TIDAK bisa masuk lewat form login sekolah */
     await page.fill('input[placeholder*="kode sekolah"]', '9999');
