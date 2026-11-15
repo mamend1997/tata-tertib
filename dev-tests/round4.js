@@ -91,6 +91,11 @@ async function req(method, url, body, opt = {}) {
   });
   ok('konfigurasi Telegram sekolah tersimpan tanpa mengembalikan token', r.status === 200
     && r.json.telegram.token_set && !JSON.stringify(r.json).includes(tgToken), JSON.stringify(r.json.telegram));
+  r = await req('GET', '/api/setup-checklist');
+  ok('checklist setup administrator memuat delapan tahap', r.status === 200
+    && r.json.total === 8 && Object.keys(r.json.stages || {}).length === 8, JSON.stringify(r.json && Object.keys(r.json.stages || {})));
+  ok('backup checklist belum selesai saat jadwal otomatis nonaktif', r.status === 200
+    && r.json.stages.backup.complete === false && Number.isInteger(r.json.percent));
   r = await req('POST', '/api/backup/telegram', { jam: '25:00', auto: false });
   ok('jam backup dengan format salah ditolak', r.status === 400, String(r.status));
   r = await req('GET', '/api/backup/info');

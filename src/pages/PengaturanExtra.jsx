@@ -146,7 +146,8 @@ export function BackupRestore({ ctx, readOnly }) {
             Aktifkan backup otomatis harian
           </label>
           <div className="flex flex-wrap gap-2">
-            <button data-backup-telegram-save className="btn-primary btn-sm" disabled={readOnly || busy !== ''} onClick={simpanTelegram}>
+            <button data-backup-telegram-save data-guide-target="setup-backup-save"
+              className="btn-primary btn-sm" disabled={readOnly || busy !== ''} onClick={simpanTelegram}>
               {busy === 'simpan' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
             </button>
             <button data-backup-telegram-test className="btn-ghost btn-sm" disabled={readOnly || busy !== ''} onClick={ujiTelegram}>

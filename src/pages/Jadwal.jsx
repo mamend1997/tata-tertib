@@ -327,6 +327,7 @@ function Matriks({
       style={{ minHeight: s ? tinggiSesi(s) : 52 }}
       className="flex w-full flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-slate-200 px-1 py-1 text-slate-300 transition hover:border-orange-300 hover:bg-orange-50/50 hover:text-orange-500"
       data-slot-kosong={`${hari}-${sesiIdx}${kelasAwal ? '-' + kelasAwal.id : ''}`}
+      data-guide-target="setup-schedule-add"
       data-slot-kosong-sesi={sesiIdx}>
       <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400" data-slot-kosong-label>
         {labelSesi(s)}

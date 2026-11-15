@@ -61,7 +61,7 @@ export default function Kategori({ ctx }) {
           ) : null}
           {can('kategori', 'write') ? (
             <>
-              <button className="btn-soft" onClick={() => setEdit({ jenis: 'pelanggaran', poin: 5 })}><Plus size={15} /> Kategori Pelanggaran</button>
+              <button className="btn-soft" onClick={() => setEdit({ jenis: 'pelanggaran', poin: 5 })} data-guide-target="setup-category-add"><Plus size={15} /> Kategori Pelanggaran</button>
               <button className="btn-primary" onClick={() => setEdit({ jenis: 'prestasi', poin: 10 })}><Plus size={15} /> Kategori Prestasi</button>
             </>
           ) : null}

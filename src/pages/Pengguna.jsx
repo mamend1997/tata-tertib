@@ -87,7 +87,7 @@ export default function Pengguna({ ctx }) {
           {can('pengguna', 'write') ? (
             <button className="btn-ghost" onClick={() => setImportOpen(true)}><Upload size={15} /> Import Akun Guru</button>
           ) : null}
-          {can('pengguna', 'write') ? <button className="btn-primary" onClick={() => setEdit({ role: 'guru_bk', aktif: 1 })}><Plus size={15} /> Tambah Akun</button> : null}
+          {can('pengguna', 'write') ? <button className="btn-primary" onClick={() => setEdit({ role: 'guru_bk', aktif: 1 })} data-guide-target="setup-user-add"><Plus size={15} /> Tambah Akun</button> : null}
         </div>
       </div>
 

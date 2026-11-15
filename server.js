@@ -2074,6 +2074,36 @@ function adminOnly(req, res) {
   if (s.user.role !== 'admin') { fail(res, 403, 'Menu ini hanya untuk Administrator.'); return null; }
   return s.user;
 }
+get('/api/setup-checklist', (req, res) => {
+  if (!adminOnly(req, res)) return;
+  const count = sql => Number(db.prepare(sql).get().jumlah) || 0;
+  const schoolName = String(dbm.getSetting('sekolah_nama', '') || '').trim();
+  const activeYear = db.prepare('SELECT id,nama FROM tahun_ajaran WHERE aktif=1 ORDER BY id DESC LIMIT 1').get() || null;
+  const staff = db.prepare('SELECT role,roles FROM users WHERE aktif=1').all()
+    .filter(u => dbm.userRoleList(u).some(role => role !== 'admin')).length;
+  const students = count("SELECT COUNT(*) AS jumlah FROM siswa WHERE LOWER(COALESCE(status,'aktif'))='aktif'");
+  const classes = count('SELECT COUNT(*) AS jumlah FROM kelas');
+  const categories = count('SELECT COUNT(*) AS jumlah FROM kategori WHERE aktif=1');
+  const slots = activeYear
+    ? Number((db.prepare('SELECT COUNT(*) AS jumlah FROM jadwal WHERE ta_id=?').get(activeYear.id) || {}).jumlah) || 0
+    : 0;
+  const telegramReady = String(dbm.getSetting('backup_telegram_auto', '0')) === '1'
+    && !!String(dbm.getSetting('backup_telegram_bot_token', '') || '').trim()
+    && !!String(dbm.getSetting('backup_telegram_chat_id', '') || '').trim();
+  const stages = {
+    profile: { complete: !!schoolName, detail: schoolName ? `Nama sekolah: ${schoolName}` : 'Nama sekolah belum diisi.' },
+    year: { complete: !!activeYear, detail: activeYear ? `Tahun aktif: ${activeYear.nama}` : 'Belum ada tahun pelajaran aktif.' },
+    classes: { complete: classes > 0, detail: classes ? `${classes} kelas sudah dibuat.` : 'Belum ada kelas.' },
+    staff: { complete: staff > 0, detail: staff ? `${staff} akun guru/pegawai aktif.` : 'Belum ada akun guru/pegawai selain administrator.' },
+    students: { complete: students > 0, detail: students ? `${students} siswa aktif terdaftar.` : 'Belum ada siswa aktif.' },
+    categories: { complete: categories > 0, detail: categories ? `${categories} kategori poin aktif tersedia.` : 'Belum ada kategori poin aktif.' },
+    schedule: { complete: slots > 0, detail: slots ? `${slots} slot jadwal pada tahun aktif.` : 'Belum ada slot jadwal pada tahun aktif.' },
+    backup: { complete: telegramReady, detail: telegramReady ? 'Backup otomatis Telegram aktif.' : 'Bot Token, Chat ID, dan backup otomatis perlu disiapkan.' }
+  };
+  const total = Object.keys(stages).length;
+  const completed = Object.values(stages).filter(stage => stage.complete).length;
+  json(res, 200, { ok: true, stages, completed, total, percent: Math.round(completed / total * 100) });
+});
 get('/api/audit-data', (req, res) => {
   if (!adminOnly(req, res)) return;
   json(res, 200, { ok: true, checks: dbm.orphanData(), tabel: dbm.ORPHAN_CHECKS.map(c => ({ key: c.key, tabel: c.tabel, label: c.label })) });

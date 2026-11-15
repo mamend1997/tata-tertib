@@ -10,6 +10,7 @@ import { api } from './api';
 import { applyTheme } from './theme';
 import { setFavicon } from './branding';
 import { Avatar, Modal, Spinner, StatusBadge, ToastProvider, cx, useToast } from './ui';
+import GuideHighlight from './components/GuideHighlight';
 import Portal from './pages/Portal';
 import Login from './pages/Login';
 import Maintenance from './pages/Maintenance';
@@ -217,6 +218,7 @@ function AdminApp({ daftarAwal = false }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [openSiswaId, setOpenSiswaId] = useState(null);
+  const [guide, setGuide] = useState(null);
   /* ---- sidebar interaktif: lipat, hover fly-out, akordeon grup menu ---- */
   const [sideCollapsed, setSideCollapsed] = useState(() => {
     try { return localStorage.getItem('stt:nav-collapsed') === '1'; } catch (e) { return false; }
@@ -323,6 +325,11 @@ function AdminApp({ daftarAwal = false }) {
 
   const perms = boot?.perms || {};
   const can = useCallback((key, action = 'view') => !!(perms[key] && perms[key][action]), [perms]);
+  const stopGuide = useCallback(() => setGuide(null), []);
+  const startGuide = useCallback(step => {
+    setGuide({ ...step, runId: Date.now() + Math.random() });
+    if (step.page) setPage(step.page);
+  }, []);
 
   const navItems = useMemo(() => {
     const nav = boot?.settings?.nav || [];
@@ -418,6 +425,7 @@ function AdminApp({ daftarAwal = false }) {
   const ctx = {
     boot, can, filters, setFilters, toast, refreshKey,
     reloadBoot: load,
+    guide, startGuide, stopGuide,
     page, setPage,
     openSiswaCard: (id) => { setOpenSiswaId(Number(id)); setPage('siswa'); },
     openSiswaId, clearOpenSiswa: () => setOpenSiswaId(null),
@@ -667,6 +675,8 @@ function AdminApp({ daftarAwal = false }) {
 
       {/* ================= NAVIGASI BAWAH (KHUSUS PONSEL) ================= */}
       <BottomNav items={bottomNav} page={page} onPick={(k) => { setPage(k); setNavOpen(false); }} />
+
+      <GuideHighlight guide={guide} onClose={stopGuide} />
 
       <footer className="no-print mx-auto max-w-[1600px] px-4 pb-28 pt-2 text-center text-[11.5px] text-slate-400 lg:pb-6">
         {appName} v{boot.version} · {settings.sekolah_nama}

@@ -113,6 +113,10 @@ export default function Pengaturan({ ctx }) {
   const [tab, setTab] = useState('identitas');
   const readOnly = !can('pengaturan', 'write');
 
+  useEffect(() => {
+    if (ctx.guide?.page === 'pengaturan' && ctx.guide.tab) setTab(ctx.guide.tab);
+  }, [ctx.guide?.runId]);
+
   return (
     <div className="space-y-4">
       <div>
@@ -289,7 +293,9 @@ function Identitas({ ctx, readOnly }) {
             </p>
           </div>
         </Card>
-        {!readOnly ? <button className="btn-primary w-full" disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Simpan Identitas</button> : null}
+        {!readOnly ? <button className="btn-primary w-full" disabled={busy} data-guide-target="setup-profile-save">
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Simpan Identitas
+        </button> : null}
       </div>
     </form>
   );
@@ -1035,7 +1041,7 @@ function TahunAjaran({ ctx, readOnly }) {
 
   return (
     <Card title="Tahun Pelajaran" subtitle="Satu tahun pelajaran penuh — dipakai sebagai filter data di seluruh aplikasi"
-      right={!readOnly ? <button className="btn-primary btn-sm" onClick={() => setEdit({ aktif: 0 })}><Plus size={13} /> Tambah</button> : null}>
+      right={!readOnly ? <button className="btn-primary btn-sm" onClick={() => setEdit({ aktif: 0 })} data-guide-target="setup-year-add"><Plus size={13} /> Tambah</button> : null}>
       {loading ? <Spinner /> : rows.length ? (
         <div className="tbl-wrap">
           <table className="tbl">

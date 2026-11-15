@@ -6,6 +6,7 @@ import {
 import { api, tgl, tglPendek, waktu } from '../api';
 import { Alert, Card, Empty, Modal, Spinner, Stat, StatusBadge, cx } from '../ui';
 import { portalUrlOf, portalAbsUrl } from '../portalurl';
+import SetupChecklist from '../components/SetupChecklist';
 
 export default function Dashboard({ ctx }) {
   const { filters, refreshKey, toast, setPage, boot } = ctx;
@@ -133,6 +134,8 @@ export default function Dashboard({ ctx }) {
           </div>
         </div>
       </section>
+
+      {boot.user.role === 'admin' ? <SetupChecklist ctx={ctx} /> : null}
 
       {/* NOTIFIKASI REAL-TIME: siswa Siaga / Kritis */}
       {data.alerts?.length ? (

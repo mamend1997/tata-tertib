@@ -169,7 +169,7 @@ export default function Siswa({ ctx }) {
         <div className="flex flex-wrap gap-2">
           <button className="btn-ghost" onClick={() => setImportOpen(true)}><Upload size={15} /> Import Excel</button>
           <a className="btn-ghost" href={(window.__BASE__ || '') + '/api/siswa-template.xlsx'} download><FileText size={15} /> Template</a>
-          {can('siswa', 'write') ? <button className="btn-primary" onClick={() => setEdit({ gender: 'L' })}><Plus size={15} /> Tambah Siswa</button> : null}
+          {can('siswa', 'write') ? <button className="btn-primary" onClick={() => setEdit({ gender: 'L' })} data-guide-target="setup-student-add"><Plus size={15} /> Tambah Siswa</button> : null}
         </div>
       </div>
 
