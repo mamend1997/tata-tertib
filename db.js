@@ -2163,6 +2163,7 @@ function jurnalRows(opts = {}) {
 function waConfig() {
   const url = getSetting('wa_gateway_url', '');
   const provider = String(getSetting('wa_provider', '') || '').toLowerCase();
+  const isFonnteUrl = /fonnte\.(com|co\.id|id)/i.test(String(url));
   return {
     aktif: String(getSetting('wa_aktif', '0')) === '1',
     url,
@@ -2171,8 +2172,8 @@ function waConfig() {
     header: getSetting('wa_gateway_header', 'Authorization'),
     prefix: getSetting('wa_gateway_prefix', ''),
     /* Fonnte memakai form-urlencoded (target+message) — terdeteksi otomatis dari URL */
-    provider: ['fonnte', 'generik'].includes(provider) ? provider
-      : (/fonnte\.(com|co\.id|id)/i.test(String(url)) ? 'fonnte' : 'generik'),
+    provider: isFonnteUrl ? 'fonnte'
+      : ['fonnte', 'generik'].includes(provider) ? provider : 'generik',
     cooldownJam: Math.max(0, Number(getSetting('wa_cooldown_jam', 24)) || 0),
     template: getSetting('wa_template_massal', '') || getSetting('wa_template', ''),
     /* NOTIFIKASI OTOMATIS */
@@ -2346,14 +2347,21 @@ function waMessage(siswa, opts = {}) {
 }
 
 /** kirim satu pesan melalui gateway (bila belum dikonfigurasi → status 'manual') */
-async function waSend(phone, message) {
-  const cfg = waConfig();
+async function waSend(phone, message, overrides = {}) {
+  const cfg = { ...waConfig(), ...overrides };
+  if (/fonnte\.(com|co\.id|id)/i.test(String(cfg.url))) cfg.provider = 'fonnte';
   if (!cfg.aktif || !cfg.url) return { status: 'manual', error: '' };
   const nomor = String(phone || '').replace(/[^\d]/g, '');
   if (!nomor) return { status: 'gagal', error: 'Nomor tujuan kosong.' };
   try {
     const headers = {};
-    if (cfg.token && cfg.header) headers[cfg.header] = cfg.prefix ? cfg.prefix + cfg.token : cfg.token;
+    if (cfg.provider === 'fonnte') {
+      const token = String(cfg.token || '').trim().replace(/^Bearer\s+/i, '');
+      if (!token) return { status: 'gagal', error: 'Token Fonnte belum diisi.' };
+      headers.Authorization = token;
+    } else if (cfg.token && cfg.header) {
+      headers[cfg.header] = cfg.prefix ? cfg.prefix + cfg.token : cfg.token;
+    }
     let body, url = cfg.url;
     if (cfg.provider === 'fonnte') {
       /* FONNTE: POST https://api.fonnte.com/send — form-urlencoded { target, message } */

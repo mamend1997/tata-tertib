@@ -3517,9 +3517,22 @@ post('/api/wa/uji', async (req, res) => {
   const b = await readBody(req);
   const phone = String(b.phone || '').replace(/[^\d]/g, '');
   if (!phone) return fail(res, 400, 'Nomor tujuan wajib diisi.');
-  const cfg = dbm.waConfig();
+  const saved = dbm.waConfig();
+  const active = b.aktif === undefined ? saved.aktif
+    : b.aktif === true || ['1', 'true', 'on'].includes(String(b.aktif).toLowerCase());
+  const cfg = {
+    ...saved,
+    aktif: active,
+    url: b.url === undefined ? saved.url : String(b.url || '').trim(),
+    token: String(b.token || '').trim() || saved.token,
+    header: b.header === undefined ? saved.header : String(b.header || '').trim(),
+    prefix: b.prefix === undefined ? saved.prefix : String(b.prefix || ''),
+    payload: b.payload === undefined ? saved.payload : String(b.payload || ''),
+    provider: ['fonnte', 'generik'].includes(String(b.provider || '').toLowerCase())
+      ? String(b.provider).toLowerCase() : saved.provider
+  };
   if (!cfg.aktif || !cfg.url) return fail(res, 400, 'Gateway belum aktif/dikonfigurasi — isi URL & token lalu aktifkan.');
-  const hasil = await dbm.waSend(phone, String(b.pesan || 'Uji koneksi WhatsApp Gateway dari aplikasi tata tertib.'));
+  const hasil = await dbm.waSend(phone, String(b.pesan || 'Uji koneksi WhatsApp Gateway dari aplikasi tata tertib.'), cfg);
   json(res, hasil.status === 'gagal' ? 400 : 200, { ok: hasil.status !== 'gagal', status: hasil.status, error: hasil.error || '', pesan: hasil.status === 'gagal' ? hasil.error : 'Pesan uji terkirim.' });
 });
 

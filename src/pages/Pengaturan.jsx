@@ -528,8 +528,9 @@ function WAGateway({ ctx, readOnly }) {
       setD(r);
       setF({
         aktif: !!r.config.aktif, url: r.config.url, token: '',
-        payload: r.config.payload, header: r.config.header || 'Authorization',
-        prefix: r.config.prefix || '', cooldown_jam: r.config.cooldown_jam,
+        payload: r.config.payload,
+        header: r.config.provider === 'fonnte' ? 'Authorization' : r.config.header || 'Authorization',
+        prefix: r.config.provider === 'fonnte' ? '' : r.config.prefix || '', cooldown_jam: r.config.cooldown_jam,
         template: r.config.template || '', input_cooldown_jam: r.config.input_cooldown_jam || 0,
         kepsek_wa: r.config.kepsek_wa || '', wakasek_kur_wa: r.config.wakasek_kur_wa || '',
         absensi_wa_aktif: Number(r.config.absensi_wa_aktif) || 0, absensi_wa_jam: r.config.absensi_wa_jam || '14:00',
@@ -572,7 +573,10 @@ function WAGateway({ ctx, readOnly }) {
   async function kirimUji() {
     setUjiBusy(true);
     try {
-      const r = await api('/api/wa/uji', { method: 'POST', body: uji });
+      const r = await api('/api/wa/uji', {
+        method: 'POST',
+        body: { ...uji, aktif: f.aktif, url: f.url, token: f.token, provider: f.provider, header: f.header, prefix: f.prefix, payload: f.payload }
+      });
       toast.ok(r.pesan || 'Pesan uji terkirim.');
     } catch (e) { toast.err(e.message); }
     finally { setUjiBusy(false); }
@@ -596,17 +600,26 @@ function WAGateway({ ctx, readOnly }) {
           <div className="space-y-3">
             <Field label="URL Endpoint Gateway" hint="Contoh Fonnte: https://api.fonnte.com/send · Wablas / Watzap / Baileys lokal juga dapat dipakai.">
               <input className="input" value={f.url} disabled={readOnly} placeholder="https://api.fonnte.com/send"
-                data-wa-url="1" onChange={e => set({ url: e.target.value })} />
+                data-wa-url="1" onChange={e => {
+                  const url = e.target.value;
+                  set(/fonnte\.(com|co\.id|id)/i.test(url)
+                    ? { url, provider: 'fonnte', header: 'Authorization', prefix: '' }
+                    : { url });
+                }} />
             </Field>
             <div className="grid grid-cols-2 gap-2.5">
-              <Field label="Nama Header Token" hint="Umumnya Authorization">
-                <input className="input" value={f.header} disabled={readOnly} onChange={e => set({ header: e.target.value })} />
+              <Field label="Nama Header Token" hint={f.provider === 'fonnte' ? 'Fonnte selalu menggunakan Authorization.' : 'Umumnya Authorization'}>
+                <input className="input" value={f.provider === 'fonnte' ? 'Authorization' : f.header}
+                  disabled={readOnly || f.provider === 'fonnte'} onChange={e => set({ header: e.target.value })} />
               </Field>
-              <Field label="Awalan Token" hint="mis. Bearer (boleh kosong)">
-                <input className="input" value={f.prefix} disabled={readOnly} onChange={e => set({ prefix: e.target.value })} />
+              <Field label="Awalan Token" hint={f.provider === 'fonnte' ? 'Kosong untuk Fonnte; jangan gunakan Bearer.' : 'mis. Bearer (boleh kosong)'}>
+                <input className="input" value={f.provider === 'fonnte' ? '' : f.prefix}
+                  disabled={readOnly || f.provider === 'fonnte'} onChange={e => set({ prefix: e.target.value })} />
               </Field>
             </div>
-            <Field label="Token / API Key" hint={d.config.token_set ? 'Token sudah tersimpan — isi hanya bila ingin mengganti.' : 'Belum ada token tersimpan.'}>
+            <Field label="Token / API Key" hint={f.provider === 'fonnte'
+              ? 'Masukkan token Fonnte saja, tanpa awalan Bearer.'
+              : d.config.token_set ? 'Token sudah tersimpan — isi hanya bila ingin mengganti.' : 'Belum ada token tersimpan.'}>
               <div className="relative">
                 <Lock size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input className="input !pl-9" type="password" value={f.token} disabled={readOnly} autoComplete="new-password"
@@ -643,7 +656,9 @@ function WAGateway({ ctx, readOnly }) {
           subtitle="Pesan WhatsApp otomatis saat siswa Alfa/Bolos dan saat guru Sakit/Izin">
           <Field label="Penyedia Gateway" hint="Fonnte memakai form-urlencoded (target + message). Pilih Generik untuk gateway lain (JSON).">
             <select className="input" value={f.provider || 'generik'} disabled={readOnly}
-              data-wa-provider="1" onChange={e => set({ provider: e.target.value })}>
+              data-wa-provider="1" onChange={e => set(e.target.value === 'fonnte'
+                ? { provider: 'fonnte', header: 'Authorization', prefix: '' }
+                : { provider: 'generik' })}>
               <option value="generik">Generik (JSON payload)</option>
               <option value="fonnte">Fonnte (api.fonnte.com/send)</option>
             </select>
@@ -819,7 +834,7 @@ function WAGateway({ ctx, readOnly }) {
             <Field label="Pesan Uji"><input className="input" placeholder="Uji koneksi WhatsApp Gateway" value={uji.pesan}
               onChange={e => setUji(v => ({ ...v, pesan: e.target.value }))} /></Field>
           </div>
-          <button type="button" className="btn-soft mt-2 w-full" disabled={ujiBusy || readOnly || !f.aktif} onClick={kirimUji}>
+          <button type="button" className="btn-soft mt-2 w-full" disabled={ujiBusy || readOnly || !f.aktif} onClick={kirimUji} data-wa-test>
             {ujiBusy ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Kirim Pesan Uji
           </button>
           {!f.aktif ? <p className="mt-1 text-[11px] text-slate-400">Aktifkan gateway &amp; simpan dulu sebelum mengirim pesan uji.</p> : null}

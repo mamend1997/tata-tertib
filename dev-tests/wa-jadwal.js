@@ -217,11 +217,30 @@ function run(sql, ...args) {
     r = await req('/api/wa/pengaturan', {
       method: 'POST',
       body: {
-        aktif: true, provider: 'fonnte', url: WA_URL, token: 'TOKEN-UJI', header: 'Authorization', prefix: '',
+        aktif: true, provider: 'fonnte', url: WA_URL, token: 'TOKEN-UJI', header: 'Authorization', prefix: 'Bearer ',
         kepsek_wa: '081200001111', wakasek_kur_wa: '081200002222', piket_wa: '081200003333'
       }
     });
     ok('gateway Fonnte tiruan dikonfigurasi', r.status === 200, r.body?.error);
+
+    waHits.length = 0;
+    r = await req('/api/wa/uji', {
+      method: 'POST',
+      body: { phone: '081200009999', pesan: 'Tes token tersimpan', aktif: true, url: WA_URL, provider: 'fonnte', prefix: 'Bearer ' }
+    });
+    ok('tes gateway memakai token tersimpan tanpa awalan Bearer', r.status === 200
+      && waHits.some(hit => hit.auth === 'TOKEN-UJI'), JSON.stringify({ response: r.body, auth: waHits.map(hit => hit.auth) }));
+
+    waHits.length = 0;
+    r = await req('/api/wa/uji', {
+      method: 'POST',
+      body: {
+        phone: '081200009998', pesan: 'Tes token terbaru', aktif: true, url: WA_URL,
+        provider: 'fonnte', token: 'Bearer TOKEN-TERBARU', prefix: 'Bearer '
+      }
+    });
+    ok('tes gateway menggunakan token baru yang belum disimpan', r.status === 200
+      && waHits.some(hit => hit.auth === 'TOKEN-TERBARU'), JSON.stringify({ response: r.body, auth: waHits.map(hit => hit.auth) }));
 
     r = await req('/api/wa/pengaturan', {
       method: 'POST',
