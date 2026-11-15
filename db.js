@@ -625,6 +625,13 @@ function runMigrations() {
     ensureColumn('sesi', 'role', 'TEXT');
     /* penanda tenant (dipakai panel Super Admin) */
     ensureColumn('settings', 'tenant_kode', 'TEXT');
+    /* Naikkan kuota bawaan 1 GB ke 5 GB tanpa mengubah kuota yang dikustomisasi. */
+    if (getSetting('mig_storage_quota_5gb_v1', '') !== '1') {
+      if (String(getSetting('storage_quota_mb', '')) === '1024') {
+        setSetting('storage_quota_mb', '5120');
+      }
+      setSetting('mig_storage_quota_5gb_v1', '1');
+    }
     /* WhatsApp massal: status & sumber pengiriman + pencatat */
     ensureColumn('wa_log', 'status', "TEXT DEFAULT 'terkirim'");
     ensureColumn('wa_log', 'sumber', "TEXT DEFAULT 'manual'");
@@ -1276,7 +1283,7 @@ const SETTINGS_DEFAULT = {
   upload_max_kb: '2048',          // batas ukuran satu foto (KB) — default 2 MB, dapat diubah
   upload_jpeg_quality: '0.82',    // kualitas kompresi gambar di sisi klien
   upload_max_side: '1600',        // sisi terpanjang gambar setelah dikompres (px)
-  storage_quota_mb: '1024',       // kuota penyimpanan aplikasi (informasi dashboard)
+  storage_quota_mb: '5120',       // kuota penyimpanan aplikasi (informasi dashboard)
   /* ---- kop surat dinamis (menu Pengaturan → Kop Surat) ---- */
   kop_sumber: 'auto',             // auto = dari identitas sekolah, manual = teks sendiri
   kop_logo: '',                   // logo kop terpisah (kosong = logo utama)
@@ -3264,7 +3271,7 @@ function storageInfo() {
       if (p && fs.existsSync(f)) dbBytes += fs.statSync(f).size;
     }
   } catch (e) { }
-  const quotaMb = Math.max(50, Number(getSetting('storage_quota_mb', 1024)) || 1024);
+  const quotaMb = Math.max(50, Number(getSetting('storage_quota_mb', 5120)) || 5120);
   const used = Number(up.b || 0) + dbBytes;
   return {
     file_count: Number(up.c || 0),

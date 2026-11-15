@@ -129,6 +129,17 @@ Buat Volume dan mount pada service aplikasi; ketika `RAILWAY_VOLUME_MOUNT_PATH` 
 aplikasi otomatis menaruh `tata-tertib.sqlite`, `saas.sqlite`, serta database tiap sekolah di sana.
 Jika menetapkan `DB_PATH` atau `SAAS_DB_PATH` sendiri, arahkan keduanya ke Volume tersebut.
 
+Deploy otomatis dijalankan oleh GitHub Actions setiap ada push ke branch `main`. Siapkan
+`RAILWAY_TOKEN` sebagai repository secret dan `RAILWAY_SERVICE` sebagai repository variable
+di **GitHub → Settings → Secrets and variables → Actions**. Token harus memiliki akses deploy
+ke project Railway tujuan; isi variable dengan nama atau ID service Railway. Workflow membangun
+aplikasi (`npm run build`) sebelum menjalankan `npm start` di Railway.
+
+Kuota penyimpanan aplikasi bawaan adalah **5 GB (5120 MB)**. Migrasi otomatis menaikkan nilai
+lama yang masih tepat 1 GB; kuota lain yang sudah dikustomisasi tetap dipertahankan. Kuota ini
+adalah indikator penyimpanan aplikasi, terpisah dari kapasitas Railway Volume yang dikonfigurasi
+di dashboard Railway.
+
 Pada instalasi baru, halaman login akan mengisi otomatis kode sekolah bila hanya ada satu sekolah.
 Untuk beberapa sekolah, pilih kode dari saran pada kolom Kode Sekolah. Akun administrator awal
 adalah `admin` dengan kata sandi `admin123`; segera ubah kata sandi setelah berhasil masuk.
