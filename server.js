@@ -6,7 +6,6 @@ require('./tz');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const url = require('url');
 const crypto = require('crypto');
 
 const dbm = require('./db');
@@ -3764,8 +3763,16 @@ function matchRoute(method, pathname) {
 
 const server = http.createServer(async (req, res) => {
   let parsed;
-  try { parsed = url.parse(req.url, true); } catch (e) { return fail(res, 400, 'Permintaan tidak valid.'); }
+  try { parsed = new URL(req.url || '/', 'http://localhost'); } catch (e) { return fail(res, 400, 'Permintaan tidak valid.'); }
   const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+  const query = {};
+  for (const [key, value] of parsed.searchParams) {
+    if (Object.prototype.hasOwnProperty.call(query, key)) {
+      query[key] = Array.isArray(query[key]) ? [...query[key], value] : [query[key], value];
+    } else {
+      query[key] = value;
+    }
+  }
   const method = req.method || 'GET';
 
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -3777,7 +3784,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const hit = matchRoute(method, pathname);
       if (hit) {
-        await hit.route.fn(req, res, parsed.query || {}, hit.params);
+        await hit.route.fn(req, res, query, hit.params);
         return;
       }
       if (pathname.startsWith('/api/')) return fail(res, 404, 'Endpoint tidak ditemukan.');
@@ -3831,8 +3838,8 @@ const server = http.createServer(async (req, res) => {
     const ctx = contextOf(req);
     /* sekolah dapat ditentukan dari kode eksplisit (portal/daftar) */
     let tenant = ctx.tenant;
-    if (!tenant && (parsed.query.kode || parsed.query.sekolah)) {
-      tenant = saas.tenantByKode(parsed.query.kode || parsed.query.sekolah);
+    if (!tenant && (query.kode || query.sekolah)) {
+      tenant = saas.tenantByKode(query.kode || query.sekolah);
     }
     /* endpoint publik: sekolah ditentukan oleh kode yang dikirim halaman portal
        (header X-Sekolah-Kode / ?kode=) — jangan bergantung pada sesi login lain
@@ -3844,7 +3851,7 @@ const server = http.createServer(async (req, res) => {
       const mTok = /^\/api\/public\/(?:presensi|jadwal|aduan|asesmen)\/([^/]+)(?:\/[^/]+)?$/.exec(pathname);
       const kodeToken = mTok ? (() => { try { return String(decodeURIComponent(mTok[1]) || '').split('.')[0]; } catch (e) { return ''; } })() : '';
       const kodePublik = String(req.headers['x-sekolah-kode'] || '').trim()
-        || String(parsed.query.kode || parsed.query.sekolah || '').trim()
+        || String(query.kode || query.sekolah || '').trim()
         || kodeToken;
       const tPublik = kodePublik ? saas.tenantByKode(kodePublik) : null;
       if (tPublik) tenant = tPublik;
