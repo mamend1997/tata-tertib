@@ -67,7 +67,9 @@ const proxy = http.createServer((req, res) => {
     await page.goto(BASE + SLUG + '/', { waitUntil: 'networkidle' });
     await page.fill('input[autocomplete="username"]', 'admin');
     await page.fill('input[autocomplete="current-password"]', 'admin123');
-    await page.fill('input[placeholder*="kode sekolah"]', KODE);
+    await page.waitForFunction(k => document.querySelector('input[placeholder*="kode sekolah"]')?.value === k, KODE);
+    ok('kode tenant tunggal terisi otomatis di halaman login',
+      await page.locator('input[placeholder*="kode sekolah"]').inputValue() === KODE, KODE);
     await page.click('button[type="submit"]');
     await page.waitForSelector('text=Distribusi Status Disiplin', { timeout: 20000 });
     await page.waitForTimeout(700);

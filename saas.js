@@ -22,7 +22,8 @@ const DATA_DIR = path.join(__dirname, 'data');
    DB_PATH sementara), control plane & folder database sekolah ikut diarahkan
    ke folder yang sama supaya TIDAK menyentuh data produksi. */
 const BASE_DIR = process.env.SAAS_DB_PATH ? path.dirname(process.env.SAAS_DB_PATH)
-  : (process.env.DB_PATH && process.env.DB_PATH !== ':memory:' ? path.dirname(process.env.DB_PATH) : DATA_DIR);
+  : (process.env.DB_PATH && process.env.DB_PATH !== ':memory:' ? path.dirname(process.env.DB_PATH)
+    : (process.env.RAILWAY_VOLUME_MOUNT_PATH || DATA_DIR));
 const SEKOLAH_DIR = path.join(BASE_DIR, 'sekolah');
 if (!fs.existsSync(SEKOLAH_DIR)) fs.mkdirSync(SEKOLAH_DIR, { recursive: true });
 const SAAS_DB = process.env.SAAS_DB_PATH || path.join(BASE_DIR, 'saas.sqlite');

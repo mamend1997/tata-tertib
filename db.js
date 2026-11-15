@@ -32,7 +32,9 @@ const { AsyncLocalStorage } = require('async_hooks');
    `useTenant(file, fn)` dipanggil server per permintaan; di luar konteks
    itu dipakai koneksi utama (DB_PATH) — mis. saat seed/migrasi awal.
    ===================================================================== */
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'tata-tertib.sqlite');
+const DB_PATH = process.env.DB_PATH || (process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'tata-tertib.sqlite')
+  : path.join(__dirname, 'data', 'tata-tertib.sqlite'));
 if (DB_PATH !== ':memory:') fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const als = new AsyncLocalStorage();

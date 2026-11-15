@@ -20,6 +20,8 @@ export default function Login({ onDone, initialMode = 'login' }) {
       return q && /^\d{4}$/.test(q) ? q : '';
     })()
   }));
+  const [schools, setSchools] = useState([]);
+  const [schoolLookupError, setSchoolLookupError] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -33,6 +35,13 @@ export default function Login({ onDone, initialMode = 'login' }) {
 
   useEffect(() => {
     api('/api/public/config?global=1').then(c => pakaiBranding(c)).catch(() => pakaiBranding({}));
+    api('/api/public/sekolah').then(result => {
+      const rows = Array.isArray(result.rows) ? result.rows : [];
+      setSchools(rows);
+      if (rows.length === 1) {
+        setForm(prev => prev.kode ? prev : { ...prev, kode: String(rows[0].kode || '') });
+      }
+    }).catch(e => setSchoolLookupError(e.message || 'Daftar sekolah tidak dapat dimuat.'));
     const stop = watchBranding(p => {
       setCfg(prev => ({ ...(prev || {}), platform: p }));
       applyBrandingHead(p);
@@ -156,10 +165,19 @@ export default function Login({ onDone, initialMode = 'login' }) {
                 <div className="relative">
                   <GraduationCap size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input className="input pl-9 font-mono tracking-[0.3em]" value={form.kode} inputMode="numeric" maxLength={4}
-                    required autoComplete="off" placeholder="4 digit kode sekolah"
+                    required autoComplete="off" list="login-school-codes" placeholder="4 digit kode sekolah"
                     onChange={e => setForm(f => ({ ...f, kode: e.target.value.replace(/\D/g, '').slice(0, 4) }))} />
+                  <datalist id="login-school-codes">
+                    {schools.map(s => <option key={s.kode} value={s.kode} label={s.nama} />)}
+                  </datalist>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">Kode 4 digit diberikan administrator sekolah saat pendaftaran.</p>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  {schools.length === 1
+                    ? `Sekolah: ${schools[0].nama}`
+                    : schools.length > 1
+                      ? 'Pilih kode sekolah dari saran, atau masukkan kode 4 digit dari administrator.'
+                      : schoolLookupError || 'Kode 4 digit diberikan administrator sekolah saat pendaftaran.'}
+                </p>
               </div>
               <div>
                 <label className="label">Username</label>

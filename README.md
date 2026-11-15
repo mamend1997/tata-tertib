@@ -91,6 +91,17 @@ Variabel lingkungan baru: `SAAS_DB_PATH` (control plane), `SAAS_ADMIN_USER`, `SA
 Bila `DB_PATH` diarahkan ke tempat lain (mis. saat pengujian), control plane & folder database sekolah
 otomatis ikut ke folder tersebut supaya data produksi tidak tersentuh.
 
+### Deploy di Railway
+
+SQLite harus disimpan pada **Railway Volume** agar akun dan data tidak hilang saat deploy ulang.
+Buat Volume dan mount pada service aplikasi; ketika `RAILWAY_VOLUME_MOUNT_PATH` tersedia,
+aplikasi otomatis menaruh `tata-tertib.sqlite`, `saas.sqlite`, serta database tiap sekolah di sana.
+Jika menetapkan `DB_PATH` atau `SAAS_DB_PATH` sendiri, arahkan keduanya ke Volume tersebut.
+
+Pada instalasi baru, halaman login akan mengisi otomatis kode sekolah bila hanya ada satu sekolah.
+Untuk beberapa sekolah, pilih kode dari saran pada kolom Kode Sekolah. Akun administrator awal
+adalah `admin` dengan kata sandi `admin123`; segera ubah kata sandi setelah berhasil masuk.
+
 ## Import data dari Excel
 
 Tersedia di beberapa modul (tombol **Template Excel** + **Import**):
