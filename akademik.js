@@ -389,7 +389,17 @@ module.exports = function mount(api) {
     const list = /\.csv$/i.test(String(filename || '')) ? xr.readCsv(buf.toString('utf8')) : xr.readXlsx(buf);
     const raw = (list && list[0] && list[0].rows) || [];
     if (!raw.length) throw new Error('Berkas kosong / tidak terbaca.');
-    const headIdx = raw.findIndex(r => r && r.some(c => /nama/i.test(String(c && c.v !== undefined ? c.v : c || ''))));
+    const headIdx = raw.findIndex(r => {
+      const head = (r || []).map(c => normTxt(c && c.v !== undefined ? c.v : c || ''));
+      const col = (...names) => {
+        const exact = head.findIndex(h => names.includes(h));
+        return exact >= 0 ? exact : head.findIndex(h => names.some(n => h.includes(n)));
+      };
+      const cNama = col('nama mapel', 'nama mata pelajaran', 'nama');
+      const cKode = col('kode');
+      const cGuru = col('guru');
+      return cNama >= 0 && [cKode, cGuru].some(i => i >= 0 && i !== cNama);
+    });
     if (headIdx < 0) throw new Error('Header kolom (KODE, NAMA MAPEL, KELOMPOK, MAKS JAM/HARI, GURU PENGAMPU) tidak ditemukan.');
     const head = raw[headIdx].map(h => normTxt(h && h.v !== undefined ? h.v : h));
     const col = (...names) => head.findIndex(h => names.some(n => h.includes(n)));

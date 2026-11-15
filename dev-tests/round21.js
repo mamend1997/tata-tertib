@@ -37,6 +37,10 @@ async function req(p, opts = {}) {
   const body = ct.includes('json') ? await r.json().catch(() => null) : await r.text();
   return { status: r.status, body, ct };
 }
+async function reqBuffer(p) {
+  const r = await fetch(BASE + p, { headers: cookie ? { Cookie: cookie } : {} });
+  return { status: r.status, buf: Buffer.from(await r.arrayBuffer()), ct: r.headers.get('content-type') || '' };
+}
 const login = async (u, pw) => { cookie = ''; return req('/api/login', { method: 'POST', body: { username: u, password: pw, kode: KODE } }); };
 const pad = n => String(n).padStart(2, '0');
 const wib = new Date();
@@ -164,8 +168,15 @@ const base = Math.min(cur, 1440 - 160);
 
     /* ================= 3. IMPORT MATA PELAJARAN ================= */
     console.log('\n== 3. IMPORT MATA PELAJARAN ==');
-    r = await req('/api/mapel/template.xlsx');
-    ok('template Excel mata pelajaran tersedia', r.status === 200 && /spreadsheet/.test(r.ct));
+    const templateMapel = await reqBuffer('/api/mapel/template.xlsx');
+    ok('template Excel mata pelajaran tersedia', templateMapel.status === 200 && /spreadsheet/.test(templateMapel.ct));
+    r = await req('/api/mapel/import/preview', { method: 'POST', body: {
+      filename: 'template-mapel.xlsx', base64: templateMapel.buf.toString('base64')
+    } });
+    ok('template mata pelajaran yang diunduh bisa dipratinjau',
+      r.status === 200 && r.body.rows.length === 2
+        && r.body.rows.some(x => x.kode === 'MTK' && x.nama === 'Matematika'),
+      JSON.stringify(r.body?.error || r.body?.rows?.map(x => [x.kode, x.nama, x.error])));
     /* buat XLSX sederhana dengan lib.xlsxBuffer (tanpa dependency baru) */
     const lib = require('../lib');
     const xlsx = lib.xlsxBuffer('MAPEL', [

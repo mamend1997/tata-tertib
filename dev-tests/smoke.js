@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 
 const DB = path.join(os.tmpdir(), 'stt-smoke-' + Date.now() + '.sqlite');
+const SAAS = path.join(os.tmpdir(), 'stt-smoke-saas-' + Date.now() + '.sqlite');
 const PORT = 4700 + Math.floor(Math.random() * 200);
 const BASE = `http://127.0.0.1:${PORT}`;
 let cookie = '';
@@ -32,10 +33,14 @@ async function req(p, opts = {}) {
   else body = await r.text();
   return { status: r.status, body, ct, headers: r.headers };
 }
+async function reqBuffer(p) {
+  const r = await fetch(BASE + p, { headers: cookie ? { Cookie: cookie } : {} });
+  return { status: r.status, buf: Buffer.from(await r.arrayBuffer()), ct: r.headers.get('content-type') || '' };
+}
 
 (async () => {
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: { ...process.env, PORT: String(PORT), DB_PATH: DB, APP_TIMEZONE: 'Asia/Jakarta', DEMO_SEED: '1' },
+    env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, APP_TIMEZONE: 'Asia/Jakarta', DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   srv.stdout.on('data', d => process.env.VERBOSE && process.stdout.write('[srv] ' + d));
@@ -121,10 +126,25 @@ async function req(p, opts = {}) {
     ok('ekspor xlsx (zip PK)', r.status === 200 && r.body.slice(0, 2) === 'PK');
     r = await req('/api/export/rekap.doc?ta=1&semester=ganjil');
     ok('ekspor word .doc', r.status === 200 && /REKAPITULASI POIN/.test(r.body));
-    r = await req('/api/siswa-template.xlsx');
-    ok('template import siswa xlsx', r.status === 200 && r.body.slice(0, 2) === 'PK');
-    r = await req('/api/kelas-template.xlsx');
-    ok('template import kelas xlsx', r.status === 200 && r.body.slice(0, 2) === 'PK');
+    const templateSiswa = await reqBuffer('/api/siswa-template.xlsx');
+    ok('template import siswa xlsx', templateSiswa.status === 200 && templateSiswa.buf.slice(0, 2).toString() === 'PK');
+    r = await req('/api/siswa/import/preview', { method: 'POST', body: {
+      filename: 'template-siswa.xlsx', base64: templateSiswa.buf.toString('base64')
+    } });
+    ok('template siswa sendiri terbaca dengan nama & NIS',
+      r.status === 200 && r.body.rows.some(x => x.nama === 'Ahmad Fauzan' && x.nis === '20241001')
+        && r.body.rows.some(x => x.nama === 'Nabila Putri' && x.nis === '20241002'),
+      JSON.stringify(r.body?.rows?.map(x => [x.nama, x.nis, x.error])));
+    const templateKelas = await reqBuffer('/api/kelas-template.xlsx');
+    ok('template import kelas xlsx', templateKelas.status === 200 && templateKelas.buf.slice(0, 2).toString() === 'PK');
+    r = await req('/api/kelas/import/preview', { method: 'POST', body: {
+      filename: 'template-kelas.xlsx', base64: templateKelas.buf.toString('base64')
+    } });
+    ok('template kelas sendiri terbaca tanpa baris petunjuk',
+      r.status === 200 && r.body.rows.length === 2
+        && r.body.rows.some(x => x.nama === 'X TKJ 2')
+        && r.body.rows.some(x => x.nama === 'XI AKL 2'),
+      JSON.stringify(r.body?.rows?.map(x => x.nama)));
 
     console.log('\n== IMPORT & DUPLIKAT ==');
     const XLSX = require('../lib').xlsxBuffer;

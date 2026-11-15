@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 
 const DB = path.join(os.tmpdir(), 'stt-r2-' + Date.now() + '.sqlite');
+const SAAS = path.join(os.tmpdir(), 'stt-r2-saas-' + Date.now() + '.sqlite');
 const PORT = 4800 + Math.floor(Math.random() * 150);
 const BASE = `http://127.0.0.1:${PORT}`;
 let KODE = '';
@@ -31,11 +32,15 @@ async function req(p, opts = {}) {
   const body = ct.includes('json') ? await r.json().catch(() => null) : await r.text();
   return { status: r.status, body, ct };
 }
+async function reqBuffer(p) {
+  const r = await fetch(BASE + p, { headers: cookie ? { Cookie: cookie } : {} });
+  return { status: r.status, buf: Buffer.from(await r.arrayBuffer()), ct: r.headers.get('content-type') || '' };
+}
 const login = async (u, p) => { cookie = ''; return req('/api/login', { method: 'POST', body: { username: u, password: p, kode: KODE } }); };
 
 (async () => {
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    env: { ...process.env, PORT: String(PORT), DB_PATH: DB, DEMO_SEED: '1' }, stdio: ['ignore', 'pipe', 'pipe']
+    env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' }, stdio: ['ignore', 'pipe', 'pipe']
   });
   srv.stderr.on('data', d => process.stderr.write('[srv] ' + d));
   await new Promise(r => setTimeout(r, 1800));
@@ -79,8 +84,16 @@ const login = async (u, p) => { cookie = ''; return req('/api/login', { method: 
     ok('siswa terpilih benar-benar terhapus', r.status === 404);
 
     console.log('\n== IMPORT AKUN GURU ==');
-    r = await req('/api/users-template.xlsx');
-    ok('template akun guru xlsx', r.status === 200 && String(r.body).slice(0, 2) === 'PK');
+    const templateUsers = await reqBuffer('/api/users-template.xlsx');
+    ok('template akun guru xlsx', templateUsers.status === 200 && templateUsers.buf.slice(0, 2).toString() === 'PK');
+    r = await req('/api/users/import/preview', { method: 'POST', body: {
+      filename: 'template-akun.xlsx', base64: templateUsers.buf.toString('base64')
+    } });
+    ok('template akun sendiri terbaca tanpa petunjuk ikut diimpor',
+      r.status === 200 && r.body.rows.length === 2
+        && r.body.rows.some(x => x.username === 'wawan')
+        && r.body.rows.some(x => x.username === 'lina'),
+      JSON.stringify(r.body?.rows?.map(x => x.username)));
     const XLSX = require('../lib').xlsxBuffer;
     const buf = XLSX('Akun', [
       ['NO', 'NAMA', 'JABATAN', 'USERNAME', 'ROLE', 'NIP', 'NO HP', 'KATA SANDI'],

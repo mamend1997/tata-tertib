@@ -1050,7 +1050,16 @@ module.exports = function mount(api) {
 
   function previewSoal(kode, buf, filename) {
     const rows = rowsOf(buf, filename);
-    const headerIdx = rows.findIndex(r => r && r.some(c => /pernyataan|soal|pertanyaan/i.test(txt(c))));
+    const headerIdx = rows.findIndex(r => {
+      const head = (r || []).map(c => norm(txt(c)));
+      const col = (...names) => {
+        const exact = head.findIndex(h => names.includes(h));
+        return exact >= 0 ? exact : head.findIndex(h => names.some(n => h.includes(n)));
+      };
+      const cTeks = col('pernyataan', 'soal', 'pertanyaan', 'teks');
+      const cKategori = col('kategori', 'bidang', 'tipe', 'dimensi');
+      return cTeks >= 0 && cKategori >= 0 && cTeks !== cKategori;
+    });
     if (headerIdx < 0) throw new Error('Header kolom (NO, PERNYATAAN, KATEGORI, INDIKATOR) tidak ditemukan pada berkas.');
     const head = rows[headerIdx].map(h => norm(txt(h)));
     const col = (...names) => head.findIndex(h => names.some(n => h.includes(n)));

@@ -35,6 +35,10 @@ async function req(p, opts = {}) {
     : await r.text().then(t => ({ text: t, bytes: t.length })).catch(() => null);
   return { status: r.status, body, ct, headers: r.headers };
 }
+async function reqBuffer(p) {
+  const r = await fetch(BASE + p, { headers: cookie ? { Cookie: cookie } : {} });
+  return { status: r.status, buf: Buffer.from(await r.arrayBuffer()), ct: r.headers.get('content-type') || '' };
+}
 const login = async (u, pw) => { cookie = ''; return req('/api/login', { method: 'POST', body: { username: u, password: pw, kode: KODE } }); };
 const pad = n => String(n).padStart(2, '0');
 const nowDate = new Date();
@@ -412,8 +416,15 @@ const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     ok('simpan & perbarui bank soal menaikkan versi', r.status === 200 && r.body.versi === 2, JSON.stringify(r.body));
     r = await req('/api/asesmen/hasil?kode=gaya');
     ok('hasil asesmen lama tetap ada setelah bank soal diubah', r.body.rows.length === 1 && r.body.rows[0].versi === 1, JSON.stringify(r.body.rows[0]?.versi));
-    r = await req('/api/asesmen/template.xlsx?kode=riasec');
-    ok('template Excel bank soal tersedia', r.status === 200 && /spreadsheet/.test(r.ct));
+    const templateSoal = await reqBuffer('/api/asesmen/template.xlsx?kode=riasec');
+    ok('template Excel bank soal tersedia', templateSoal.status === 200 && /spreadsheet/.test(templateSoal.ct));
+    r = await req('/api/asesmen/import/preview', { method: 'POST', body: {
+      kode: 'riasec', filename: 'template-riasec.xlsx', base64: templateSoal.buf.toString('base64')
+    } });
+    ok('template soal yang diunduh bisa dipratinjau',
+      r.status === 200 && r.body.rows.length === 2 && /memperbaiki peralatan/i.test(r.body.rows[0].teks)
+        && !r.body.rows[0].error,
+      JSON.stringify(r.body?.error || r.body?.rows?.map(x => [x.teks, x.error])));
     r = await req('/api/asesmen/import/preview', { method: 'POST', body: { kode: 'riasec', base64: Buffer.from('bukan excel').toString('base64'), filename: 'x.xlsx' } });
     ok('import berkas rusak ditolak dengan pesan jelas', r.status === 400 && !!r.body.error, r.body?.error);
 

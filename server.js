@@ -349,10 +349,17 @@ function isMaintenance() {
    yang sama ditandai duplikat dan dilewati. */
 function importKategoriPreview(buf, filename) {
   const rows = rowsOf(buf, filename);
-  const headerIdx = rows.findIndex(r => r && r.some(c => /nama|kategori/i.test(txt(c))));
+  const headerIdx = rows.findIndex(row => {
+    const head = (row || []).map(c => normName(txt(c)));
+    const cNama = headerColumn(head, 'nama kategori', 'nama', 'kategori');
+    const cPoin = headerColumn(head, 'poin', 'bobot', 'nilai');
+    if (cNama < 0) return false;
+    if (cPoin >= 0) return cPoin !== cNama;
+    return ['nama kategori', 'nama', 'kategori'].includes(head[cNama]);
+  });
   if (headerIdx < 0) throw new Error('Header kolom (NAMA, JENIS, POIN, KETERANGAN) tidak ditemukan pada berkas.');
   const head = rows[headerIdx].map(h => normName(txt(h)));
-  const col = (...names) => head.findIndex(h => names.some(n => h.includes(n)));
+  const col = (...names) => headerColumn(head, ...names);
   const cNama = col('nama kategori', 'nama', 'kategori');
   const cJenis = col('jenis', 'tipe');
   const cPoin = col('poin', 'bobot', 'nilai');
@@ -483,6 +490,17 @@ const txt = (cell) => xr.cellText(cell);
 function normName(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
 }
+function headerColumn(head, ...names) {
+  const exact = head.findIndex(h => names.includes(h));
+  return exact >= 0 ? exact : head.findIndex(h => names.some(n => h.includes(n)));
+}
+function headerRowIndex(rows, ...groups) {
+  return rows.findIndex(row => {
+    const head = (row || []).map(c => normName(txt(c)));
+    const columns = groups.map(names => headerColumn(head, ...names));
+    return columns.every(i => i >= 0) && new Set(columns).size === columns.length;
+  });
+}
 function parseDOB(v) {
   if (v && typeof v === 'object') {
     const r = xr.parseDateCell(v);
@@ -499,10 +517,11 @@ function parseDOB(v) {
 
 function importSiswaPreview(buf, filename) {
   const rows = rowsOf(buf, filename);
-  const headerIdx = rows.findIndex(r => r && r.some(c => /nama/i.test(txt(c))));
+  const headerIdx = headerRowIndex(rows,
+    ['nama', 'nama siswa', 'nama lengkap'], ['kelas', 'kelas siswa', 'rombel']);
   if (headerIdx < 0) throw new Error('Header kolom (NAMA, NIS, NISN, KELAS, …) tidak ditemukan pada berkas.');
   const head = rows[headerIdx].map(h => normName(txt(h)));
-  const col = (...names) => head.findIndex(h => names.some(n => h.includes(n)));
+  const col = (...names) => headerColumn(head, ...names);
   const cNama = col('nama'), cNis = col('nis'), cNisn = col('nisn'), cKelas = col('kelas'),
     cGender = col('jenis kelamin', 'gender', 'jk'), cTgl = col('tanggal lahir', 'tgl lahir'),
     cHp = col('hp', 'wa', 'telepon', 'kontak');
@@ -549,10 +568,10 @@ function importSiswaPreview(buf, filename) {
 
 function importKelasPreview(buf, filename) {
   const rows = rowsOf(buf, filename);
-  const headerIdx = rows.findIndex(r => r && r.some(c => /kelas/i.test(txt(c))));
+  const headerIdx = headerRowIndex(rows, ['nama kelas', 'kelas'], ['tingkat', 'level']);
   if (headerIdx < 0) throw new Error('Header kolom (NAMA KELAS, TINGKAT, JURUSAN, WALI KELAS) tidak ditemukan.');
   const head = rows[headerIdx].map(h => normName(txt(h)));
-  const col = (...n) => head.findIndex(h => n.some(x => h.includes(x)));
+  const col = (...n) => headerColumn(head, ...n);
   const cNama = col('nama kelas', 'kelas'), cTingkat = col('tingkat'), cJur = col('jurusan'),
     cWali = col('wali kelas', 'wali');
   const wali = new Map(dbm.waliUsers().map(u => [normName(u.nama), u]));
@@ -604,10 +623,10 @@ function roleOf(raw) {
 }
 function importUsersPreview(buf, filename) {
   const rows = rowsOf(buf, filename);
-  const headerIdx = rows.findIndex(r => r && r.some(c => /nama/i.test(txt(c))));
+  const headerIdx = headerRowIndex(rows, ['nama', 'nama lengkap'], ['username', 'user']);
   if (headerIdx < 0) throw new Error('Header kolom (NAMA, JABATAN, USERNAME, ROLE, NIP, NO HP, KATA SANDI) tidak ditemukan.');
   const head = rows[headerIdx].map(h => normName(txt(h)));
-  const col = (...names) => head.findIndex(h => names.some(n => h.includes(n)));
+  const col = (...names) => headerColumn(head, ...names);
   const cNama = col('nama'), cJab = col('jabatan', 'posisi'), cUser = col('username', 'user'),
     cRole = col('role', 'peran'), cNip = col('nip'), cHp = col('hp', 'wa', 'telepon', 'kontak'),
     cPass = col('sandi', 'password', 'pass');
@@ -1507,7 +1526,7 @@ get('/api/siswa-template.xlsx', (req, res) => {
   if (!guard(req, res, 'siswa', 'view')) return;
   const rows = [
     [{ v: 'TEMPLATE IMPORT DATA SISWA', bold: true }],
-    [{ v: 'Isi mulai baris ke-3. Kolom Kelas harus sama dengan nama kelas di menu Data Kelas.' }],
+    [{ v: 'Isi data mulai baris ke-4. Kolom Kelas harus sama dengan nama kelas di menu Data Kelas.' }],
     [{ v: 'NO', bold: true }, { v: 'NAMA', bold: true }, { v: 'NIS', bold: true }, { v: 'NISN', bold: true },
     { v: 'KELAS', bold: true }, { v: 'JENIS KELAMIN', bold: true }, { v: 'TANGGAL LAHIR', bold: true }, { v: 'NO HP ORANG TUA', bold: true }],
     [1, 'Ahmad Fauzan', '20241001', '00700001', 'X TKJ 1', 'L', '2009-07-12', '081234567890'],

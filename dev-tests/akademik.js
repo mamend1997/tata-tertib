@@ -49,6 +49,10 @@ async function req(p, opt = {}) {
   try { body = ct.includes('json') ? await r.json() : await r.text(); } catch (e) { body = null; }
   return { status: r.status, body, ct };
 }
+async function reqBuffer(p) {
+  const r = await fetch(BASE + p, { headers: cookie ? { Cookie: cookie } : {} });
+  return { status: r.status, buf: Buffer.from(await r.arrayBuffer()), ct: r.headers.get('content-type') || '' };
+}
 
 (async () => {
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
@@ -228,8 +232,14 @@ async function req(p, opt = {}) {
 
     /* ================= 5. EKSPOR, CETAK, IMPOR ================= */
     console.log('\n== 5. TEMPLATE · IMPOR · EKSPOR · CETAK ==');
-    r = await req('/api/jadwal/template.xlsx');
-    ok('template jadwal xlsx dapat diunduh', r.status === 200 && /spreadsheet/.test(r.ct), r.ct);
+    const templateJadwal = await reqBuffer('/api/jadwal/template.xlsx');
+    ok('template jadwal xlsx dapat diunduh', templateJadwal.status === 200 && /spreadsheet/.test(templateJadwal.ct), templateJadwal.ct);
+    r = await req('/api/jadwal/import/preview', { method: 'POST', body: {
+      base64: templateJadwal.buf.toString('base64'), filename: 'template-jadwal.xlsx'
+    } });
+    ok('template jadwal yang diunduh menemukan header & data',
+      r.status === 200 && r.body.rows.length === 2,
+      JSON.stringify(r.body?.error || r.body?.ringkas));
     r = await req('/api/jadwal/export.xlsx');
     ok('ekspor jadwal xlsx', r.status === 200 && /spreadsheet/.test(r.ct), r.ct);
     r = await req('/api/jadwal/cetak');

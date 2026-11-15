@@ -72,6 +72,12 @@ const kirim = (rows, filename = 'kategori.xlsx') =>
     ok('template memuat contoh pelanggaran & prestasi',
       barisTemplate.slice(3).some(row => /Pelanggaran/i.test(row[1])) && barisTemplate.slice(3).some(row => /Prestasi/i.test(row[1])),
       barisTemplate.slice(3).map(r2 => r2[1]).join(','));
+    const pratinjauTemplate = await req('/api/kategori/import/preview', {
+      method: 'POST', body: { filename: 'template-kategori.xlsx', base64: r.buf.toString('base64') }
+    });
+    ok('template kategori yang diunduh bisa dipratinjau',
+      pratinjauTemplate.status === 200 && pratinjauTemplate.body.rows.some(x => x.nama === 'Terlambat masuk sekolah' && x.poin === 5),
+      JSON.stringify(pratinjauTemplate.body?.error || pratinjauTemplate.body?.rows?.map(x => x.nama)));
 
     /* ---------------- PRATINJAU ---------------- */
     console.log('\n== PRATINJAU IMPORT ==');
