@@ -77,7 +77,7 @@ export default function AbsensiSiswa({ ctx }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-[19px] font-extrabold text-slate-800">Absensi Siswa per Mata Pelajaran</h2>
+          <h2 className="text-[19px] font-extrabold text-slate-800" data-tour-id="btn-absensi-siswa">Absensi Siswa per Mata Pelajaran</h2>
           <p className="text-[12.5px] text-slate-500">
             Diisi guru pengampu, wali kelas, atau ketua kelas melalui tautan/QR sesi — otomatis masuk rekap per mapel.
           </p>

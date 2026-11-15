@@ -31,6 +31,10 @@ export default function Jadwal({ ctx }) {
 
   const ta = filters?.ta || '';
 
+  useEffect(() => {
+    if (ctx.guide?.page === 'jadwal' && ctx.guide.tab) setTab(ctx.guide.tab);
+  }, [ctx.guide?.runId]);
+
   const load = useCallback(() => {
     setLoading(true);
     api('/api/jadwal?ta=' + encodeURIComponent(ta))
@@ -139,7 +143,7 @@ export default function Jadwal({ ctx }) {
           <a className="btn-ghost"
             href={(window.__BASE__ || '') + '/api/jadwal/cetak?ta=' + encodeURIComponent(ta)
               + '&mode=' + view + (view === 'kelas' && kelasId ? '&kelas=' + kelasId : '') + (guruId ? '&guru=' + guruId : '')}
-            target="_blank" rel="noreferrer" data-cetak-jadwal><Printer size={15} /> Cetak / PDF</a>
+            target="_blank" rel="noreferrer" data-cetak-jadwal data-tour-id="btn-cetak-jadwal"><Printer size={15} /> Cetak / PDF</a>
           <button className="btn-primary" onClick={() => setPubOpen(true)} data-open-publik><Link2 size={15} /> Link Publik</button>
         </div>
       </div>
@@ -322,12 +326,16 @@ function Matriks({
     }
   });
 
-  const kosongBtn = (hari, sesiIdx, kelasAwal, s) => (
+  let tourSlotAssigned = false;
+  const kosongBtn = (hari, sesiIdx, kelasAwal, s) => {
+    const tourId = tourSlotAssigned ? undefined : 'btn-tambah-jadwal';
+    tourSlotAssigned = true;
+    return (
     <button type="button" onClick={() => ctx.can('jadwal', 'write') && onEdit({ hari, sesi: sesiIdx, kelas_ids: kelasAwal ? [kelasAwal.id] : [] })}
       style={{ minHeight: s ? tinggiSesi(s) : 52 }}
       className="flex w-full flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-slate-200 px-1 py-1 text-slate-300 transition hover:border-orange-300 hover:bg-orange-50/50 hover:text-orange-500"
       data-slot-kosong={`${hari}-${sesiIdx}${kelasAwal ? '-' + kelasAwal.id : ''}`}
-      data-guide-target="setup-schedule-add"
+      data-guide-target="setup-schedule-add" data-tour-id={tourId}
       data-slot-kosong-sesi={sesiIdx}>
       <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400" data-slot-kosong-label>
         {labelSesi(s)}
@@ -335,7 +343,8 @@ function Matriks({
       <span className="text-[9px] font-semibold text-slate-400">{s ? `${s.mulai}–${s.selesai}` : ''}</span>
       <Plus size={14} />
     </button>
-  );
+    );
+  };
 
   /* ---------- grid horizontal per kelas / per guru ----------
      Tiap kolom hari merender SESINYA SENDIRI (day-specific time slots),

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, CheckCircle2, Circle, Loader2, MousePointerClick, Sparkles } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Circle, Loader2, MousePointerClick, Sparkles, X } from 'lucide-react';
 import { api } from '../api';
 import { Card, cx, useToast } from '../ui';
 
@@ -44,6 +44,7 @@ export default function SetupChecklist({ ctx }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     if (boot?.user?.role !== 'admin') return;
@@ -67,18 +68,27 @@ export default function SetupChecklist({ ctx }) {
   const done = Number(data?.completed) || 0;
   const total = Number(data?.total) || STEPS.length;
   const percent = total ? Math.round((done / total) * 100) : 0;
+  if (dismissed || (data && total > 0 && done >= total)) return null;
+
+  const status = loading
+    ? <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400"><Loader2 size={13} className="animate-spin" /> Memeriksa</span>
+    : error
+      ? <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-extrabold text-rose-700">Tidak tersedia</span>
+      : <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-extrabold text-amber-800">
+        {done}/{total} selesai · {percent}%
+      </span>;
 
   return (
     <div data-setup-checklist>
       <Card title="Siapkan Sekolah Anda" subtitle="Checklist setup awal untuk mulai menggunakan aplikasi"
-        right={loading
-          ? <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400"><Loader2 size={13} className="animate-spin" /> Memeriksa</span>
-          : error
-            ? <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-extrabold text-rose-700">Tidak tersedia</span>
-          : <span className={cx('rounded-full px-2.5 py-1 text-[11px] font-extrabold',
-            percent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
-            {done}/{total} selesai · {percent}%
-          </span>}>
+        right={<div className="flex items-center gap-2">
+          {status}
+          <button type="button" onClick={() => setDismissed(true)}
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Tutup checklist setup awal" title="Tutup checklist" data-setup-close>
+            <X size={15} />
+          </button>
+        </div>}>
         {error ? (
           <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-[12px] text-rose-800">
             <p>Checklist setup gagal dimuat: {error}</p>

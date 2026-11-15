@@ -96,6 +96,22 @@ Variabel lingkungan baru: `SAAS_DB_PATH` (control plane), `SAAS_ADMIN_USER`, `SA
 Bila `DB_PATH` diarahkan ke tempat lain (mis. saat pengujian), control plane & folder database sekolah
 otomatis ikut ke folder tersebut supaya data produksi tidak tersentuh.
 
+### AI Tutorial edupoin
+
+Widget bantuan sekolah memakai endpoint AI yang kompatibel dengan OpenAI. Atur variabel berikut pada
+Railway Variables; API key hanya dibaca server dan tidak pernah dikirim ke browser:
+
+| Variabel | Nilai |
+|---|---|
+| `EDUPOIN_AI_API_KEY` | API key penyedia AI |
+| `EDUPOIN_AI_BASE_URL` | Opsional; default `https://api.openai.com/v1` |
+| `EDUPOIN_AI_MODEL` | Opsional; default `gpt-4o-mini` |
+
+Endpoint publik harus menggunakan HTTPS; HTTP hanya diizinkan untuk `localhost` saat pengembangan.
+Chat mengirim pertanyaan dan dokumentasi FAQ yang relevan saja, bukan database tenant atau data siswa.
+Target tombol yang dapat disorot dibatasi ke daftar dokumentasi dan izin role pengguna. Tanpa API key,
+widget tetap memberi tahu bahwa layanan belum dikonfigurasi.
+
 ### Deploy di Railway
 
 SQLite harus disimpan pada **Railway Volume** agar akun dan data tidak hilang saat deploy ulang.

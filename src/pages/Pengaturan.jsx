@@ -126,7 +126,8 @@ export default function Pengaturan({ ctx }) {
 
       <div className="tabs">
         {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={cx('tab flex items-center gap-1.5', tab === t.key && 'active')}>
+          <button key={t.key} onClick={() => setTab(t.key)} className={cx('tab flex items-center gap-1.5', tab === t.key && 'active')}
+            data-tour-id={t.key === 'wa' ? 'btn-fonnte-wa' : undefined}>
             <t.icon size={14} /> {t.label}
           </button>
         ))}

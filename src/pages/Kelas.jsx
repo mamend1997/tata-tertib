@@ -38,7 +38,7 @@ export default function Kelas({ ctx }) {
         <div className="flex flex-wrap gap-2">
           <button className="btn-ghost" onClick={() => setImportOpen(true)}><Upload size={15} /> Import Excel</button>
           <a className="btn-ghost" href={(window.__BASE__ || '') + '/api/kelas-template.xlsx'} download><Download size={15} /> Template</a>
-          {can('kelas', 'write') ? <button className="btn-primary" onClick={() => setEdit({ tingkat: tingkatAwal })} data-guide-target="setup-class-add"><Plus size={15} /> Tambah Kelas</button> : null}
+          {can('kelas', 'write') ? <button className="btn-primary" onClick={() => setEdit({ tingkat: tingkatAwal })} data-guide-target="setup-class-add" data-tour-id="btn-tambah-kelas"><Plus size={15} /> Tambah Kelas</button> : null}
         </div>
       </div>
 

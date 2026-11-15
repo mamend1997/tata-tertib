@@ -130,7 +130,7 @@ export default function AbsensiGuru({ ctx }) {
     <div className="space-y-4" data-page="absensi-guru">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-[19px] font-extrabold text-slate-800">Absensi Guru Mengajar</h2>
+          <h2 className="text-[19px] font-extrabold text-slate-800" data-tour-id="btn-jurnal-mengajar">Absensi Guru Mengajar</h2>
           <p className="text-[12.5px] text-slate-500">
             Tombol Check-in / Sakit / Izin hanya aktif selama jam pelajaran berlangsung. Tanpa check-in sampai jam
             berakhir, status guru otomatis tercatat <b>ALFA</b> dan terkunci.
@@ -270,7 +270,7 @@ export default function AbsensiGuru({ ctx }) {
           <Empty icon={CalendarClock} title="Tidak ada jadwal mengajar" desc={data?.lihat_semua ? 'Belum ada slot jadwal pada tanggal ini.' : 'Belum ada slot jadwal untuk Anda pada tanggal ini. Hubungi Wakasek Kurikulum bila jadwal belum diatur.'} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {jadwal.map(j => {
+            {jadwal.map((j, index) => {
               const a = j.absensi;
               const tone = a ? STATUS_TONE[a.status] : 'badge-netral';
               const bisa = !!j.bisa_checkin;
@@ -313,7 +313,7 @@ export default function AbsensiGuru({ ctx }) {
                     <button type="button" disabled={!bisa || busyId === j.id}
                       onClick={() => checkin(j, 'hadir')}
                       className={cx('btn btn-sm justify-center', bisa ? 'bg-emerald-600 text-white hover:brightness-95' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
-                      data-checkin={j.id}>
+                      data-checkin={j.id} data-tour-id={index === 0 ? 'btn-checkin-guru' : undefined}>
                       {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <UserCheck size={13} />} Check-in Hadir
                     </button>
                     <button type="button" disabled={!bisa || busyId === j.id}

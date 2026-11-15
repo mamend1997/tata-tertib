@@ -507,7 +507,7 @@ export default function GeneratorJadwal({ ctx, ta, onApplied }) {
             <button className="btn-ghost btn-sm" onClick={ulangi} disabled={!hasil || !!busy} data-ulangi-jadwal>
               <RefreshCw size={13} /> Ulangi / Reset
             </button>
-            <button className="btn-primary btn-sm" onClick={generate} disabled={!!busy} data-generate-jadwal>
+            <button className="btn-primary btn-sm" onClick={generate} disabled={!!busy} data-generate-jadwal data-tour-id="btn-generate-ai">
               {busy === 'generate' ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Generate Jadwal Otomatis
             </button>
           </div>

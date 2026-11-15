@@ -11,6 +11,7 @@ import { applyTheme } from './theme';
 import { setFavicon } from './branding';
 import { Avatar, Modal, Spinner, StatusBadge, ToastProvider, cx, useToast } from './ui';
 import GuideHighlight from './components/GuideHighlight';
+import HelpChatWidget from './components/HelpChatWidget';
 import Portal from './pages/Portal';
 import Login from './pages/Login';
 import Maintenance from './pages/Maintenance';
@@ -330,6 +331,16 @@ function AdminApp({ daftarAwal = false }) {
     setGuide({ ...step, runId: Date.now() + Math.random() });
     if (step.page) setPage(step.page);
   }, []);
+  const showAssistantTour = useCallback(tour => {
+    if (!tour || !tour.id) return;
+    if (tour.feature && !can(tour.feature, 'view')) {
+      toast.err('Menu tersebut tidak tersedia untuk role Anda.');
+      return;
+    }
+    setGuide({ ...tour, tourId: tour.id, runId: Date.now() + Math.random() });
+    if (tour.page) setPage(tour.page);
+    else if (tour.group) setNavOpen(true);
+  }, [can, toast]);
 
   const navItems = useMemo(() => {
     const nav = boot?.settings?.nav || [];
@@ -425,7 +436,7 @@ function AdminApp({ daftarAwal = false }) {
   const ctx = {
     boot, can, filters, setFilters, toast, refreshKey,
     reloadBoot: load,
-    guide, startGuide, stopGuide,
+    guide, startGuide, stopGuide, showAssistantTour,
     page, setPage,
     openSiswaCard: (id) => { setOpenSiswaId(Number(id)); setPage('siswa'); },
     openSiswaId, clearOpenSiswa: () => setOpenSiswaId(null),
@@ -604,7 +615,8 @@ function AdminApp({ daftarAwal = false }) {
                   <button type="button" onClick={toggleGroup} aria-expanded={showItems}
                     title={grup}
                     className={cx('mb-1 flex w-full items-center gap-1.5 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 transition hover:bg-slate-50 hover:text-slate-600',
-                      sideCollapsed && !hoverOpen && 'lg:justify-center lg:px-0')}>
+                      sideCollapsed && !hoverOpen && 'lg:justify-center lg:px-0')}
+                    data-tour-id={grup === 'Akademik' ? 'menu-akademik' : undefined}>
                     <span className={cx('min-w-0 flex-1 truncate text-left', sideCollapsed && !hoverOpen && 'lg:hidden')}>{grup}</span>
                     <ChevronDown size={12} className={cx('shrink-0 transition-transform', showItems && 'rotate-180', sideCollapsed && !hoverOpen && 'lg:hidden')} />
                   </button>
@@ -677,6 +689,7 @@ function AdminApp({ daftarAwal = false }) {
       <BottomNav items={bottomNav} page={page} onPick={(k) => { setPage(k); setNavOpen(false); }} />
 
       <GuideHighlight guide={guide} onClose={stopGuide} />
+      <HelpChatWidget onShowTour={showAssistantTour} />
 
       <footer className="no-print mx-auto max-w-[1600px] px-4 pb-28 pt-2 text-center text-[11.5px] text-slate-400 lg:pb-6">
         {appName} v{boot.version} · {settings.sekolah_nama}

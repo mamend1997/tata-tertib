@@ -223,7 +223,7 @@ export default function KalenderAkademik({ ctx }) {
           {/* EKSPOR & CETAK (kop + 3 tanda tangan, dipisah per semester) */}
           <span className="mx-1 hidden h-5 w-px bg-slate-300 sm:block" />
           {/* CETAK: pilih cakupan (satu tahun / per semester) & orientasi kertas */}
-          <button className="btn-ghost btn-sm" onClick={() => setCetakOpen(true)} data-kal-cetak>
+          <button className="btn-ghost btn-sm" onClick={() => setCetakOpen(true)} data-kal-cetak data-tour-id="btn-cetak-kalender">
             <Printer size={14} /> Cetak / Simpan PDF
           </button>
           <a className="btn-ghost btn-sm" href={docUrl('/api/kalender-akademik/export?ta=' + encodeURIComponent(ta))} data-kal-excel>

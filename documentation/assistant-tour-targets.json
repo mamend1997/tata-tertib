@@ -1,0 +1,95 @@
+[
+  {
+    "id": "menu-akademik",
+    "title": "Menu Akademik",
+    "description": "Grup ini memuat Jadwal Pelajaran, Kalender Akademik, serta menu absensi yang tersedia sesuai hak akses Anda.",
+    "feature": "jadwal",
+    "group": "Akademik"
+  },
+  {
+    "id": "btn-tambah-jadwal",
+    "title": "Tambah slot jadwal",
+    "description": "Pilih slot kosong untuk menambahkan jadwal. Pastikan mata pelajaran dan guru pengampunya sudah diatur.",
+    "page": "jadwal",
+    "feature": "jadwal",
+    "action": "write"
+  },
+  {
+    "id": "btn-cetak-jadwal",
+    "title": "Cetak jadwal",
+    "description": "Buka dokumen jadwal untuk dicetak atau disimpan sebagai PDF.",
+    "page": "jadwal",
+    "feature": "jadwal"
+  },
+  {
+    "id": "btn-generate-ai",
+    "title": "Generate jadwal otomatis",
+    "description": "Atur parameter generator, lalu buat pratinjau jadwal otomatis sebelum menerapkannya.",
+    "page": "jadwal",
+    "tab": "ai",
+    "feature": "jadwal",
+    "action": "write"
+  },
+  {
+    "id": "btn-cetak-kalender",
+    "title": "Cetak Kalender Akademik",
+    "description": "Pilih cakupan tahun atau semester serta orientasi kertas, lalu buka dokumen cetak.",
+    "page": "kalender_akademik",
+    "feature": "kalender_akademik"
+  },
+  {
+    "id": "btn-checkin-guru",
+    "title": "Check-in Guru",
+    "description": "Check-in hanya tersedia selama jendela waktu pelajaran. Setelah hadir, lanjutkan absensi siswa, jurnal, dan foto sesuai alur yang ditampilkan.",
+    "page": "absensi_guru",
+    "feature": "absensi_guru",
+    "action": "write"
+  },
+  {
+    "id": "btn-absensi-siswa",
+    "title": "Buka absensi siswa",
+    "description": "Pilih sesi jadwal yang aktif, lalu buka presensi untuk mencatat kehadiran siswa.",
+    "page": "absensi_siswa",
+    "feature": "absensi_siswa"
+  },
+  {
+    "id": "btn-jurnal-mengajar",
+    "title": "Jurnal mengajar",
+    "description": "Setelah check-in dan absensi siswa lengkap, lanjutkan alur jurnal mengajar dari kartu sesi.",
+    "page": "absensi_guru",
+    "feature": "absensi_guru",
+    "action": "write"
+  },
+  {
+    "id": "btn-fonnte-wa",
+    "title": "Pengaturan WhatsApp Fonnte",
+    "description": "Atur gateway pada Pengaturan → WhatsApp Gateway. Simpan token gateway hanya di aplikasi, jangan membagikannya melalui chat.",
+    "page": "pengaturan",
+    "tab": "wa",
+    "feature": "pengaturan"
+  },
+  {
+    "id": "btn-tambah-guru",
+    "title": "Tambah akun guru atau pegawai",
+    "description": "Tambahkan akun melalui menu Pengguna dan pilih role yang sesuai.",
+    "page": "pengguna",
+    "feature": "pengguna",
+    "action": "write"
+  },
+  {
+    "id": "btn-tambah-kelas",
+    "title": "Tambah kelas",
+    "description": "Buat rombongan belajar pada menu Kelas sebelum menempatkan siswa ke kelas.",
+    "page": "kelas",
+    "feature": "kelas",
+    "action": "write"
+  },
+  {
+    "id": "btn-tambah-siswa",
+    "title": "Tambah siswa",
+    "description": "Tambahkan data siswa pada menu Siswa atau gunakan fitur impor yang tersedia.",
+    "page": "siswa",
+    "feature": "siswa",
+    "action": "write"
+  }
+]

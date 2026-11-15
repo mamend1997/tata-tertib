@@ -6,7 +6,7 @@ export default function GuideHighlight({ guide, onClose }) {
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
-    if (!guide?.target) return undefined;
+    if (!guide?.target && !guide?.tourId) return undefined;
     let target = null;
     let timer = 0;
     let attempts = 0;
@@ -23,7 +23,10 @@ export default function GuideHighlight({ guide, onClose }) {
     };
     const targetClicked = () => onClose();
     const locate = () => {
-      const candidate = document.querySelector(`[data-guide-target="${guide.target}"]`);
+      const selector = guide.tourId
+        ? `[data-tour-id="${guide.tourId}"]`
+        : `[data-guide-target="${guide.target}"]`;
+      const candidate = document.querySelector(selector);
       if (candidate) {
         target = candidate;
         setMissing(false);
@@ -66,7 +69,7 @@ export default function GuideHighlight({ guide, onClose }) {
       }
       window.removeEventListener('keydown', escape);
     };
-  }, [guide?.runId, guide?.target, onClose]);
+  }, [guide?.runId, guide?.target, guide?.tourId, onClose]);
 
   if (!guide) return null;
 
@@ -82,11 +85,12 @@ export default function GuideHighlight({ guide, onClose }) {
       ? rect.bottom + 12
       : Math.max(12, rect.top - cardHeight - 12))
     : Math.max(24, (viewportHeight - cardHeight) / 2);
+  const tooltipBelow = !rect || top >= rect.bottom;
 
   return (
     <>
       {rect ? (
-        <div aria-hidden="true" className="fixed z-[1000] rounded-lg border-[3px] border-emerald-400"
+        <div aria-hidden="true" className="fixed z-[1000] animate-pulse rounded-lg border-[3px] border-emerald-400"
           style={{
             top: Math.max(2, rect.top - 4), left: Math.max(2, rect.left - 4),
             width: Math.max(20, rect.width + 8), height: Math.max(20, rect.height + 8),
@@ -96,6 +100,10 @@ export default function GuideHighlight({ guide, onClose }) {
       <section role="dialog" aria-modal="false" aria-live="polite"
         className="fixed z-[1001] w-[min(344px,calc(100vw-24px))] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
         style={{ top, left, pointerEvents: 'auto' }}>
+        {rect ? <span aria-hidden="true"
+          className={`absolute left-6 h-3 w-3 rotate-45 border-slate-200 bg-white ${tooltipBelow
+            ? '-top-1.5 border-l border-t'
+            : '-bottom-1.5 border-b border-r'}`} /> : null}
         <div className="flex items-start gap-2.5">
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-orange-100 text-orange-700"><Sparkles size={16} /></span>
           <div className="min-w-0 flex-1">

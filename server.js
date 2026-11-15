@@ -14,6 +14,7 @@ const lib = require('./lib');
 const doc = require('./doc');
 const saas = require('./saas');
 const telegramBackup = require('./telegram-backup');
+const assistantHelp = require('./assistant');
 const { db } = dbm;
 
 const PORT = Number(process.env.PORT || 3000);
@@ -653,6 +654,97 @@ const routes = [];
 const get = (p, fn, opt) => routes.push({ method: 'GET', p, fn, opt: opt || {} });
 const post = (p, fn, opt) => routes.push({ method: 'POST', p, fn, opt: opt || {} });
 const del = (p, fn, opt) => routes.push({ method: 'DELETE', p, fn, opt: opt || {} });
+const assistantRate = new Map();
+
+post('/api/assistant/chat', async (req, res) => {
+  const user = guard(req, res, 'dashboard', 'view');
+  if (!user) return;
+  const session = sessionFrom(req);
+  if (!session || session.scope !== 'tenant') return fail(res, 403, 'Asisten edupoin hanya tersedia untuk pengguna sekolah.');
+
+  const body = await readBody(req, 16 * 1024);
+  const question = String(body.message || '').trim();
+  if (!question || question.length > 1200) return fail(res, 400, 'Pertanyaan wajib diisi dan maksimal 1.200 karakter.');
+  const history = (Array.isArray(body.history) ? body.history : [])
+    .filter(item => item && (item.role === 'user' || item.role === 'assistant'))
+    .slice(-8)
+    .map(item => ({ role: item.role, content: String(item.content || '').trim().slice(0, 1000) }))
+    .filter(item => item.content);
+  const scopeText = [...history.filter(item => item.role === 'user').map(item => item.content), question].join(' ');
+  if (!assistantHelp.isInScope(scopeText)) {
+    return json(res, 200, { ok: true, answer: assistantHelp.REFUSAL, tour: null });
+  }
+
+  const now = Date.now();
+  const rateKey = session.sid;
+  const rate = assistantRate.get(rateKey) || { start: now, count: 0 };
+  if (now - rate.start >= 60_000) { rate.start = now; rate.count = 0; }
+  if (rate.count >= 10) return fail(res, 429, 'Batas pertanyaan sementara tercapai. Coba lagi dalam satu menit.');
+  rate.count += 1;
+  assistantRate.set(rateKey, rate);
+  if (assistantRate.size > 500) {
+    for (const [key, value] of assistantRate) if (now - value.start > 60_000) assistantRate.delete(key);
+  }
+
+  const apiKey = String(process.env.EDUPOIN_AI_API_KEY || '').trim();
+  if (!apiKey) return fail(res, 503, 'Asisten AI belum dikonfigurasi. Administrator perlu menambahkan EDUPOIN_AI_API_KEY pada environment server.');
+
+  const allowedTargets = assistantHelp.TARGETS.filter(target =>
+    (!target.feature || (dbm.can(user, target.feature, target.action || 'view') && fiturBoleh(req, target.feature)))
+  );
+  const baseUrl = String(process.env.EDUPOIN_AI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const model = String(process.env.EDUPOIN_AI_MODEL || 'gpt-4o-mini').trim();
+  let endpoint;
+  try {
+    const parsed = new URL(baseUrl);
+    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('protocol');
+    const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !localHttp) throw new Error('insecure');
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('url');
+    endpoint = new URL('chat/completions', baseUrl + '/').toString();
+  } catch (e) {
+    return fail(res, 503, 'EDUPOIN_AI_BASE_URL harus URL HTTPS yang valid (HTTP hanya diizinkan untuk localhost).');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+  try {
+    const providerRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 700,
+        messages: [
+          { role: 'system', content: assistantHelp.buildSystemPrompt(allowedTargets) },
+          ...history,
+          { role: 'user', content: question }
+        ]
+      })
+    });
+    if (!providerRes.ok) {
+      console.error(`[assistant] penyedia AI merespons HTTP ${providerRes.status}`);
+      return fail(res, 502, 'Asisten AI sedang tidak dapat dihubungi. Coba lagi beberapa saat.');
+    }
+    const providerData = await providerRes.json();
+    const content = providerData && providerData.choices && providerData.choices[0]
+      && providerData.choices[0].message && providerData.choices[0].message.content;
+    const parsed = assistantHelp.parseAssistantReply(content);
+    if (!parsed.answer) return fail(res, 502, 'Jawaban asisten tidak dapat diproses. Silakan coba lagi.');
+    const target = allowedTargets.find(item => item.id === parsed.tourId) || null;
+    json(res, 200, { ok: true, answer: parsed.answer, tour: target });
+  } catch (e) {
+    const timedOut = e && e.name === 'AbortError';
+    console.error(`[assistant] ${timedOut ? 'waktu permintaan habis' : 'gagal menghubungi penyedia AI'}`);
+    fail(res, 502, timedOut
+      ? 'Asisten AI membutuhkan waktu terlalu lama. Coba lagi.'
+      : 'Asisten AI sedang tidak tersedia. Periksa koneksi server lalu coba lagi.');
+  } finally {
+    clearTimeout(timeout);
+  }
+});
 
 /* ---------- rute platform (panel Super Admin + langganan sekolah) ---------- */
 /* nama aplikasi GLOBAL (Branding Sistem) dipakai semua pembaca allSettings():
