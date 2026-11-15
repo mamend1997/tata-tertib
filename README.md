@@ -132,8 +132,9 @@ Jika menetapkan `DB_PATH` atau `SAAS_DB_PATH` sendiri, arahkan keduanya ke Volum
 Deploy otomatis dijalankan oleh GitHub Actions setiap ada push ke branch `main`. Siapkan
 `RAILWAY_TOKEN` sebagai repository secret dan `RAILWAY_SERVICE` sebagai repository variable
 di **GitHub → Settings → Secrets and variables → Actions**. Token harus memiliki akses deploy
-ke project Railway tujuan; isi variable dengan nama atau ID service Railway. Workflow membangun
-aplikasi (`npm run build`) sebelum menjalankan `npm start` di Railway.
+ke project Railway tujuan; isi variable dengan nama atau ID service Railway. Build memakai
+Railpack dan Node.js 22+ (dibutuhkan dependency SQLite native), menjalankan `npm run build`,
+lalu menjalankan `npm start` di Railway.
 
 Kuota penyimpanan aplikasi bawaan adalah **5 GB (5120 MB)**. Migrasi otomatis menaikkan nilai
 lama yang masih tepat 1 GB; kuota lain yang sudah dikustomisasi tetap dipertahankan. Kuota ini
