@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { chromium } = require('playwright');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-uisaas-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -24,7 +25,27 @@ const MENUS = ['Dashboard', 'Daftar Sekolah', 'Pembayaran & Penagihan', 'Paket L
   'Branding Sistem', 'QRIS & Harga', 'Syarat & SLA', 'Pusat Tiket', 'Pengumuman & Maintenance',
   'Petunjuk Pengguna', 'Audit Logs', 'WhatsApp Gateway', 'Backup & Restore', 'Database Manager'];
 
+function apiClient() {
+  let cookie = '';
+  return {
+    async req(p, options = {}) {
+      const response = await fetch(BASE + p, {
+        method: options.method || 'GET',
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(cookie ? { Cookie: cookie } : {})
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined
+      });
+      const cookies = response.headers.getSetCookie ? response.headers.getSetCookie() : [];
+      if (cookies.length) cookie = cookies.map(value => value.split(';')[0]).join('; ');
+      return { status: response.status, body: await response.json().catch(() => null) };
+    }
+  };
+}
+
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -37,6 +58,7 @@ const MENUS = ['Dashboard', 'Daftar Sekolah', 'Pembayaran & Penagihan', 'Paket L
   const browser = await chromium.launch();
   const errors = [];
   try {
+    await otpTest.configure(apiClient(), gateway.url);
     /* ---------- 1. HALAMAN LOGIN + PENDAFTARAN ---------- */
     console.log('\n== LOGIN & PENDAFTARAN MANDIRI ==');
     let ctx = await browser.newContext({ viewport: { width: 1440, height: 950 } });
@@ -68,6 +90,9 @@ const MENUS = ['Dashboard', 'Daftar Sekolah', 'Pembayaran & Penagihan', 'Paket L
     await page.locator('input[type="password"]').nth(1).fill('Rahasia123');
     /* anti-spam: server menolak form yang dikirim < 4 detik sejak dibuka */
     await page.waitForTimeout(4500);
+    gateway.clearCode();
+    await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
+    await page.fill('input[placeholder="000000"]', await gateway.waitForCode());
     await page.click('button:has-text("Coba Gratis")');
     await page.waitForTimeout(1400);
     const sukses = (await page.locator('text=Pendaftaran Berhasil').count()) > 0;
@@ -278,6 +303,7 @@ const MENUS = ['Dashboard', 'Daftar Sekolah', 'Pembayaran & Penagihan', 'Paket L
   } finally {
     await browser.close().catch(() => {});
     srv.kill('SIGKILL');
+    await gateway.close().catch(() => {});
     await new Promise(r => setTimeout(r, 300));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL UI SAAS: ${pass} lulus, ${fail} gagal ===`);

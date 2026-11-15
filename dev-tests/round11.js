@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-r11-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -48,6 +49,7 @@ function client() {
 }
 
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -61,6 +63,7 @@ function client() {
       try { const r = await fetch(BASE + '/api/public/config'); if (r.ok) break; } catch (e) { /* belum siap */ }
       await new Promise(r => setTimeout(r, 250));
     }
+    await otpTest.configure(client(), gateway.url);
     const pub = client();
     const su = client();
     const t1 = client();
@@ -149,11 +152,11 @@ function client() {
     /* ============ 5. ISOLASI PORTAL ANTAR SEKOLAH ============ */
     console.log('\n== ISOLASI PORTAL ANTAR SEKOLAH ==');
     await su.req('/api/super/branding', { method: 'POST', body: { daftar_min_detik: 1, daftar_limit_jam: 10, daftar_limit_hari: 20 } });
-    r = await pub.req('/api/daftar', { method: 'POST', body: {
+    r = await pub.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(pub, gateway, {
       nama_sekolah: 'SMP Negeri 9 Uji Portal', jenjang: 'SMP', alamat: 'Jl. Portal Uji 9',
       kepala: 'Kepala Uji', admin_nama: 'Admin Portal', email: 'admin@smpn9uji.sch.id',
       password: 'Rahasia123', password2: 'Rahasia123', telp: '081277770009', t0: Date.now() - 10000
-    } });
+    }) });
     ok('sekolah kedua terdaftar', r.status === 200 && /^\d{4}$/.test(String(r.body.kode)), JSON.stringify(r.body).slice(0, 120));
     const kode2 = r.body.kode;
     await pub.req('/api/login', { method: 'POST', body: { username: r.body.admin_username, password: 'Rahasia123', kode: kode2 } });
@@ -215,6 +218,7 @@ function client() {
     console.error(log.join('').slice(-1200));
   } finally {
     srv.kill('SIGKILL');
+    await gateway.close().catch(() => {});
     await new Promise(r => setTimeout(r, 200));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL RONDE 11: ${pass} lulus, ${fail} gagal ===`);

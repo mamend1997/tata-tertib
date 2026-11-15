@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const Database = require('better-sqlite3');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-r9-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -55,6 +56,7 @@ function client() {
 }
 
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -82,6 +84,7 @@ function client() {
     ok('portal super: sandi salah ditolak 401', r.status === 401, String(r.status));
     r = await su.req('/api/super/login', { method: 'POST', body: { username: 'superadmin', password: 'superadmin123' } });
     ok('portal super: login berhasil & scope super', r.status === 200 && r.body.scope === 'super', JSON.stringify(r.body).slice(0, 100));
+    await otpTest.configure(su, gateway.url);
     r = await su.req('/api/bootstrap');
     ok('bootstrap panel super memakai scope super', r.body.scope === 'super');
     ok('bootstrap super memuat branding global', !!r.body.platform && r.body.platform.app_nama === 'SMART TATA TERTIB SISWA', JSON.stringify(r.body.platform || {}).slice(0, 120));
@@ -144,7 +147,7 @@ function client() {
     /* batas per IP: set 1 pendaftaran/jam */
     r = await su.req('/api/super/branding', { method: 'POST', body: { daftar_limit_jam: 1, daftar_limit_hari: 5, daftar_min_detik: 1 } });
     ok('batas pendaftaran dapat diatur Super Admin', r.status === 200 && r.body.platform.daftar_limit_jam === 1, JSON.stringify(r.body.platform || {}).slice(0, 100));
-    r = await pub.req('/api/daftar', { method: 'POST', body: { ...badan(4), t0: Date.now() - 10000 } });
+    r = await pub.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(pub, gateway, { ...badan(4), t0: Date.now() - 10000 }) });
     ok('pendaftaran pertama dalam batas berhasil', r.status === 200 && /^\d{4}$/.test(String(r.body.kode)), JSON.stringify(r.body).slice(0, 120));
     r = await pub.req('/api/daftar', { method: 'POST', body: { ...badan(5), t0: Date.now() - 10000 } });
     ok('pendaftaran melebihi batas per IP ditolak 429', r.status === 429 && /terlalu banyak/i.test(r.body.error), r.body.error);
@@ -263,6 +266,7 @@ function client() {
     console.error(log.join('').slice(-1500));
   } finally {
     srv.kill('SIGKILL');
+    await gateway.close().catch(() => {});
     await new Promise(r => setTimeout(r, 200));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL RONDE 9: ${pass} lulus, ${fail} gagal ===`);

@@ -13,6 +13,7 @@
    ===================================================================== */
 const xr = require('./xlsx-read');
 const telegramBackup = require('./telegram-backup');
+const crypto = require('crypto');
 
 module.exports = function mount(apiCtx) {
   const {
@@ -47,6 +48,11 @@ module.exports = function mount(apiCtx) {
   const superHits = new Map();
   /* pembatas pendaftaran mandiri (anti-spam, per IP) */
   const daftarHits = new Map();
+  const daftarOtp = new Map();
+  const daftarOtpPhoneHits = new Map();
+  const daftarOtpIpHits = new Map();
+  const daftarOtpSecret = crypto.randomBytes(32);
+  let daftarOtpCleanupCounter = 0;
   const adminName = req => {
     const c = apiCtx.contextOf ? apiCtx.contextOf(req) : null;
     return (c && c.user && c.user.nama) || 'Super Admin';
@@ -56,10 +62,104 @@ module.exports = function mount(apiCtx) {
   const bool = v => v === true || v === 1 || v === '1' || v === 'on' || v === 'true';
   const money = v => lib.parseMoney(v);
   const mapBulan = m => (Number(m) >= 12 ? 12 : 1);
+  const otpHash = (phone, code) => crypto.createHmac('sha256', daftarOtpSecret)
+    .update(`${phone}:${code}`).digest();
+  const otpRateAllow = (store, key, limit, now) => {
+    const hits = (store.get(key) || []).filter(t => now - t < 3600 * 1000);
+    if (hits.length >= limit) {
+      store.set(key, hits);
+      return false;
+    }
+    hits.push(now);
+    store.set(key, hits);
+    return true;
+  };
+  const cleanupDaftarOtp = now => {
+    if (++daftarOtpCleanupCounter % 32 !== 0) return;
+    for (const [phone, row] of daftarOtp) {
+      if (row.expiresAt <= now) daftarOtp.delete(phone);
+    }
+    for (const store of [daftarOtpPhoneHits, daftarOtpIpHits]) {
+      for (const [key, hits] of store) {
+        const recent = hits.filter(t => now - t < 3600 * 1000);
+        if (recent.length) store.set(key, recent);
+        else store.delete(key);
+      }
+    }
+  };
+  const maskPhone = phone => `••••${phone.slice(-4)}`;
+  const checkDaftarOtp = (phone, value) => {
+    const row = daftarOtp.get(phone);
+    if (!row || !row.sent || row.expiresAt <= Date.now()) {
+      daftarOtp.delete(phone);
+      return { ok: false, error: 'Kode OTP belum dikirim atau sudah kedaluwarsa. Minta kode baru.' };
+    }
+    if (row.attempts >= 5) {
+      daftarOtp.delete(phone);
+      return { ok: false, error: 'Batas percobaan OTP tercapai. Minta kode baru.' };
+    }
+    if (!/^\d{6}$/.test(String(value || ''))) {
+      return { ok: false, error: 'Masukkan kode OTP 6 digit yang dikirim ke WhatsApp.' };
+    }
+    const candidate = otpHash(phone, String(value));
+    if (!crypto.timingSafeEqual(row.hash, candidate)) {
+      row.attempts++;
+      if (row.attempts >= 5) daftarOtp.delete(phone);
+      return { ok: false, error: row.attempts >= 5
+        ? 'Batas percobaan OTP tercapai. Minta kode baru.'
+        : 'Kode OTP salah. Periksa kembali kode WhatsApp Anda.' };
+    }
+    daftarOtp.delete(phone);
+    return { ok: true };
+  };
 
   /* =================================================================
      BAGIAN A — PUBLIK: PENDAFTARAN SEKOLAH MANDIRI
      ================================================================= */
+  post('/api/daftar/otp', async (req, res) => {
+    const b = await readBody(req);
+    const platform = saas.branding();
+    if (!platform.pendaftaran_aktif) return fail(res, 403, 'Pendaftaran sekolah baru sedang ditutup. Hubungi layanan dukungan.');
+    if (platform.maintenance) return fail(res, 503, platform.maintenance_pesan || 'Sistem sedang dalam pemeliharaan.');
+    if (String(b.website || b.url_situs || '').trim()) {
+      return fail(res, 400, 'Permintaan ditolak karena aktivitas otomatis terdeteksi.');
+    }
+
+    const phone = lib.normPhone(b.telp || b.whatsapp || b.no_wa || '');
+    if (!phone) return fail(res, 400, 'Nomor WhatsApp tidak valid (contoh 0812xxxxxxx).');
+    const cfg = saas.waConfig();
+    if (!cfg.aktif || !cfg.url) {
+      return fail(res, 503, 'Verifikasi OTP belum tersedia. Administrator perlu mengaktifkan WhatsApp Gateway pada Super Admin.');
+    }
+
+    const now = Date.now();
+    cleanupDaftarOtp(now);
+    const current = daftarOtp.get(phone);
+    if (current && now - current.sentAt < 60 * 1000) {
+      return fail(res, 429, `Tunggu ${Math.ceil((60 * 1000 - (now - current.sentAt)) / 1000)} detik sebelum meminta kode lagi.`);
+    }
+    const ip = ipOf(req);
+    if (!otpRateAllow(daftarOtpPhoneHits, phone, 3, now)
+      || !otpRateAllow(daftarOtpIpHits, ip, 10, now)) {
+      return fail(res, 429, 'Batas permintaan OTP tercapai. Coba lagi satu jam lagi.');
+    }
+
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const row = { hash: otpHash(phone, code), sentAt: now, expiresAt: now + 5 * 60 * 1000, attempts: 0, sent: false };
+    daftarOtp.set(phone, row);
+    const sent = await saas.waSend(phone,
+      `Kode verifikasi pendaftaran edupoin Anda: ${code}. Kode berlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.`,
+      { jenis: 'otp-pendaftaran', logMessage: 'OTP pendaftaran sekolah (kode disamarkan)', hideError: true });
+    if (!sent.ok) {
+      if (daftarOtp.get(phone) === row) daftarOtp.delete(phone);
+      saas.logAudit('Sistem', 'OTP PENDAFTARAN GAGAL', 'pendaftaran', `Pengiriman OTP gagal ke ${maskPhone(phone)}`, ip);
+      return fail(res, 503, 'Kode OTP tidak dapat dikirim. Periksa koneksi WhatsApp Gateway atau coba lagi nanti.');
+    }
+    row.sent = true;
+    saas.logAudit('Sistem', 'OTP PENDAFTARAN DIKIRIM', 'pendaftaran', `OTP dikirim ke ${maskPhone(phone)}`, ip);
+    json(res, 200, { ok: true, pesan: `Kode verifikasi dikirim ke WhatsApp ${maskPhone(phone)}. Kode berlaku 5 menit.`, expires_in: 300, retry_after: 60 });
+  }, SAAS);
+
   post('/api/daftar', async (req, res) => {
     const b = await readBody(req);
     const platform = saas.branding();
@@ -141,6 +241,9 @@ module.exports = function mount(apiCtx) {
       if (kembar) errs.push('Nama sekolah ini sudah terdaftar — hubungi admin bila merasa keliru');
     }
     if (errs.length) return fail(res, 400, errs.join(' • '));
+
+    const otp = checkDaftarOtp(phone, b.otp || b.kode_otp);
+    if (!otp.ok) return fail(res, 400, otp.error);
 
     const paketDefault = saas.sdb.prepare('SELECT * FROM saas_paket WHERE kode=?').get(saas.setting('paket_default', 'basic'))
       || saas.sdb.prepare('SELECT * FROM saas_paket WHERE aktif=1 ORDER BY urutan LIMIT 1').get();
@@ -866,7 +969,8 @@ module.exports = function mount(apiCtx) {
       fallback_env_key_set: config.fallbackEnvKeySet,
       fallback_database_key_set: config.fallbackStoredKeySet,
       fallback_base_url: config.fallbackBaseUrl,
-      fallback_model: config.fallbackModel
+      fallback_model: config.fallbackModel,
+      assistant_widget_enabled: saas.setting('assistant_widget_enabled', '1') !== '0'
     });
   }, SAAS);
   post('/api/super/ai-config', async (req, res) => {
@@ -906,6 +1010,9 @@ module.exports = function mount(apiCtx) {
     if (has('model')) saas.setSetting('edupoin_ai_model', model);
     if (has('fallback_base_url')) saas.setSetting('edupoin_ai_fallback_base_url', fallbackBaseUrl);
     if (has('fallback_model')) saas.setSetting('edupoin_ai_fallback_model', fallbackModel);
+    if (has('assistant_widget_enabled')) {
+      saas.setSetting('assistant_widget_enabled', bool(b.assistant_widget_enabled) ? '1' : '0');
+    }
     saas.logAudit(admin.nama, 'UBAH KONFIGURASI AI', 'assistant', 'Pengaturan AI Tutorial edupoin diperbarui');
     const config = saas.assistantConfig();
     json(res, 200, {
@@ -922,7 +1029,8 @@ module.exports = function mount(apiCtx) {
       fallback_env_key_set: config.fallbackEnvKeySet,
       fallback_database_key_set: config.fallbackStoredKeySet,
       fallback_base_url: config.fallbackBaseUrl,
-      fallback_model: config.fallbackModel
+      fallback_model: config.fallbackModel,
+      assistant_widget_enabled: saas.setting('assistant_widget_enabled', '1') !== '0'
     });
   }, SAAS);
 

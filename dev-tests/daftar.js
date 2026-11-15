@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { chromium } = require('playwright');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-daftar-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -62,6 +63,7 @@ const badan = (n) => ({
 });
 
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -76,11 +78,20 @@ const badan = (n) => ({
       try { const r = await fetch(BASE + '/api/public/config'); if (r.ok) break; } catch (e) { /* belum siap */ }
       await new Promise(r => setTimeout(r, 250));
     }
+    await otpTest.configure(client(), gateway.url);
 
     /* ================= 1. RESPONS API ================= */
     console.log('\n== API /api/daftar: DATA PRATINJAU ==');
     const pub = client();
-    let r = await pub.req('/api/daftar', { method: 'POST', body: badan(1) });
+    const body1 = badan(1);
+    let otp = await pub.req('/api/daftar/otp', { method: 'POST', body: { telp: body1.telp } });
+    const code1 = gateway.code();
+    ok('OTP dikirim melalui WhatsApp tanpa mengembalikan kodenya',
+      otp.status === 200 && !JSON.stringify(otp.body).includes(code1) && /••••/.test(otp.body.pesan || ''),
+      JSON.stringify(otp.body));
+    const resend = await pub.req('/api/daftar/otp', { method: 'POST', body: { telp: body1.telp } });
+    ok('permintaan OTP dibatasi cooldown', resend.status === 429, String(resend.status));
+    let r = await pub.req('/api/daftar', { method: 'POST', body: { ...body1, otp: code1 } });
     ok('pendaftaran berhasil (200)', r.status === 200, `${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
     const h = r.body || {};
     ok('kode sekolah 4 digit dikirim', /^\d{4}$/.test(String(h.kode || '')), String(h.kode));
@@ -112,7 +123,7 @@ const badan = (n) => ({
 
     /* sesi hasil pendaftaran memang bisa langsung membuka dashboard */
     const sesi = client();
-    r = await sesi.req('/api/daftar', { method: 'POST', body: badan(2) });
+    r = await sesi.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(sesi, gateway, badan(2)) });
     ok('pendaftaran kedua berhasil', r.status === 200, String(r.status));
     r = await sesi.req('/api/bootstrap');
     ok('cookie hasil daftar langsung berlaku untuk dashboard',
@@ -140,6 +151,10 @@ const badan = (n) => ({
     await page.locator('input[type="password"]').nth(0).fill('Rahasia123');
     await page.locator('input[type="password"]').nth(1).fill('Rahasia123');
     await page.waitForTimeout(4600);   /* anti-spam: minimal 4 detik */
+    gateway.clearCode();
+    await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
+    const codeUi = await gateway.waitForCode();
+    await page.fill('input[placeholder="000000"]', codeUi);
     await page.click('button:has-text("Coba Gratis")');
     await page.waitForTimeout(1500);
 
@@ -199,6 +214,10 @@ const badan = (n) => ({
     await page.locator('input[type="password"]').nth(0).fill('Rahasia123');
     await page.locator('input[type="password"]').nth(1).fill('Rahasia123');
     await page.waitForTimeout(4600);
+    gateway.clearCode();
+    await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
+    const codeMobile = await gateway.waitForCode();
+    await page.fill('input[placeholder="000000"]', codeMobile);
     await page.click('button:has-text("Coba Gratis")');
     await page.waitForTimeout(1500);
     ok('pratinjau tampil di layar 390px', /Pendaftaran Berhasil/i.test(await page.locator('body').innerText()));
@@ -218,6 +237,7 @@ const badan = (n) => ({
   } finally {
     if (browser) await browser.close().catch(() => {});
     srv.kill();
+    await gateway.close().catch(() => {});
     if (fail) console.log('\nLOG SERVER:\n' + log.join('').slice(-2500));
   }
 

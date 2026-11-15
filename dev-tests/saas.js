@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-saas-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -55,6 +56,7 @@ function client() {
 }
 
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, APP_TIMEZONE: 'Asia/Jakarta' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -432,11 +434,12 @@ function client() {
       t0: Date.now() - 10000
     } });
     ok('validasi pendaftaran menolak data tidak lengkap', r.status === 400 && /minimal|tidak valid|wajib/i.test(r.body.error), r.body.error);
-    r = await t6.req('/api/daftar', { method: 'POST', body: {
+    await otpTest.configure(su, gateway.url);
+    r = await t6.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(t6, gateway, {
       nama_sekolah: 'SMA Negeri 1 Contoh', jenjang: 'SMA', alamat: 'Jl. Merdeka 1', kepala: 'Drs. Kepala',
       admin_nama: 'Bapak Admin', email: 'admin@sman1contoh.sch.id', password: 'Rahasia123', password2: 'Rahasia123',
       telp: '081377788899', trial: true, t0: Date.now() - 10000
-    } });
+    }) });
     ok('pendaftaran mandiri berhasil', r.status === 200 && r.body.ok, JSON.stringify(r.body).slice(0, 200));
     ok('kode sekolah otomatis 4 digit', /^\d{4}$/.test(String(r.body.kode)), String(r.body.kode));
     ok('uji coba 7 hari diberikan', (() => {
@@ -507,6 +510,7 @@ function client() {
     console.error(logBuf.join('').slice(-3000));
   } finally {
     srv.kill('SIGKILL');
+    await gateway.close().catch(() => {});
     await new Promise(r => setTimeout(r, 300));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL SAAS: ${pass} lulus, ${fail} gagal ===`);

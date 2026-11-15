@@ -15,6 +15,7 @@ let KODE = '';
 let providerCalls = 0;
 let providerPayload = null;
 let failPrimary = false;
+let failFallback = false;
 const providerAttempts = [];
 let providerReply = { answer: 'Buka Kalender Akademik, lalu pilih Cetak / Simpan PDF.', tour_id: 'btn-cetak-kalender' };
 const provider = http.createServer((req, res) => {
@@ -23,7 +24,8 @@ const provider = http.createServer((req, res) => {
   req.on('end', () => {
     providerCalls += 1;
     providerAttempts.push({ url: req.url, authorization: req.headers.authorization });
-    if (failPrimary && req.url.startsWith('/primary/')) {
+    if ((failPrimary && req.url.startsWith('/primary/'))
+      || (failFallback && req.url.startsWith('/fallback/'))) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'primary unavailable' }));
       return;
@@ -120,6 +122,7 @@ async function request(method, url, cookie, body) {
     result = await request('GET', '/api/super/ai-config', superCookie);
     ok('konfigurasi awal tidak mengirim API key', result.status === 200 && !('api_key' in result.json)
       && result.json.api_key_set === false);
+    ok('widget bantuan tampil secara default', result.status === 200 && result.json.assistant_widget_enabled === true);
 
     const secret = 'test-secret-from-super-panel';
     const fallbackSecret = 'test-groq-secret-from-super-panel';
@@ -137,6 +140,23 @@ async function request(method, url, cookie, body) {
       && savedConfig.fallback_database_key_set && savedConfig.fallback_key_source === 'super_admin'
       && !JSON.stringify(savedConfig).includes(secret) && !JSON.stringify(savedConfig).includes(fallbackSecret),
     JSON.stringify(savedConfig));
+    result = await request('POST', '/api/super/ai-test', cookie);
+    ok('endpoint tes koneksi AI menolak sesi sekolah', result.status === 401, JSON.stringify(result.json));
+    result = await request('POST', '/api/super/ai-test', superCookie);
+    ok('tes koneksi memvalidasi kedua provider tanpa membocorkan API key',
+      result.status === 200 && result.json.ok && result.json.providers.length === 2
+      && result.json.providers.every(provider => provider.ok)
+      && !JSON.stringify(result.json).includes(secret) && !JSON.stringify(result.json).includes(fallbackSecret),
+    JSON.stringify(result.json));
+    result = await request('POST', '/api/super/ai-config', superCookie, { assistant_widget_enabled: false });
+    const hiddenConfig = await request('GET', '/api/super/ai-config', superCookie);
+    const hiddenBootstrap = await request('GET', '/api/bootstrap', cookie);
+    ok('Super Admin dapat menyembunyikan widget bagi semua akun sekolah',
+      result.status === 200 && hiddenConfig.json.assistant_widget_enabled === false
+      && hiddenBootstrap.json.platform.assistant_widget_enabled === false,
+    JSON.stringify({ saved: result.json, config: hiddenConfig.json, bootstrap: hiddenBootstrap.json }));
+    result = await request('POST', '/api/super/ai-config', superCookie, { assistant_widget_enabled: true });
+    ok('widget dapat diaktifkan kembali', result.status === 200 && result.json.assistant_widget_enabled === true);
     result = await request('POST', '/api/super/ai-config', superCookie, {
       fallback_base_url: `http://127.0.0.1:${providerPort}/fallback/v1`,
       fallback_model: 'fake-groq-model'
@@ -156,18 +176,21 @@ async function request(method, url, cookie, body) {
     });
     ok('Base URL HTTP non-localhost ditolak', result.status === 400);
 
+    const callsBeforeFunctionalChat = providerCalls;
     result = await request('POST', '/api/assistant/chat', cookie, {
       message: 'Bagaimana cara mencetak Kalender Akademik?',
       history: [{ role: 'user', content: 'Saya sedang mengelola kalender.' }]
     });
     ok('pertanyaan edupoin mengembalikan jawaban dan target yang valid', result.status === 200
-      && result.json.tour?.id === 'btn-cetak-kalender' && providerCalls === callsBeforeOffTopic + 1, JSON.stringify(result.json));
+      && result.json.tour?.id === 'btn-cetak-kalender' && providerCalls === callsBeforeFunctionalChat + 1, JSON.stringify(result.json));
     const systemPrompt = providerPayload?.messages?.[0]?.content || '';
     ok('system prompt membawa aturan penolakan, FAQ, dan daftar target', systemPrompt.includes(assistant.REFUSAL)
       && systemPrompt.includes('Kalender Akademik satu tahun')
       && systemPrompt.includes('btn-cetak-kalender'), systemPrompt.slice(0, 100));
     ok('request ke AI hanya menyertakan riwayat dan pertanyaan, tanpa data sekolah', !systemPrompt.includes(KODE)
       && !JSON.stringify(providerPayload).includes('admin123'));
+    ok('permintaan AI memakai JSON mode agar keluaran dapat diproses',
+      providerPayload?.response_format?.type === 'json_object');
 
     failPrimary = true;
     const attemptsBeforeFallback = providerAttempts.length;
@@ -187,6 +210,17 @@ async function request(method, url, cookie, body) {
     providerReply = { answer: 'Jawaban tes.', tour_id: 'id-yang-tidak-terdaftar' };
     result = await request('POST', '/api/assistant/chat', cookie, { message: 'Cara mengatur jadwal pelajaran?' });
     ok('ID sorotan yang tidak terdaftar tidak diteruskan ke UI', result.status === 200 && result.json.tour === null);
+
+    failPrimary = true;
+    failFallback = true;
+    result = await request('POST', '/api/assistant/chat', cookie, { message: 'Cara mengatur jadwal pelajaran?' });
+    ok('chat mengembalikan diagnosis provider yang aman tanpa API key',
+      result.status === 502 && /utama: HTTP 503/i.test(result.json.error || '')
+      && /cadangan: HTTP 503/i.test(result.json.error || '')
+      && !JSON.stringify(result.json).includes(secret) && !JSON.stringify(result.json).includes(fallbackSecret),
+    JSON.stringify(result.json));
+    failPrimary = false;
+    failFallback = false;
 
     result = await request('POST', '/api/logout', cookie, {});
     result = await request('POST', '/api/login', '', { username: 'guru', password: 'guru123', kode: KODE });

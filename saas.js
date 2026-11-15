@@ -396,7 +396,10 @@ function branding() {
     recaptcha_site: s.recaptcha_site || '',
     daftar_min_detik: Math.max(0, Number(s.daftar_min_detik) || 0),
     daftar_limit_jam: Math.max(1, Number(s.daftar_limit_jam) || 5),
-    daftar_limit_hari: Math.max(1, Number(s.daftar_limit_hari) || 20)
+    daftar_limit_hari: Math.max(1, Number(s.daftar_limit_hari) || 20),
+    assistant_widget_enabled: isOn(
+      s.assistant_widget_enabled === undefined ? '1' : s.assistant_widget_enabled
+    )
   };
   Object.defineProperty(out, '__at', { value: Date.now(), enumerable: false });
   brandCache = out;
@@ -1440,13 +1443,16 @@ function buildWaUrl(cfg, phone, pesan) {
   return url;
 }
 /** kirim WA (best effort; dicatat ke log apa pun hasilnya) */
-async function waSend(phone, pesan, { tenantId = null, jenis = 'umum' } = {}) {
+async function waSend(phone, pesan, { tenantId = null, jenis = 'umum', logMessage = '', hideError = false } = {}) {
   const cfg = waConfig();
   const tujuan = lib.normPhone(phone) || clean(phone);
   if (!cfg.aktif || !cfg.url || !tujuan) {
-    waLog(tenantId, tujuan, pesan, 'gagal', !cfg.aktif ? 'Gateway belum diaktifkan' : (!cfg.url ? 'URL gateway kosong' : 'Nomor tujuan kosong'), jenis);
+    waLog(tenantId, tujuan, logMessage || pesan, 'gagal',
+      !cfg.aktif ? 'Gateway belum diaktifkan' : (!cfg.url ? 'URL gateway kosong' : 'Nomor tujuan kosong'), jenis);
     return { ok: false, error: 'Gateway WhatsApp belum aktif atau nomor tidak valid.' };
   }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const body = (cfg.payload || DEFAULTS.wa_payload)
       .split('{phone}').join(tujuan)
@@ -1454,15 +1460,30 @@ async function waSend(phone, pesan, { tenantId = null, jenis = 'umum' } = {}) {
     const r = await fetch(cfg.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(cfg.token ? { Authorization: 'Bearer ' + cfg.token } : {}) },
-      body: JSON.parse(body) ? body : body
+      body: JSON.parse(body) ? body : body,
+      signal: controller.signal
     });
     const txt = await r.text();
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${txt.slice(0, 200)}`);
-    waLog(tenantId, tujuan, pesan, 'terkirim', '', jenis);
+    try {
+      const result = JSON.parse(txt);
+      if (result && (result.status === false || result.ok === false || result.success === false)) {
+        throw new Error(result.reason || result.message || 'Gateway menolak pesan');
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        // Sebagian gateway mengembalikan teks biasa saat berhasil.
+      } else {
+        throw e;
+      }
+    }
+    waLog(tenantId, tujuan, logMessage || pesan, 'terkirim', '', jenis);
     return { ok: true };
   } catch (e) {
-    waLog(tenantId, tujuan, pesan, 'gagal', e.message, jenis);
-    return { ok: false, error: e.message };
+    waLog(tenantId, tujuan, logMessage || pesan, 'gagal', hideError ? 'Pengiriman WhatsApp gagal' : e.message, jenis);
+    return { ok: false, error: hideError ? 'Gateway WhatsApp gagal mengirim pesan.' : e.message };
+  } finally {
+    clearTimeout(timer);
   }
 }
 /** notifikasi ke sekolah (nomor kontak tenant) — tidak melempar error */

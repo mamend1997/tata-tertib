@@ -51,6 +51,10 @@ export default function Daftar({ cfg, onBatal }) {
   const platform = (cfg && cfg.platform) || {};
   const [f, setF] = useState({ jenjang: 'SMK' });
   const [busy, setBusy] = useState(false);
+  const [otpBusy, setOtpBusy] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSentPhone, setOtpSentPhone] = useState('');
+  const [otpMessage, setOtpMessage] = useState('');
   const [err, setErr] = useState('');
   const [hasil, setHasil] = useState(null);
   const [errs, setErrs] = useState([]);
@@ -63,6 +67,22 @@ export default function Daftar({ cfg, onBatal }) {
   const siteKey = platform.recaptcha_site || '';
 
   useEffect(() => { t0.current = Date.now(); }, []);
+
+  async function sendOtp() {
+    setErr('');
+    setOtpBusy(true);
+    try {
+      const r = await api('/api/daftar/otp', {
+        method: 'POST',
+        body: { telp: f.telp, website: honeypot }
+      });
+      setOtpCode('');
+      setOtpSentPhone(f.telp || '');
+      setOtpMessage(r.pesan || 'Kode verifikasi dikirim melalui WhatsApp.');
+    } catch (e) {
+      setOtpMessage(e.message);
+    } finally { setOtpBusy(false); }
+  }
 
   /* reCAPTCHA hanya dimuat bila Super Admin mengisi Site Key */
   useEffect(() => {
@@ -90,7 +110,7 @@ export default function Daftar({ cfg, onBatal }) {
     try {
       const r = await api('/api/daftar', {
         method: 'POST',
-        body: { ...f, trial: true, t0: t0.current, website: honeypot, captcha_token: captcha }
+        body: { ...f, otp: otpCode, trial: true, t0: t0.current, website: honeypot, captcha_token: captcha }
       });
       setHasil(r);
       /* TIDAK ada pengalihan otomatis: pendaftar melihat pratinjau hasil
@@ -104,6 +124,8 @@ export default function Daftar({ cfg, onBatal }) {
   const namaApp = platform.login_judul || platform.app_nama_default || platform.app_nama || (window.__BRAND__ && window.__BRAND__.app_nama) || 'Aplikasi';
   const subApp = platform.login_subjudul || platform.app_subtitle || '';
   const copyright = platform.login_copyright || `© ${new Date().getFullYear()} ${namaApp}`;
+  const otpSentForCurrent = Boolean(otpSentPhone && otpSentPhone === (f.telp || ''));
+  const otpReady = otpSentForCurrent && /^\d{6}$/.test(otpCode);
 
   /* ---------------- PRATINJAU HASIL PENDAFTARAN ----------------
      Setelah pendaftaran berhasil, pendaftar TIDAK langsung dilempar ke
@@ -379,12 +401,41 @@ export default function Daftar({ cfg, onBatal }) {
                     <input className="input pl-9" required value={f.admin_nama || ''} onChange={e => setF(v => ({ ...v, admin_nama: e.target.value }))} />
                   </div>
                 </Field>
-                <Field label="No WhatsApp" required hint="Dipakai untuk notifikasi tagihan">
+                <Field label="No WhatsApp" required hint="Diverifikasi lewat OTP dan dipakai untuk notifikasi tagihan">
                   <div className="relative">
                     <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input className="input pl-9" required value={f.telp || ''} onChange={e => setF(v => ({ ...v, telp: e.target.value }))} placeholder="0812xxxxxxx" />
+                    <input className="input pl-9" required value={f.telp || ''} onChange={e => {
+                      setF(v => ({ ...v, telp: e.target.value }));
+                      setOtpCode(''); setOtpSentPhone(''); setOtpMessage('');
+                    }} placeholder="0812xxxxxxx" />
                   </div>
                 </Field>
+              </div>
+              <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button type="button" className="btn-secondary shrink-0" disabled={otpBusy || !f.telp} onClick={sendOtp}>
+                    {otpBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+                    {otpBusy ? 'Mengirim kode…' : otpSentForCurrent ? 'Kirim Ulang Kode OTP' : 'Kirim Kode OTP WhatsApp'}
+                  </button>
+                  {otpSentForCurrent && (
+                    <Field label="Kode OTP" required hint="Masukkan 6 digit kode yang diterima">
+                      <input
+                        className="input font-mono tracking-[0.3em]"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        pattern="[0-9]{6}"
+                        required
+                        value={otpCode}
+                        onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="000000"
+                      />
+                    </Field>
+                  )}
+                </div>
+                <p className="mt-2 text-[11.5px] text-slate-600">
+                  {otpMessage || 'Verifikasi nomor WhatsApp wajib sebelum pendaftaran dapat dikirim.'}
+                </p>
               </div>
               <Field label="Email Admin" required hint="Dipakai sebagai username untuk masuk">
                 <div className="relative">
@@ -411,7 +462,7 @@ export default function Daftar({ cfg, onBatal }) {
                 melalui menu <b>Data Kelas</b> di dashboard sekolah.
               </Alert>
               {siteKey ? <div ref={captchaBox} className="flex justify-center py-1" /> : null}
-              <button className="btn-primary w-full py-2.5" disabled={busy}>
+              <button className="btn-primary w-full py-2.5" disabled={busy || !otpReady}>
                 {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                 Coba Gratis {platform.trial_hari || 7} Hari
               </button>

@@ -46,6 +46,13 @@ Sorotan terkait: `menu-akademik`, `btn-tambah-jadwal`, `btn-generate-ai`, `btn-c
 
 Sorotan terkait: `btn-cetak-kalender`, `btn-cetak-jadwal`.
 
+## Pendaftaran sekolah dengan OTP WhatsApp
+
+1. Pastikan **Super Admin → WhatsApp Gateway** aktif dan URL, token, serta format payload gateway sudah benar.
+2. Pada formulir **Daftarkan sekolah**, isi nomor WhatsApp lalu tekan **Kirim Kode OTP WhatsApp**.
+3. Masukkan kode 6 digit yang diterima; kode berlaku 5 menit dan hanya dapat dipakai satu kali.
+4. Pendaftaran tidak dapat dilanjutkan tanpa verifikasi. Jika pesan gagal dikirim, Super Admin perlu memeriksa gateway.
+
 ## Absensi guru, absensi siswa, dan jurnal
 
 1. Guru membuka **Akademik → Absensi Guru Mapel** dan memilih sesi hari ini.

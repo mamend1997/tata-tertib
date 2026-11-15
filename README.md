@@ -115,8 +115,12 @@ Endpoint publik harus menggunakan HTTPS; HTTP hanya diizinkan untuk `localhost` 
 Chat mengirim pertanyaan dan dokumentasi FAQ yang relevan saja, bukan database tenant atau data siswa.
 API key tidak pernah ditampilkan kembali pada halaman pengaturan. Target tombol yang dapat disorot dibatasi
 ke daftar dokumentasi dan izin role pengguna. Jika provider utama gagal, permintaan yang sama dicoba ke
-provider cadangan Groq. Karena itu pertanyaan dan konteks FAQ dapat dikirim ke kedua provider pada satu
-permintaan; tanpa key yang valid untuk salah satu provider, widget memberi tahu bahwa layanan belum tersedia.
+provider cadangan Groq. Keluaran JSON diminta secara eksplisit agar jawaban dan sorotan tombol dapat diproses.
+Pada halaman konfigurasi tersedia **Tes Koneksi AI** untuk memeriksa HTTP/model setiap provider tanpa
+menampilkan key atau isi respons, serta sakelar untuk menampilkan/menyembunyikan widget bagi semua akun sekolah.
+Perubahan tampilan berlaku setelah halaman sekolah dimuat ulang. Pesan gagal chat menampilkan diagnosis aman
+seperti HTTP 401/404/429, timeout, atau koneksi gagal; tanpa key aktif, AI tidak dapat dipakai. Pertanyaan dan
+konteks FAQ dapat dikirim ke kedua provider pada satu permintaan saat failover terjadi.
 
 ### Deploy di Railway
 

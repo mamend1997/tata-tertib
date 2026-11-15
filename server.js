@@ -656,6 +656,84 @@ const post = (p, fn, opt) => routes.push({ method: 'POST', p, fn, opt: opt || {}
 const del = (p, fn, opt) => routes.push({ method: 'DELETE', p, fn, opt: opt || {} });
 const assistantRate = new Map();
 
+async function requestAssistantProvider(provider, messages, maxTokens = 700) {
+  const baseUrl = String(provider.baseUrl || '').replace(/\/+$/, '');
+  let endpoint;
+  try {
+    const parsed = new URL(baseUrl);
+    const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+    if ((parsed.protocol !== 'https:' && !localHttp)
+      || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('invalid URL');
+    endpoint = new URL('chat/completions', baseUrl + '/').toString();
+  } catch (e) {
+    return { ok: false, error: 'base URL tidak valid' };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: provider.model,
+        temperature: 0.2,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        messages
+      })
+    });
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+    let data;
+    try { data = await response.json(); } catch (e) {
+      return { ok: false, error: 'respons JSON tidak valid' };
+    }
+    const rawContent = data && data.choices && data.choices[0] && data.choices[0].message
+      && data.choices[0].message.content;
+    const content = typeof rawContent === 'string'
+      ? rawContent
+      : Array.isArray(rawContent)
+        ? rawContent.map(part => typeof part === 'string' ? part : String((part && part.text) || '')).join('')
+        : '';
+    if (!content.trim()) {
+      return { ok: false, error: 'respons tidak berisi jawaban' };
+    }
+    return { ok: true, content };
+  } catch (e) {
+    return { ok: false, error: e && e.name === 'AbortError' ? 'timeout' : 'koneksi gagal' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+post('/api/super/ai-test', async (req, res) => {
+  if (!guardSuper(req, res)) return;
+  const config = saas.assistantConfig();
+  const providers = [
+    { name: 'utama', apiKey: config.apiKey, baseUrl: config.baseUrl, model: config.model },
+    { name: 'cadangan', apiKey: config.fallbackApiKey, baseUrl: config.fallbackBaseUrl, model: config.fallbackModel }
+  ].filter(provider => provider.apiKey);
+  if (!providers.length) return fail(res, 400, 'Atur API key penyedia utama atau cadangan terlebih dahulu.');
+
+  const results = [];
+  for (const provider of providers) {
+    const result = await requestAssistantProvider(provider, [
+      { role: 'system', content: 'Kembalikan objek JSON dengan properti answer berisi teks persis OK.' },
+      { role: 'user', content: 'Tes koneksi.' }
+    ], 32);
+    const parsed = result.ok ? assistantHelp.parseAssistantReply(result.content) : null;
+    const ok = !!(result.ok && parsed && parsed.answer);
+    results.push({
+      name: provider.name,
+      model: provider.model,
+      ok,
+      error: ok ? '' : (result.error || 'format respons tidak valid')
+    });
+  }
+  json(res, 200, { ok: results.some(result => result.ok), providers: results });
+}, { saas: true });
+
 post('/api/assistant/chat', async (req, res) => {
   const user = guard(req, res, 'dashboard', 'view');
   if (!user) return;
@@ -698,66 +776,29 @@ post('/api/assistant/chat', async (req, res) => {
   const allowedTargets = assistantHelp.TARGETS.filter(target =>
     (!target.feature || (dbm.can(user, target.feature, target.action || 'view') && fiturBoleh(req, target.feature)))
   );
-  let lastFailure = '';
+  const failures = [];
   for (const provider of providers) {
-    const baseUrl = String(provider.baseUrl || '').replace(/\/+$/, '');
-    let endpoint;
-    try {
-      const parsed = new URL(baseUrl);
-      const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
-      if ((parsed.protocol !== 'https:' && !localHttp)
-        || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('invalid URL');
-      endpoint = new URL('chat/completions', baseUrl + '/').toString();
-    } catch (e) {
-      console.error(`[assistant] base URL penyedia ${provider.name} tidak valid`);
-      lastFailure = 'base URL tidak valid';
+    const result = await requestAssistantProvider(provider, [
+      { role: 'system', content: assistantHelp.buildSystemPrompt(allowedTargets) },
+      ...history,
+      { role: 'user', content: question }
+    ]);
+    if (!result.ok) {
+      console.error(`[assistant] penyedia ${provider.name} gagal: ${result.error}`);
+      failures.push(`${provider.name}: ${result.error}`);
       continue;
     }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
-    try {
-      const providerRes = await fetch(endpoint, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: provider.model,
-          temperature: 0.2,
-          max_tokens: 700,
-          messages: [
-            { role: 'system', content: assistantHelp.buildSystemPrompt(allowedTargets) },
-            ...history,
-            { role: 'user', content: question }
-          ]
-        })
-      });
-      if (!providerRes.ok) {
-        console.error(`[assistant] penyedia ${provider.name} merespons HTTP ${providerRes.status}`);
-        lastFailure = `HTTP ${providerRes.status}`;
-        continue;
-      }
-      const providerData = await providerRes.json();
-      const content = providerData && providerData.choices && providerData.choices[0]
-        && providerData.choices[0].message && providerData.choices[0].message.content;
-      const parsed = assistantHelp.parseAssistantReply(content);
-      if (!parsed.answer) {
-        console.error(`[assistant] penyedia ${provider.name} mengirim jawaban dengan format tidak valid`);
-        lastFailure = 'format jawaban tidak valid';
-        continue;
-      }
-      const target = allowedTargets.find(item => item.id === parsed.tourId) || null;
-      return json(res, 200, { ok: true, answer: parsed.answer, tour: target });
-    } catch (e) {
-      const timedOut = e && e.name === 'AbortError';
-      console.error(`[assistant] ${timedOut ? 'timeout' : 'gagal menghubungi'} penyedia ${provider.name}`);
-      lastFailure = timedOut ? 'timeout' : 'koneksi gagal';
-    } finally {
-      clearTimeout(timeout);
+    const parsed = assistantHelp.parseAssistantReply(result.content);
+    if (!parsed.answer) {
+      console.error(`[assistant] penyedia ${provider.name} mengirim jawaban dengan format tidak valid`);
+      failures.push(`${provider.name}: format jawaban tidak valid`);
+      continue;
     }
+    const target = allowedTargets.find(item => item.id === parsed.tourId) || null;
+    return json(res, 200, { ok: true, answer: parsed.answer, tour: target });
   }
-  console.error(`[assistant] penyedia utama dan cadangan gagal (${lastFailure || 'unknown'})`);
-  fail(res, 502, 'Asisten AI sedang tidak tersedia. Penyedia utama dan cadangan gagal dihubungi; coba lagi beberapa saat.');
+  console.error(`[assistant] semua penyedia gagal (${failures.join('; ') || 'unknown'})`);
+  fail(res, 502, `Asisten AI tidak tersedia. ${failures.join('; ') || 'Tidak ada penyedia yang dapat digunakan.'} Periksa API key, model, base URL, dan koneksi server pada Super Admin → Integrasi → AI Tutorial edupoin.`);
 });
 
 /* ---------- rute platform (panel Super Admin + langganan sekolah) ---------- */
@@ -1037,7 +1078,8 @@ get('/api/bootstrap', (req, res) => {
       ok: true, maintenance: true, maintenance_pesan: maint.pesan,
       platform: {
         app_nama: brand.app_nama, app_subtitle: brand.app_subtitle,
-        logo: brand.logo, favicon: brand.favicon, version: brand.version
+        logo: brand.logo, favicon: brand.favicon, version: brand.version,
+        assistant_widget_enabled: saas.setting('assistant_widget_enabled', '1') !== '0'
       },
       settings: { app_nama: settings.app_nama, sekolah_nama: settings.sekolah_nama },
       features: [], tahun: [], user: null
@@ -1051,7 +1093,8 @@ get('/api/bootstrap', (req, res) => {
     /* identitas platform GLOBAL (dipakai judul tab, header, footer) */
     platform: {
       app_nama: brand.app_nama, app_subtitle: brand.app_subtitle,
-      logo: brand.logo, favicon: brand.favicon, version: brand.version
+      logo: brand.logo, favicon: brand.favicon, version: brand.version,
+      assistant_widget_enabled: saas.setting('assistant_widget_enabled', '1') !== '0'
     },
     user: s ? {
       id: s.user.id, nama: s.user.nama, role: s.user.role, jabatan: s.user.jabatan,

@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { chromium } = require('playwright');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-ui9-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -20,7 +21,27 @@ const ok = (n, c, x) => {
   else { fail++; fails.push(n + (x ? ' — ' + x : '')); console.log('  ✗ ' + n + (x ? ' — ' + x : '')); }
 };
 
+function apiClient() {
+  let cookie = '';
+  return {
+    async req(p, options = {}) {
+      const response = await fetch(BASE + p, {
+        method: options.method || 'GET',
+        headers: {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(cookie ? { Cookie: cookie } : {})
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined
+      });
+      const cookies = response.headers.getSetCookie ? response.headers.getSetCookie() : [];
+      if (cookies.length) cookie = cookies.map(value => value.split(';')[0]).join('; ');
+      return { status: response.status, body: await response.json().catch(() => null) };
+    }
+  };
+}
+
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -37,6 +58,7 @@ const ok = (n, c, x) => {
   const browser = await chromium.launch();
   const errors = [];
   try {
+    await otpTest.configure(apiClient(), gateway.url);
     /* ================= 1. HALAMAN LOGIN SEKOLAH ================= */
     console.log('\n== HALAMAN LOGIN SEKOLAH (BRANDING GLOBAL) ==');
     let ctx = await browser.newContext({ viewport: { width: 1440, height: 950 } });
@@ -102,18 +124,15 @@ const ok = (n, c, x) => {
     await page.locator('input[type="password"]').nth(0).fill('Rahasia123');
     await page.locator('input[type="password"]').nth(1).fill('Rahasia123');
     await page.locator('label:has-text("Nama Admin") + div input, label:has-text("Nama Admin") ~ div input').first().fill('Admin Uji').catch(() => {});
-    /* kirim terlalu cepat → server menolak */
-    await page.click('button:has-text("Coba Gratis")');
-    await page.waitForTimeout(1300);
-    let txt = await page.locator('body').innerText();
-    if (/terlalu cepat/i.test(txt)) ok('server menolak form yang dikirim terlalu cepat', true);
-    else ok('server menolak form yang dikirim terlalu cepat', /Pendaftaran belum bisa dilanjutkan/i.test(txt), txt.slice(0, 120));
-
-    /* tunggu melewati batas waktu minimal lalu kirim lagi */
+    ok('pendaftaran belum dapat dikirim sebelum OTP diisi',
+      await page.locator('button:has-text("Coba Gratis")').isDisabled());
     await page.waitForTimeout(4800);
+    gateway.clearCode();
+    await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
+    await page.fill('input[placeholder="000000"]', await gateway.waitForCode());
     await page.click('button:has-text("Coba Gratis")');
     await page.waitForTimeout(800);
-    ok('pendaftaran berhasil setelah waktu isi wajar',
+    ok('pendaftaran berhasil setelah OTP dan waktu isi wajar',
       /Pendaftaran Berhasil/i.test(await page.locator('body').innerText()),
       (await page.locator('body').innerText()).slice(0, 120));
     await page.waitForTimeout(2800);
@@ -246,6 +265,7 @@ const ok = (n, c, x) => {
   } finally {
     await browser.close().catch(() => {});
     srv.kill('SIGKILL');
+    await gateway.close().catch(() => {});
     await new Promise(r => setTimeout(r, 250));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL UI RONDE 9: ${pass} lulus, ${fail} gagal ===`);

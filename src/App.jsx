@@ -689,7 +689,9 @@ function AdminApp({ daftarAwal = false }) {
       <BottomNav items={bottomNav} page={page} onPick={(k) => { setPage(k); setNavOpen(false); }} />
 
       <GuideHighlight guide={guide} onClose={stopGuide} />
-      <HelpChatWidget onShowTour={showAssistantTour} />
+      {boot.platform?.assistant_widget_enabled !== false
+        ? <HelpChatWidget onShowTour={showAssistantTour} />
+        : null}
 
       <footer className="no-print mx-auto max-w-[1600px] px-4 pb-28 pt-2 text-center text-[11.5px] text-slate-400 lg:pb-6">
         {appName} v{boot.version} · {settings.sekolah_nama}

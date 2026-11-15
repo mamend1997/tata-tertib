@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-r10-'));
 const DB = path.join(TMP, 'main.sqlite');
@@ -41,6 +42,7 @@ function client() {
 }
 
 (async () => {
+  const gateway = await otpTest.startGateway();
   const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
     env: { ...process.env, PORT: String(PORT), DB_PATH: DB, SAAS_DB_PATH: SAAS, DEMO_SEED: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -61,17 +63,18 @@ function client() {
     console.log('\n== BRANDING GLOBAL ==================');
     let r = await su.req('/api/super/login', { method: 'POST', body: { username: 'superadmin', password: 'superadmin123' } });
     ok('login super admin', r.status === 200 && r.body.scope === 'super');
+    await otpTest.configure(su, gateway.url);
     r = await su.req('/api/super/branding', { method: 'POST', body: { app_nama: 'PLATFORM SEKOLAH TERPADU', app_subtitle: 'Manajemen Kedisiplinan' } });
     ok('nama aplikasi global disimpan', r.status === 200 && r.body.platform.app_nama === 'PLATFORM SEKOLAH TERPADU');
 
     /* ================= 2. SEKOLAH BARU BERSIH DARI IDENTITAS LAMA ================= */
     console.log('\n== SEKOLAH BARU TANPA WARISAN IDENTITAS ==================');
     await su.req('/api/super/branding', { method: 'POST', body: { daftar_min_detik: 1, daftar_limit_jam: 10, daftar_limit_hari: 20 } });
-    r = await pub.req('/api/daftar', { method: 'POST', body: {
+    r = await pub.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(pub, gateway, {
       nama_sekolah: 'SMP Negeri 5 Contoh', jenjang: 'SMP', alamat: 'Jl. Melati No. 7, Bandung',
       kepala: 'Drs. Kepala Contoh', admin_nama: 'Admin Contoh', email: 'admin@smpn5contoh.sch.id',
       password: 'Rahasia123', password2: 'Rahasia123', telp: '081255550001', t0: Date.now() - 10000
-    } });
+    }) });
     ok('sekolah baru terdaftar', r.status === 200 && /^\d{4}$/.test(String(r.body.kode)), JSON.stringify(r.body).slice(0, 120));
     const kodeBaru = r.body.kode;
 
@@ -160,6 +163,7 @@ function client() {
     console.error(log.join('').slice(-1200));
   } finally {
     srv.kill('SIGKILL');
+    await gateway.close().catch(() => {});
     await new Promise(r => setTimeout(r, 200));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL RONDE 10: ${pass} lulus, ${fail} gagal ===`);

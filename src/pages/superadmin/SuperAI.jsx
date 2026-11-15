@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Bot, KeyRound, Loader2, Save, Trash2 } from 'lucide-react';
+import { Activity, Bot, CheckCircle2, KeyRound, Loader2, Save, Trash2, XCircle } from 'lucide-react';
 import { api } from '../../api';
 import { Alert, Card, Field, Spinner, useToast } from '../../ui';
 
 const EMPTY = {
   base_url: '', model: '', api_key_set: false, env_key_set: false, database_key_set: false,
   fallback_base_url: 'https://api.groq.com/openai/v1', fallback_model: 'llama-3.3-70b-versatile',
-  fallback_key_set: false, fallback_env_key_set: false, fallback_database_key_set: false
+  fallback_key_set: false, fallback_env_key_set: false, fallback_database_key_set: false,
+  assistant_widget_enabled: true
 };
 
 export default function SuperAI() {
@@ -15,6 +16,7 @@ export default function SuperAI() {
   const [apiKey, setApiKey] = useState('');
   const [fallbackApiKey, setFallbackApiKey] = useState('');
   const [busy, setBusy] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   const load = useCallback(async () => {
     const result = await api('/api/super/ai-config');
@@ -100,6 +102,34 @@ export default function SuperAI() {
       toast.ok(result.pesan);
     } catch (error) {
       toast.err(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setWidgetVisible(enabled) {
+    setBusy(true);
+    try {
+      const result = await api('/api/super/ai-config', {
+        method: 'POST',
+        body: { assistant_widget_enabled: enabled }
+      });
+      setConfig(value => ({ ...value, ...result }));
+      toast.ok(result.pesan);
+    } catch (error) {
+      toast.err(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testConnection() {
+    setBusy(true);
+    setTestResult(null);
+    try {
+      setTestResult(await api('/api/super/ai-test', { method: 'POST' }));
+    } catch (error) {
+      setTestResult({ ok: false, error: error.message, providers: [] });
     } finally {
       setBusy(false);
     }
@@ -228,6 +258,51 @@ export default function SuperAI() {
             <p>Pengaturan berlaku global untuk sekolah. Jika penyedia utama gagal, permintaan otomatis dicoba ke Groq. Perubahan berlaku tanpa deploy ulang.</p>
           </div>
         </div>
+      </Card>
+
+      <Card title="Tombol Floating Bantuan">
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <input type="checkbox" className="mt-0.5 h-4 w-4 accent-orange-600"
+            checked={config.assistant_widget_enabled !== false} disabled={busy}
+            onChange={event => setWidgetVisible(event.target.checked)} data-ai-widget-toggle />
+          <span>
+            <span className="block text-[12.5px] font-bold text-slate-800">Tampilkan tombol bantuan edupoin di akun sekolah</span>
+            <span className="mt-0.5 block text-[11.5px] text-slate-500">
+              Jika dimatikan, widget menghilang bagi semua akun sekolah setelah halaman dimuat ulang.
+            </span>
+          </span>
+        </label>
+      </Card>
+
+      <Card title="Tes Koneksi Penyedia AI" subtitle="Mengirim satu permintaan singkat ke setiap penyedia yang sudah dikonfigurasi. API key dan isi respons tidak ditampilkan.">
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" className="btn-secondary" disabled={busy || (!config.api_key_set && !config.fallback_key_set)}
+            onClick={testConnection} data-ai-test>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Activity size={15} />}
+            Tes Koneksi AI
+          </button>
+          {testResult?.error ? <p className="text-[12px] text-rose-700">{testResult.error}</p> : null}
+          {testResult?.ok ? <p className="text-[12px] font-semibold text-emerald-700">Setidaknya satu penyedia merespons dengan benar.</p> : null}
+          {testResult && !testResult.ok && !testResult.error ? <p className="text-[12px] text-rose-700">Tidak ada penyedia yang berhasil. Periksa model, API key, dan koneksi server.</p> : null}
+        </div>
+        {testResult?.providers?.length ? (
+          <div className="mt-3 space-y-2" data-ai-test-results>
+            {testResult.providers.map(provider => (
+              <div key={provider.name} className="flex items-start gap-2 rounded-lg border border-slate-100 p-2.5 text-[12px]">
+                {provider.ok
+                  ? <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-600" />
+                  : <XCircle size={15} className="mt-0.5 shrink-0 text-rose-600" />}
+                <span className="min-w-0">
+                  <b className="capitalize text-slate-800">{provider.name}</b>
+                  {provider.model ? <span className="text-slate-500"> · {provider.model}</span> : null}
+                  <span className={`block ${provider.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {provider.ok ? 'Berhasil' : provider.error}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </Card>
     </div>
   );
