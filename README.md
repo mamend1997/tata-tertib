@@ -10,6 +10,7 @@ server Node.js tanpa framework + SQLite di sisi server).
 | `server.js` | HTTP server, router mini, sesi cookie, RBAC, API JSON, penyedia berkas statis `dist/`, favicon dari logo sekolah, resolusi tenant per permintaan |
 | `saas.js` | **Control plane multi-tenant**: tabel `tenants`/`saas_paket`/`saas_tagihan`/`saas_pembayaran`/`saas_tiket`/`saas_pengumuman`/`saas_audit`/`saas_sesi`/`saas_settings`; provisioning DB sekolah, penagihan otomatis (cron), tiket, backup, WhatsApp, sesi Super Admin |
 | `saas-routes.js` | Rute panel Super Admin (`/api/super/...`) + layanan langganan sekolah (`/api/langganan`, `/api/domain`, `/api/tiket`, `/api/panduan`, `/api/legal`) + pendaftaran mandiri `POST /api/daftar` |
+| `telegram-backup.js` | Validasi jadwal harian, pengiriman Telegram, zona waktu, dan penyamaran rahasia pada arsip |
 | `db.js` | Skema SQLite, seed master data (sekolah, 8 akun, 6 kelas, 17 kategori — tanpa siswa/riwayat contoh), helper poin/status/deteksi dini |
 | `doc.js` | Dokumen cetak: kop surat, rekapitulasi poin, surat panggilan & SP 1–3 (A4/F4, `@media print`) |
 | `lib.js` | Utilitas: tanggal Indonesia, hash scrypt, ZIP/XLSX writer, normalisasi nomor HP |
@@ -30,6 +31,7 @@ node dev-tests/round2.js   # 62 cek API fitur lanjutan (bulk, import akun, profi
 node dev-tests/ui.js       # 39 cek UI Playwright
 node dev-tests/ui-round2.js# 42 cek UI fitur lanjutan (checkbox bulk, profil, jurnal, analitik, portal mobile)
 node dev-tests/print.js    # 12 cek cetak PDF (A4/F4, kop & TTD Kepsek/Wakasek)
+node dev-tests/telegram-backup.js # validasi jadwal WIB, idempotensi menit, masking, dan respons Telegram
 node dev-tests/round3.js   # 63 cek API ronde 3 (tanpa data dummy, hapus riwayat massal, kotak sampah,
                            # backup/restore JSON, audit data yatim, reset tahun ajaran, kalender, hak akses,
                            # endpoint data contoh 404, ukuran font kop per baris ikut tercetak)
@@ -67,6 +69,9 @@ dapat memuat data contoh ke dalam sistem.
 Menu tambahan: **Kotak Sampah** (restore/hapus permanen, retensi 30 hari), **Kalender Disiplin**, dan di
 Pengaturan: **Backup & Restore (.json)**, **Reset Tahun Ajaran**, dan tautan ke halaman
 **Audit Data Tersembunyi** (khusus Administrator, tidak tampil di navigasi).
+Backup Telegram dapat diatur terpisah pada setiap sekolah dan Super Admin, dengan beberapa jam harian
+(zona waktu aplikasi), uji koneksi, dan pengiriman manual. Arsip adalah cadangan satu arah, bukan sinkronisasi
+dua arah; token bot dan kunci layanan tidak disertakan dalam arsip.
 
 ## Multi-tenant (SaaS)
 

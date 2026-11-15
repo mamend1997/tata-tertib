@@ -20,7 +20,7 @@ export function SuperBackup({ ctx }) {
     const r = await api('/api/super/backup');
     setData(r);
     setTg({
-      telegram_bot_token: r.telegram.token || '', telegram_chat_id: r.telegram.chat || '',
+      telegram_bot_token: '', telegram_chat_id: r.telegram.chat || '',
       telegram_auto: r.telegram.auto, telegram_jam: r.telegram.jam || '02:00'
     });
   }, []);
@@ -31,11 +31,20 @@ export function SuperBackup({ ctx }) {
 
   async function simpanTg() {
     setBusy('tg');
-    try { const r = await api('/api/super/backup/telegram', { method: 'POST', body: tg }); toast.ok(r.pesan); load(); }
+    try { const r = await api('/api/super/backup/telegram', { method: 'POST', body: tg }); toast.ok(r.pesan); await load(); }
     catch (e) { toast.err(e.message); }
     finally { setBusy(''); }
   }
+  async function ujiTg() {
+    setBusy('tg-uji');
+    try {
+      const r = await api('/api/super/backup/telegram/uji', { method: 'POST', body: tg });
+      toast.ok(r.pesan);
+    } catch (e) { toast.err(e.message); }
+    finally { setBusy(''); }
+  }
   async function kirimTg() {
+    if (!confirm('Kirim arsip seluruh platform dan seluruh database sekolah ke Telegram?')) return;
     setBusy('tg-kirim');
     try { const r = await api('/api/super/backup/kirim', { method: 'POST' }); toast.ok(r.pesan); load(); }
     catch (e) { toast.err(e.message); }
@@ -74,19 +83,33 @@ export function SuperBackup({ ctx }) {
       <Card title="Auto Backup Telegram" subtitle="Arsip ZIP berisi database platform + seluruh database sekolah"
         right={<Badge tone={data.telegram.auto ? 'aman' : 'netral'}>{data.telegram.auto ? 'Otomatis aktif' : 'Otomatis nonaktif'}</Badge>}>
         <div className="grid gap-2.5 sm:grid-cols-2">
-          <Field label="Bot Token Telegram" hint="Dari @BotFather"><input className="input" type="password" value={tg.telegram_bot_token || ''} onChange={e => setTg(v => ({ ...v, telegram_bot_token: e.target.value }))} /></Field>
-          <Field label="Chat ID Tujuan" hint="ID chat/grup penerima arsip"><input className="input" value={tg.telegram_chat_id || ''} onChange={e => setTg(v => ({ ...v, telegram_chat_id: e.target.value }))} /></Field>
-          <Field label="Jam Backup Harian"><input className="input" type="time" value={tg.telegram_jam || '02:00'} onChange={e => setTg(v => ({ ...v, telegram_jam: e.target.value }))} /></Field>
+          <Field label="Bot Token Telegram" hint={data.telegram.token_set
+            ? `Token tersimpan: ${data.telegram.token_masked}. Kosongkan bila tidak diubah.`
+            : 'Dari @BotFather. Token disimpan di server, tidak dikirim kembali ke browser.'}>
+            <input data-super-backup-token className="input" type="password" autoComplete="new-password"
+              placeholder={data.telegram.token_set ? 'Token sudah tersimpan' : '123456:ABC…'}
+              value={tg.telegram_bot_token || ''} onChange={e => setTg(v => ({ ...v, telegram_bot_token: e.target.value }))} />
+          </Field>
+          <Field label="Chat ID Tujuan" hint="ID chat/grup penerima arsip">
+            <input className="input" value={tg.telegram_chat_id || ''} onChange={e => setTg(v => ({ ...v, telegram_chat_id: e.target.value }))} />
+          </Field>
+          <Field label="Jam Backup Harian" hint="Pisahkan beberapa jam dengan koma, contoh 06:00, 15:00.">
+            <input data-super-backup-jam className="input" value={tg.telegram_jam || '02:00'}
+              onChange={e => setTg(v => ({ ...v, telegram_jam: e.target.value }))} />
+          </Field>
           <label className="flex items-end gap-2 pb-2 text-[12.5px] font-semibold text-slate-700">
             <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={!!tg.telegram_auto} onChange={e => setTg(v => ({ ...v, telegram_auto: e.target.checked }))} />
             Aktifkan backup otomatis harian
           </label>
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
-          <button className="btn-primary btn-sm" disabled={busy === 'tg'} onClick={simpanTg}>
+          <button className="btn-primary btn-sm" disabled={busy !== ''} onClick={simpanTg}>
             {busy === 'tg' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
           </button>
-          <button className="btn-ghost btn-sm" disabled={busy === 'tg-kirim'} onClick={kirimTg}>
+          <button data-super-backup-test className="btn-ghost btn-sm" disabled={busy !== ''} onClick={ujiTg}>
+            {busy === 'tg-uji' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Uji Koneksi Bot
+          </button>
+          <button className="btn-ghost btn-sm" disabled={busy !== ''} onClick={kirimTg}>
             {busy === 'tg-kirim' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Kirim Backup Sekarang
           </button>
         </div>
@@ -94,6 +117,7 @@ export function SuperBackup({ ctx }) {
           Backup terakhir: {data.telegram.terakhir ? waktu(data.telegram.terakhir) : 'belum pernah'} ·
           Konfigurasi juga dapat diberikan lewat variabel lingkungan <code>TELEGRAM_BOT_TOKEN</code> / <code>TELEGRAM_CHAT_ID</code>.
         </p>
+        <p className="mt-1 text-[11.5px] text-slate-500">Backup adalah arsip satu arah, bukan sinkronisasi database dua arah. Token dan kunci layanan tidak dimasukkan ke arsip.</p>
       </Card>
 
       <div className="grid gap-3 sm:grid-cols-3">

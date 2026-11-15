@@ -12,6 +12,7 @@
    server tidak membuka database sekolah (control plane saja).
    ===================================================================== */
 const xr = require('./xlsx-read');
+const telegramBackup = require('./telegram-backup');
 
 module.exports = function mount(apiCtx) {
   const {
@@ -32,6 +33,12 @@ module.exports = function mount(apiCtx) {
   };
 
   const SAAS = { saas: true };            // tanda: rute control plane
+  const settingsForClient = () => {
+    const s = saas.settings();
+    s.telegram_bot_token = '';
+    s.telegram_bot_token_set = Boolean(saas.telegramCfg().token_set);
+    return s;
+  };
   /* pembatas percobaan login portal Super Admin (per IP) */
   const superHits = new Map();
   /* pembatas pendaftaran mandiri (anti-spam, per IP) */
@@ -739,7 +746,7 @@ module.exports = function mount(apiCtx) {
   /* ---------- branding sistem ---------- */
   get('/api/super/branding', (req, res) => {
     if (!guardSuper(req, res)) return;
-    json(res, 200, { ok: true, s: saas.settings(), paket: saas.paketList({ aktifOnly: true }), platform: saas.branding() });
+    json(res, 200, { ok: true, s: settingsForClient(), paket: saas.paketList({ aktifOnly: true }), platform: saas.branding() });
   });
   post('/api/super/branding', async (req, res) => {
     if (!guardSuper(req, res)) return;
@@ -844,8 +851,8 @@ module.exports = function mount(apiCtx) {
     const pay = saas.payConfig(appBaseUrl(req));
     const cfg = saas.gatewayCfg();
     /* kredensial payment gateway TIDAK pernah dikirim balik ke klien */
-    const RAHASIA = ['pay_gateway_key', 'pay_gateway_key2', 'pay_gateway_callback'];
-    const settingsAman = { ...saas.settings() };
+    const RAHASIA = ['pay_gateway_key', 'pay_gateway_key2', 'pay_gateway_callback', 'telegram_bot_token'];
+    const settingsAman = settingsForClient();
     RAHASIA.forEach(k => { if (k in settingsAman) settingsAman[k] = ''; });
     json(res, 200, {
       ok: true, s: settingsAman, promo: saas.promos(),
@@ -1016,7 +1023,7 @@ module.exports = function mount(apiCtx) {
   get('/api/super/wa', (req, res) => {
     if (!guardSuper(req, res)) return;
     json(res, 200, {
-      ok: true, cfg: saas.waConfig(), s: saas.settings(),
+      ok: true, cfg: saas.waConfig(), s: settingsForClient(),
       log: saas.waLogList({}), template: {
         tagihan: 'Pengingat: masa aktif layanan {sekolah} berakhir {tanggal}. Tagihan Rp {nominal} dapat dibayar melalui menu Info & Layanan.',
         suspend: 'Masa aktif layanan {sekolah} telah berakhir. Akun ditangguhkan sementara, silakan perpanjang.',
@@ -1058,16 +1065,39 @@ module.exports = function mount(apiCtx) {
   post('/api/super/backup/telegram', async (req, res) => {
     if (!guardSuper(req, res)) return;
     const b = await readBody(req);
-    for (const k of ['telegram_bot_token', 'telegram_chat_id', 'telegram_jam']) if (b[k] !== undefined) saas.setSetting(k, b[k]);
-    if (b.telegram_auto !== undefined) saas.setSetting('telegram_auto', bool(b.telegram_auto) ? '1' : '0');
+    const current = saas.telegramCfg();
+    const token = String(b.telegram_bot_token || '').trim();
+    const chat = b.telegram_chat_id === undefined ? current.chat : String(b.telegram_chat_id || '').trim();
+    let jam = current.jam;
+    try { jam = telegramBackup.parseSchedule(b.telegram_jam === undefined ? current.jam : b.telegram_jam).join(', '); }
+    catch (e) { return fail(res, 400, e.message); }
+    const auto = b.telegram_auto === undefined ? current.auto : bool(b.telegram_auto);
+    if (token.length > 256) return fail(res, 400, 'Bot token terlalu panjang.');
+    if (token && !telegramBackup.isValidToken(token)) return fail(res, 400, 'Format Bot Token Telegram tidak valid.');
+    if (chat.length > 128) return fail(res, 400, 'Chat ID terlalu panjang.');
+    if (auto && (!(token || current.token_set) || !chat)) {
+      return fail(res, 400, 'Token bot dan Chat ID wajib diisi sebelum backup otomatis diaktifkan.');
+    }
+    if (token) saas.setSetting('telegram_bot_token', token);
+    if (b.telegram_chat_id !== undefined) saas.setSetting('telegram_chat_id', chat);
+    if (b.telegram_jam !== undefined) saas.setSetting('telegram_jam', jam);
+    if (b.telegram_auto !== undefined) saas.setSetting('telegram_auto', auto ? '1' : '0');
     saas.logAudit(adminName(req), 'UBAH BACKUP', 'backup', 'Konfigurasi auto backup Telegram');
     json(res, 200, { ok: true, telegram: saas.telegramCfg(), pesan: 'Konfigurasi backup Telegram disimpan.' });
+  });
+  post('/api/super/backup/telegram/uji', async (req, res) => {
+    if (!guardSuper(req, res)) return;
+    const b = await readBody(req);
+    try {
+      await saas.testTelegram(b.telegram_bot_token, b.telegram_chat_id);
+      json(res, 200, { ok: true, pesan: 'Pesan uji berhasil dikirim ke Telegram.' });
+    } catch (e) { fail(res, 400, e.message); }
   });
   post('/api/super/backup/kirim', async (req, res) => {
     if (!guardSuper(req, res)) return;
     try {
       const buf = buildSystemZip();
-      const nama = `Backup_Platform_${lib.todayISO().replace(/-/g, '')}.zip`;
+      const nama = `Backup_Platform_${telegramBackup.partsAt().stamp}.zip`;
       await saas.sendTelegram(buf, nama, `Backup platform ${lib.stampID ? lib.stampID() : lib.nowStamp()}`);
       saas.backupLog('telegram', nama, buf.length, 'sukses', 'Terkirim ke Telegram', 'manual', adminName(req));
       saas.logAudit(adminName(req), 'BACKUP TELEGRAM', 'backup', nama);
@@ -1080,7 +1110,7 @@ module.exports = function mount(apiCtx) {
   get('/api/super/backup/zip', (req, res) => {
     if (!guardSuper(req, res)) return;
     const buf = buildSystemZip();
-    const nama = `Backup_Platform_${lib.todayISO().replace(/-/g, '')}.zip`;
+    const nama = `Backup_Platform_${telegramBackup.partsAt().stamp}.zip`;
     saas.backupLog('zip', nama, buf.length, 'sukses', 'Unduh manual', 'manual', adminName(req));
     sendBuf(res, buf, 'application/zip', nama);
   });
@@ -1129,6 +1159,7 @@ module.exports = function mount(apiCtx) {
       total = target.conn.prepare(`SELECT COUNT(*) c FROM ${q2(aktif)}`).get().c;
       const offset = Math.max(0, num(q.hal, 1) - 1) * 40;
       rows = target.conn.prepare(`SELECT rowid AS __rowid, * FROM ${q2(aktif)} LIMIT 40 OFFSET ?`).all(offset);
+      rows = telegramBackup.redactSettingRows(aktif, rows);
     }
     const payload = {
       ok: true, scope, tabel, aktif, kolom, rows, total, hal: num(q.hal, 1),
@@ -1188,6 +1219,13 @@ module.exports = function mount(apiCtx) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(tabel)) return fail(res, 400, 'Nama tabel tidak valid.');
     const kolom = target.conn.prepare(`PRAGMA table_info(${q2(tabel)})`).all().map(c => c.name);
     const data = b.data || {};
+    if (['settings', 'saas_settings'].includes(tabel)) {
+      const current = target.conn.prepare(`SELECT key FROM ${q2(tabel)} WHERE rowid=?`).get(num(b.rowid));
+      if (current && telegramBackup.redactSettingRows(tabel, [{ key: current.key, value: 'x' }])[0].value === '') {
+        if (target.close) target.close();
+        return fail(res, 400, 'Kredensial rahasia hanya dapat diubah dari pengaturan gateway terkait.');
+      }
+    }
     const sets = Object.keys(data).filter(k => kolom.includes(k));
     if (!sets.length) return fail(res, 400, 'Tidak ada kolom yang bisa diperbarui.');
     try {
@@ -1258,7 +1296,7 @@ module.exports = function mount(apiCtx) {
       for (const o of objs) out.push(o.sql + ';');
       for (const o of objs) {
         if (!/^CREATE TABLE/i.test(String(o.sql))) continue;
-        const rows = d.conn.prepare(`SELECT * FROM "${o.name}"`).all();
+        const rows = telegramBackup.redactSettingRows(o.name, d.conn.prepare(`SELECT * FROM "${o.name}"`).all());
         for (const r of rows) {
           const keys = Object.keys(r);
           const vals = keys.map(k => sqlLit(r[k]));
@@ -1281,11 +1319,15 @@ module.exports = function mount(apiCtx) {
     const files = [{ name: 'README.txt', data: `Backup platform SMART TATA TERTIB SISWA\nDibuat: ${lib.nowStamp()}\n` }];
     files.push({ name: 'saas/database.json', data: JSON.stringify(dumpDatabase(saas.sdb), null, 1) });
     for (const t of saas.tenants()) {
+      let conn;
       try {
-        const conn = require('better-sqlite3')(saas.absDb(t), { readonly: true });
+        conn = require('better-sqlite3')(saas.absDb(t), { readonly: true });
         files.push({ name: `sekolah/${t.kode}-${t.slug}/database.json`, data: JSON.stringify(dumpDatabase(conn), null, 1) });
-        conn.close();
-      } catch (e) { /* lewati sekolah yang tidak terbaca */ }
+      } catch (e) {
+        throw new Error(`Database sekolah ${t.kode || t.nama || t.id} tidak dapat dibaca: ${e.message}`);
+      } finally {
+        if (conn) conn.close();
+      }
     }
     files.push({ name: 'database.sql', data: dumpSql() });
     return lib.zip(files);
@@ -1293,12 +1335,13 @@ module.exports = function mount(apiCtx) {
   function dumpDatabase(conn) {
     const out = { app: 'tata-tertib-platform', versi: 1, dibuat: lib.nowStamp(), tabel: {} };
     for (const t of listTables(conn)) {
-      try { out.tabel[t] = conn.prepare(`SELECT * FROM "${t}"`).all(); } catch (e) { out.tabel[t] = []; }
+      try { out.tabel[t] = telegramBackup.redactSettingRows(t, conn.prepare(`SELECT * FROM "${t}"`).all()); }
+      catch (e) { out.tabel[t] = []; }
     }
     return out;
   }
   function sourceFiles() {
-    const roots = ['server.js', 'saas.js', 'saas-routes.js', 'db.js', 'lib.js', 'doc.js', 'tz.js',
+    const roots = ['server.js', 'saas.js', 'saas-routes.js', 'telegram-backup.js', 'db.js', 'lib.js', 'doc.js', 'tz.js',
       'xlsx-read.js', 'package.json', 'vite.config.js', 'tailwind.config.js', 'postcss.config.js',
       'index.html', 'README.md', 'AGENTS.md'];
     const files = [];
@@ -1369,4 +1412,37 @@ module.exports = function mount(apiCtx) {
     })();
     conn.pragma('foreign_keys = ON');
   }
+
+  let platformBackupInFlight = false;
+  async function checkPlatformTelegramBackup() {
+    const cfg = saas.telegramCfg();
+    if (!cfg.auto || !cfg.token_set || !cfg.chat) return;
+    let marker;
+    try {
+      marker = telegramBackup.dueMarker(
+        cfg.auto, cfg.jam, saas.setting('telegram_attempt', ''), new Date()
+      );
+    } catch (e) {
+      console.error('[backup-telegram:platform] jadwal tidak valid:', e.message);
+      return;
+    }
+    if (!marker || platformBackupInFlight) return;
+    platformBackupInFlight = true;
+    saas.setSetting('telegram_attempt', marker);
+    const nama = `Backup_Platform_${marker.replace(/\D/g, '')}.zip`;
+    try {
+      const buf = buildSystemZip();
+      await saas.sendTelegram(buf, nama, `Backup platform otomatis ${marker} (${require('./tz').label()})`);
+      saas.backupLog('telegram', nama, buf.length, 'sukses', 'Backup otomatis terkirim ke Telegram', 'otomatis', 'Scheduler');
+      saas.logAudit('Scheduler', 'BACKUP TELEGRAM', 'backup', `Backup otomatis ${nama}`);
+    } catch (e) {
+      saas.backupLog('telegram', nama, 0, 'gagal', e.message, 'otomatis', 'Scheduler');
+      saas.logAudit('Scheduler', 'GAGAL BACKUP TELEGRAM', 'backup', `${nama}: ${e.message}`);
+      console.error('[backup-telegram:platform] gagal:', e.message);
+    } finally {
+      platformBackupInFlight = false;
+    }
+  }
+  setInterval(() => { checkPlatformTelegramBackup().catch(e => console.error('[backup-telegram:platform]', e.message)); }, 15 * 1000).unref();
+  setTimeout(() => { checkPlatformTelegramBackup().catch(e => console.error('[backup-telegram:platform]', e.message)); }, 20000).unref();
 };

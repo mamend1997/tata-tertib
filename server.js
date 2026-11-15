@@ -13,6 +13,7 @@ const dbm = require('./db');
 const lib = require('./lib');
 const doc = require('./doc');
 const saas = require('./saas');
+const telegramBackup = require('./telegram-backup');
 const { db } = dbm;
 
 const PORT = Number(process.env.PORT || 3000);
@@ -2107,10 +2108,10 @@ get('/api/kalender', (req, res, q) => {
 get('/api/backup/json', (req, res) => {
   if (!guard(req, res, 'pengaturan', 'write')) return;
   const user = sessionFrom(req).user;
-  const dump = dbm.dumpAll();
+  const dump = schoolBackupDump();
   dbm.logAudit(user, 'BACKUP', 'pengaturan', `Mengunduh backup database JSON (${Object.values(dump.jumlah).reduce((a, b) => a + b, 0)} baris)`, ipOf(req));
   const buf = Buffer.from(JSON.stringify(dump, null, 1), 'utf8');
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = telegramBackup.partsAt().date;
   sendFile(res, buf, 'application/json', `backup-tata-tertib-${stamp}.json`);
 });
 
@@ -2124,11 +2125,13 @@ function csvOf(rows) {
   };
   return [cols.join(','), ...rows.map(r => cols.map(c => { const v = r[c]; return esc2(typeof v === 'string' && v.length > 320 ? v.slice(0, 320) + '…' : v); }).join(','))].join('\r\n');
 }
-/** EKSPOR LENGKAP: satu berkas .zip berisi database.json + CSV per tabel + daftar berkas */
-get('/api/backup/zip', (req, res) => {
-  if (!guard(req, res, 'pengaturan', 'view')) return;
-  const user = sessionFrom(req).user;
+function schoolBackupDump() {
   const dump = dbm.dumpAll();
+  dump.tabel.settings = telegramBackup.redactSettingRows('settings', dump.tabel.settings || []);
+  return dump;
+}
+function buildSchoolBackupZip() {
+  const dump = schoolBackupDump();
   const total = Object.values(dump.jumlah).reduce((a, b) => a + b, 0);
   const files = [{ name: 'database.json', data: JSON.stringify(dump, null, 1) }];
   for (const [t, rows] of Object.entries(dump.tabel)) {
@@ -2159,12 +2162,29 @@ get('/api/backup/zip', (req, res) => {
       '  3. Ketik PULIHKAN lalu klik "Pulihkan Database Sekarang"'
     ].join('\n')
   });
-  const zipBuf = lib.zip(files);
-  const d = new Date();
-  const p2 = n => String(n).padStart(2, '0');
-  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  return { buf: lib.zip(files), total, media: media.length };
+}
+function schoolTelegramConfig() {
+  const token = String(dbm.getSetting('backup_telegram_bot_token', '') || '').trim();
+  return {
+    token_set: Boolean(token),
+    token_masked: telegramBackup.maskSecret(token),
+    chat_id: String(dbm.getSetting('backup_telegram_chat_id', '') || '').trim(),
+    auto: String(dbm.getSetting('backup_telegram_auto', '0')) === '1',
+    jam: telegramBackup.safeSchedule(dbm.getSetting('backup_telegram_jam', telegramBackup.DEFAULT_SCHEDULE)),
+    terakhir: String(dbm.getSetting('backup_telegram_terakhir', '') || ''),
+    status: String(dbm.getSetting('backup_telegram_status', '') || ''),
+    error: String(dbm.getSetting('backup_telegram_error', '') || '')
+  };
+}
+/** EKSPOR LENGKAP: satu berkas .zip berisi database.json + CSV per tabel + daftar berkas */
+get('/api/backup/zip', (req, res) => {
+  if (!guard(req, res, 'pengaturan', 'view')) return;
+  const user = sessionFrom(req).user;
+  const { buf: zipBuf, total, media } = buildSchoolBackupZip();
+  const stamp = telegramBackup.partsAt().stamp;
   dbm.logAudit(user, 'EKSPOR DATABASE', 'pengaturan',
-    `Mengunduh arsip ZIP database (${total} baris, ${media.length} berkas, ${Math.round(zipBuf.length / 1024)} KB)`, ipOf(req));
+    `Mengunduh arsip ZIP database (${total} baris, ${media} berkas, ${Math.round(zipBuf.length / 1024)} KB)`, ipOf(req));
   sendFile(res, zipBuf, 'application/zip', `backup-tata-tertib-${stamp}.zip`);
 });
 /**
@@ -2213,8 +2233,72 @@ get('/api/backup/info', (req, res) => {
   const dump = dbm.dumpAll();
   json(res, 200, {
     ok: true, jumlah: dump.jumlah, total: Object.values(dump.jumlah).reduce((a, b) => a + b, 0),
-    ukuran_kb: Math.round(Buffer.byteLength(JSON.stringify(dump)) / 1024)
+    ukuran_kb: Math.round(Buffer.byteLength(JSON.stringify(dump)) / 1024),
+    telegram: schoolTelegramConfig()
   });
+});
+post('/api/backup/telegram', async (req, res) => {
+  const user = guard(req, res, 'pengaturan', 'write'); if (!user) return;
+  if (user.role !== 'admin') return fail(res, 403, 'Pengaturan backup Telegram hanya dapat diubah Administrator.');
+  const b = await readBody(req);
+  const current = schoolTelegramConfig();
+  const token = String(b.bot_token || '').trim();
+  const chat = b.chat_id === undefined ? current.chat_id : String(b.chat_id || '').trim();
+  let jam;
+  try { jam = telegramBackup.parseSchedule(b.jam === undefined ? current.jam : b.jam).join(', '); }
+  catch (e) { return fail(res, 400, e.message); }
+  const auto = b.auto === undefined ? current.auto
+    : b.auto === true || b.auto === 1 || b.auto === '1' || b.auto === 'true';
+  if (token.length > 256) return fail(res, 400, 'Bot token terlalu panjang.');
+  if (token && !telegramBackup.isValidToken(token)) return fail(res, 400, 'Format Bot Token Telegram tidak valid.');
+  if (chat.length > 128) return fail(res, 400, 'Chat ID terlalu panjang.');
+  if (auto && (!(token || current.token_set) || !chat)) {
+    return fail(res, 400, 'Token bot dan Chat ID wajib diisi sebelum backup otomatis diaktifkan.');
+  }
+  if (token) dbm.setSetting('backup_telegram_bot_token', token);
+  if (b.chat_id !== undefined) dbm.setSetting('backup_telegram_chat_id', chat);
+  dbm.setSetting('backup_telegram_jam', jam);
+  dbm.setSetting('backup_telegram_auto', auto ? '1' : '0');
+  dbm.logAudit(user, 'UBAH BACKUP TELEGRAM', 'pengaturan', 'Konfigurasi backup Telegram', ipOf(req));
+  json(res, 200, { ok: true, telegram: schoolTelegramConfig(), pesan: 'Konfigurasi backup Telegram disimpan.' });
+});
+post('/api/backup/telegram/uji', async (req, res) => {
+  const user = guard(req, res, 'pengaturan', 'write'); if (!user) return;
+  if (user.role !== 'admin') return fail(res, 403, 'Uji Telegram hanya dapat dilakukan Administrator.');
+  const b = await readBody(req);
+  const token = String(b.bot_token || '').trim() || String(dbm.getSetting('backup_telegram_bot_token', '') || '').trim();
+  const chat = String(b.chat_id || '').trim() || String(dbm.getSetting('backup_telegram_chat_id', '') || '').trim();
+  try {
+    await telegramBackup.testConnection(token, chat);
+    dbm.logAudit(user, 'UJI BACKUP TELEGRAM', 'pengaturan', 'Pesan uji berhasil dikirim', ipOf(req));
+    json(res, 200, { ok: true, pesan: 'Pesan uji berhasil dikirim ke Telegram.' });
+  } catch (e) {
+    dbm.logAudit(user, 'GAGAL UJI BACKUP TELEGRAM', 'pengaturan', e.message, ipOf(req));
+    fail(res, 400, e.message);
+  }
+});
+post('/api/backup/telegram/kirim', async (req, res) => {
+  const user = guard(req, res, 'pengaturan', 'write'); if (!user) return;
+  if (user.role !== 'admin') return fail(res, 403, 'Pengiriman backup Telegram hanya dapat dilakukan Administrator.');
+  const cfg = schoolTelegramConfig();
+  const token = String(dbm.getSetting('backup_telegram_bot_token', '') || '').trim();
+  if (!token || !cfg.chat_id) return fail(res, 400, 'Simpan Token Bot dan Chat ID sebelum mengirim backup.');
+  const stamp = telegramBackup.partsAt().stamp;
+  const nama = `Backup_${String(dbm.getSetting('sekolah_nama', 'Sekolah') || 'Sekolah').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 60)}_${stamp}.zip`;
+  try {
+    const { buf } = buildSchoolBackupZip();
+    await telegramBackup.sendDocument(token, cfg.chat_id, buf, nama, `Backup sekolah ${lib.nowStamp()}`);
+    dbm.setSetting('backup_telegram_terakhir', lib.nowStamp());
+    dbm.setSetting('backup_telegram_status', 'sukses');
+    dbm.setSetting('backup_telegram_error', '');
+    dbm.logAudit(user, 'BACKUP TELEGRAM', 'pengaturan', `Backup manual ${nama} (${Math.round(buf.length / 1024)} KB)`, ipOf(req));
+    json(res, 200, { ok: true, pesan: 'Arsip backup sekolah terkirim ke Telegram.' });
+  } catch (e) {
+    dbm.setSetting('backup_telegram_status', 'gagal');
+    dbm.setSetting('backup_telegram_error', e.message);
+    dbm.logAudit(user, 'GAGAL BACKUP TELEGRAM', 'pengaturan', `${nama}: ${e.message}`, ipOf(req));
+    fail(res, 400, e.message);
+  }
 });
 
 /* ---------- Reset data tahun ajaran ---------- */
@@ -3634,6 +3718,58 @@ async function jalankanRekapWaSemua() {
     catch (e) { /* abaikan */ }
   }
 }
+const backupTelegramInFlight = new Set();
+async function checkSchoolTelegramBackup(t) {
+  const tenantKey = String(t.id || t.kode || t.slug);
+  return dbm.useTenant(saas.absDb(t), async () => {
+    const cfg = schoolTelegramConfig();
+    if (!cfg.auto || !cfg.token_set || !cfg.chat_id) return;
+    const lastAttempt = String(dbm.getSetting('backup_telegram_last_attempt', '') || '');
+    let marker;
+    try { marker = telegramBackup.dueMarker(cfg.auto, cfg.jam, lastAttempt, new Date()); }
+    catch (e) {
+      console.error(`[backup-telegram:${tenantKey}] jadwal tidak valid:`, e.message);
+      return;
+    }
+    if (!marker) return;
+    const lock = `${tenantKey}:${marker}`;
+    if (backupTelegramInFlight.has(lock)) return;
+    backupTelegramInFlight.add(lock);
+    dbm.setSetting('backup_telegram_last_attempt', marker);
+    const stamp = marker.replace(/\D/g, '');
+    const namaSekolah = String(dbm.getSetting('sekolah_nama', t.nama || t.kode || 'Sekolah') || t.nama || t.kode || 'Sekolah')
+      .replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 60);
+    const nama = `Backup_${namaSekolah}_${stamp}.zip`;
+    try {
+      const { buf } = buildSchoolBackupZip();
+      await telegramBackup.sendDocument(
+        String(dbm.getSetting('backup_telegram_bot_token', '') || '').trim(),
+        cfg.chat_id,
+        buf,
+        nama,
+        `Backup otomatis ${namaSekolah} ${marker} (${require('./tz').label()})`
+      );
+      dbm.setSetting('backup_telegram_terakhir', lib.nowStamp());
+      dbm.setSetting('backup_telegram_status', 'sukses');
+      dbm.setSetting('backup_telegram_error', '');
+      dbm.logAudit(null, 'BACKUP TELEGRAM', 'pengaturan', `Backup otomatis ${nama} (${Math.round(buf.length / 1024)} KB)`);
+      console.log(`[backup-telegram:${tenantKey}] terkirim ${nama}`);
+    } catch (e) {
+      dbm.setSetting('backup_telegram_status', 'gagal');
+      dbm.setSetting('backup_telegram_error', e.message);
+      dbm.logAudit(null, 'GAGAL BACKUP TELEGRAM', 'pengaturan', `${nama}: ${e.message}`);
+      console.error(`[backup-telegram:${tenantKey}] gagal:`, e.message);
+    } finally {
+      backupTelegramInFlight.delete(lock);
+    }
+  });
+}
+async function jalankanBackupTelegramSemua() {
+  for (const t of tenantAktifList()) {
+    try { await checkSchoolTelegramBackup(t); }
+    catch (e) { console.error(`[backup-telegram:${t.kode || t.id}] gagal memeriksa jadwal:`, e.message); }
+  }
+}
 function bersihkanFotoAbsensi() {
   for (const t of tenantAktifList()) {
     try { dbm.useTenant(saas.absDb(t), () => dbm.absensiPurgeFoto()); }
@@ -3642,6 +3778,8 @@ function bersihkanFotoAbsensi() {
 }
 setInterval(() => { jalankanRekapWaSemua().catch(() => {}); }, 60 * 1000).unref();
 setTimeout(() => { jalankanRekapWaSemua().catch(() => {}); }, 20000).unref();
+setInterval(() => { jalankanBackupTelegramSemua().catch(e => console.error('[backup-telegram] gagal:', e.message)); }, 15 * 1000).unref();
+setTimeout(() => { jalankanBackupTelegramSemua().catch(e => console.error('[backup-telegram] gagal:', e.message)); }, 25000).unref();
 setInterval(bersihkanFotoAbsensi, 6 * 3600 * 1000).unref();
 setTimeout(bersihkanFotoAbsensi, 45000).unref();
 

@@ -16,6 +16,7 @@ const dns = require('dns').promises;
 const Database = require('better-sqlite3');
 const lib = require('./lib');
 const payment = require('./payment');
+const telegramBackup = require('./telegram-backup');
 
 const DATA_DIR = path.join(__dirname, 'data');
 /* Bila DB sekolah utama diarahkan ke tempat lain (mis. saat pengujian memakai
@@ -1721,12 +1722,21 @@ function hapusOrphanDb() {
 /* ==================== BACKUP (ZIP / SQL / TELEGRAM) ==================== */
 function telegramCfg() {
   const s = settings();
+  const credentials = telegramCredentials();
+  return {
+    token_set: Boolean(credentials.token),
+    token_masked: telegramBackup.maskSecret(credentials.token),
+    chat: credentials.chat,
+    auto: String(s.telegram_auto) === '1',
+    jam: telegramBackup.safeSchedule(s.telegram_jam, '02:00'),
+    terakhir: s.telegram_terakhir || ''
+  };
+}
+function telegramCredentials() {
+  const s = settings();
   return {
     token: clean(process.env.TELEGRAM_BOT_TOKEN || s.telegram_bot_token),
-    chat: clean(process.env.TELEGRAM_CHAT_ID || s.telegram_chat_id),
-    auto: String(s.telegram_auto) === '1',
-    jam: clean(s.telegram_jam) || '02:00',
-    terakhir: s.telegram_terakhir || ''
+    chat: clean(process.env.TELEGRAM_CHAT_ID || s.telegram_chat_id)
   };
 }
 function backupLog(jenis, nama, ukuran, status, pesan, pemicu, oleh) {
@@ -1739,17 +1749,14 @@ function backupLogList() {
   return sdb.prepare('SELECT * FROM saas_backup_log ORDER BY id DESC LIMIT 60').all();
 }
 async function sendTelegram(fileBuf, filename, caption) {
-  const cfg = telegramCfg();
-  if (!cfg.token || !cfg.chat) throw new Error('Token bot / Chat ID Telegram belum diatur.');
-  const form = new FormData();
-  form.append('chat_id', cfg.chat);
-  form.append('caption', caption || filename);
-  form.append('document', new Blob([fileBuf]), filename);
-  const r = await fetch(`https://api.telegram.org/bot${cfg.token}/sendDocument`, { method: 'POST', body: form });
-  const txt = await r.text();
-  if (!r.ok) throw new Error(`Telegram: HTTP ${r.status} ${txt.slice(0, 160)}`);
+  const cfg = telegramCredentials();
+  await telegramBackup.sendDocument(cfg.token, cfg.chat, fileBuf, filename, caption);
   setSetting('telegram_terakhir', now());
   return true;
+}
+async function testTelegram(token, chat) {
+  const cfg = telegramCredentials();
+  return telegramBackup.testConnection(clean(token) || cfg.token, clean(chat) || cfg.chat);
 }
 
 /* ==================== RINGKASAN SEKOLAH (panel tenant) ==================== */
@@ -1959,6 +1966,6 @@ module.exports = {
   sessionSave, sessionGet, sessionDelete, sessionPurge, sessionHapusTenant,
   menuDefault, saveMenuDefault, applyMenuDefault,
   orphanDbFiles, hapusOrphanDb,
-  telegramCfg, backupLog, backupLogList, sendTelegram,
+  telegramCfg, backupLog, backupLogList, sendTelegram, testTelegram,
   ringkasanTenant, statusTenantLabel, init
 };

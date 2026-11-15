@@ -83,6 +83,29 @@ async function req(method, url, body, opt = {}) {
   ok('ZIP memuat media.json & README', names.includes('media.json') && names.includes('README.txt'));
   const zipDump = JSON.parse(entries['database.json'].toString('utf8'));
   ok('database.json di dalam ZIP valid', zipDump.app === 'tata-tertib-sekolah' && Object.keys(zipDump.tabel).length >= 15);
+  const tgToken = '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ_1234567890';
+  r = await req('POST', '/api/backup/telegram', { auto: true, jam: '06:00', chat_id: '-100123' });
+  ok('backup otomatis tidak dapat diaktifkan tanpa token bot', r.status === 400, String(r.status));
+  r = await req('POST', '/api/backup/telegram', {
+    bot_token: tgToken, chat_id: '-100123', jam: '06:00, 15:00', auto: false
+  });
+  ok('konfigurasi Telegram sekolah tersimpan tanpa mengembalikan token', r.status === 200
+    && r.json.telegram.token_set && !JSON.stringify(r.json).includes(tgToken), JSON.stringify(r.json.telegram));
+  r = await req('POST', '/api/backup/telegram', { jam: '25:00', auto: false });
+  ok('jam backup dengan format salah ditolak', r.status === 400, String(r.status));
+  r = await req('GET', '/api/backup/info');
+  ok('info backup hanya mengirim status token tersamar', r.status === 200
+    && r.json.telegram.token_set && !JSON.stringify(r.json).includes(tgToken));
+  r = await req('GET', '/api/backup/json');
+  const jsonDumpSafe = JSON.parse(r.buf.toString('utf8'));
+  ok('ekspor JSON tidak menyertakan token Telegram', (jsonDumpSafe.tabel.settings || [])
+    .find(x => x.key === 'backup_telegram_bot_token')?.value === '');
+  r = await req('GET', '/api/backup/zip');
+  const tgZipEntries = require('../xlsx-read').unzipEntries(r.buf);
+  const tgZipDump = JSON.parse(tgZipEntries['database.json'].toString('utf8'));
+  ok('arsip ZIP dan CSV tidak menyertakan token Telegram', (tgZipDump.tabel.settings || [])
+    .find(x => x.key === 'backup_telegram_bot_token')?.value === ''
+    && !tgZipEntries['data/settings.csv'].toString('utf8').includes(tgToken));
 
   /* ================== 2. KELOLA FILE & BATAS UNGGAH ================== */
   const db = new Database(DB);

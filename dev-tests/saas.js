@@ -355,9 +355,37 @@ function client() {
     console.log('\n== BACKUP & DATABASE MANAGER ==');
     r = await su.req('/api/super/backup');
     ok('halaman backup memuat ringkasan & tenant', r.status === 200 && (r.body.tenants || []).length >= 2);
+    const tgToken = '123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ_1234567890';
+    r = await su.req('/api/super/backup/telegram', { method: 'POST', body: { telegram_bot_token: tgToken,
+      telegram_chat_id: '-100123', telegram_jam: '06:00, 15:00', telegram_auto: false } });
+    ok('konfigurasi Telegram platform menyimpan token tanpa mengembalikannya', r.status === 200
+      && r.body.telegram.token_set && !JSON.stringify(r.body).includes(tgToken));
+    r = await su.req('/api/super/backup/telegram', { method: 'POST', body: { telegram_jam: '25:00' } });
+    ok('jadwal Telegram platform tidak valid ditolak', r.status === 400);
+    r = await su.req('/api/super/backup');
+    ok('API backup platform hanya mengirim status token tersamar', r.status === 200
+      && r.body.telegram.token_set && !JSON.stringify(r.body).includes(tgToken));
+    r = await su.req('/api/super/branding');
+    ok('API branding tidak membocorkan token Telegram', r.body.s.telegram_bot_token === '');
+    r = await su.req('/api/super/wa');
+    ok('API WhatsApp tidak membocorkan token Telegram dari settings', r.body.s.telegram_bot_token === '');
+    r = await su.req('/api/super/qris');
+    ok('API gateway pembayaran tidak membocorkan token Telegram', r.body.s.telegram_bot_token === '');
+    r = await su.req('/api/super/database?scope=saas&tabel=saas_settings');
+    const tgDbRow = (r.body.rows || []).find(x => x.key === 'telegram_bot_token');
+    ok('Database Manager menyamarkan token Telegram', !!tgDbRow && tgDbRow.value === '');
+    r = await su.req('/api/super/database/baris', { method: 'POST', body: {
+      scope: 'saas', tabel: 'saas_settings', rowid: tgDbRow && tgDbRow.__rowid, data: { value: 'must-not-save' }
+    } });
+    ok('Database Manager tidak dapat menimpa kredensial yang disamarkan', r.status === 400);
     r = await su.req('/api/super/backup/zip');
     ok('unduh backup ZIP berhasil', r.status === 200 && r.body.length > 500 && /zip/.test(r.ct), `${r.status} ${r.ct} ${r.body.length}`);
     const zipBuf = r.body;
+    const backupEntries = require('../xlsx-read').unzipEntries(zipBuf);
+    const platformDb = JSON.parse(backupEntries['saas/database.json'].toString('utf8'));
+    ok('ZIP platform meredaksi token dari JSON dan SQL', (platformDb.tabel.saas_settings || [])
+      .find(x => x.key === 'telegram_bot_token')?.value === ''
+      && !backupEntries['database.sql'].toString('utf8').includes(tgToken));
     r = await su.req('/api/super/backup');
     ok('log backup tercatat setelah unduh ZIP', (r.body.log || []).some(l => l.jenis === 'zip'),
       JSON.stringify((r.body.log || []).map(l => l.jenis)));

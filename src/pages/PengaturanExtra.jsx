@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle, CloudDownload, Database, FileArchive, FileJson, Loader2, RefreshCw, RotateCcw, ShieldAlert,
-  Upload, ListChecks, FileSpreadsheet, Images
+  Upload, ListChecks, FileSpreadsheet, Images, Play, Save, Send
 } from 'lucide-react';
 import { api, docUrl } from '../api';
 import { Alert, Card, Field, Spinner, cx, useToast } from '../ui';
@@ -10,14 +10,53 @@ import { Alert, Card, Field, Spinner, cx, useToast } from '../ui';
 export function BackupRestore({ ctx, readOnly }) {
   const toast = useToast();
   const [info, setInfo] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [telegram, setTelegram] = useState({ bot_token: '', chat_id: '', jam: '06:00, 15:00', auto: false });
+  const [busy, setBusy] = useState('');
   const [restoring, setRestoring] = useState(false);
   const [file, setFile] = useState(null);
   const [konfirmasi, setKonfirmasi] = useState('');
   const inputRef = useRef(null);
 
-  const load = () => api('/api/backup/info').then(setInfo).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    const r = await api('/api/backup/info');
+    setInfo(r);
+    const cfg = r.telegram || {};
+    setTelegram({
+      bot_token: '',
+      chat_id: cfg.chat_id || '',
+      jam: cfg.jam || '06:00, 15:00',
+      auto: !!cfg.auto
+    });
+  };
+  useEffect(() => { load().catch(e => toast.err(e.message)); }, []);
+
+  async function simpanTelegram() {
+    setBusy('simpan');
+    try {
+      const r = await api('/api/backup/telegram', { method: 'POST', body: telegram });
+      toast.ok(r.pesan);
+      await load();
+    } catch (e) { toast.err(e.message); }
+    finally { setBusy(''); }
+  }
+  async function ujiTelegram() {
+    setBusy('uji');
+    try {
+      const r = await api('/api/backup/telegram/uji', { method: 'POST', body: telegram });
+      toast.ok(r.pesan);
+    } catch (e) { toast.err(e.message); }
+    finally { setBusy(''); }
+  }
+  async function kirimTelegram() {
+    if (!window.confirm('Kirim arsip seluruh data sekolah ke Chat ID Telegram yang tersimpan?')) return;
+    setBusy('kirim');
+    try {
+      const r = await api('/api/backup/telegram/kirim', { method: 'POST' });
+      toast.ok(r.pesan);
+      await load();
+    } catch (e) { toast.err(e.message); }
+    finally { setBusy(''); }
+  }
 
   async function restore() {
     if (!file) return toast.err('Pilih berkas backup (.zip atau .json) terlebih dahulu.');
@@ -55,7 +94,7 @@ export function BackupRestore({ ctx, readOnly }) {
           </div>
         ) : <Spinner label="Menghitung isi database…" />}
         <a className={cx('btn-primary w-full py-2.5', readOnly && 'pointer-events-none opacity-60')}
-          href={docUrl('/api/backup/json')} download onClick={() => setTimeout(load, 1500)}>
+          href={docUrl('/api/backup/json')} download onClick={() => setTimeout(() => load().catch(e => toast.err(e.message)), 1500)}>
           <CloudDownload size={16} /> Unduh Backup (.json)
         </a>
         <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
@@ -72,13 +111,63 @@ export function BackupRestore({ ctx, readOnly }) {
           <p className="flex items-center gap-2"><FileJson size={14} className="text-slate-500" /> <b>README.txt</b> — petunjuk pemulihan</p>
         </div>
         <a className={cx('btn-primary w-full py-2.5', readOnly && 'pointer-events-none opacity-60')}
-          href={docUrl('/api/backup/zip')} download onClick={() => setTimeout(load, 1500)}>
+          href={docUrl('/api/backup/zip')} download onClick={() => setTimeout(() => load().catch(e => toast.err(e.message)), 1500)}>
           <FileArchive size={16} /> Ekspor Database Sekarang (.zip)
         </a>
         <p className="mt-2 text-[11.5px] leading-relaxed text-slate-500">
           Praktis &amp; aman: arsip dibuat di server (tanpa menyentuh berkas sistem) dan hanya dapat diunduh oleh akun
           dengan izin Pengaturan. Membutuhkan izin <b>Lihat</b> pada modul Pengaturan.
         </p>
+      </Card>
+
+      <Card title="Auto Backup Telegram" subtitle="Kirim arsip ZIP sekolah otomatis setiap hari pada jam yang dipilih">
+        <div className="space-y-3">
+          <Field label="Bot Token Telegram" hint={info?.telegram?.token_set
+            ? `Token tersimpan: ${info.telegram.token_masked}. Kosongkan untuk mempertahankan token ini.`
+            : 'Buat bot melalui @BotFather. Token disimpan di server dan tidak dikirim kembali ke browser.'}>
+            <input data-backup-telegram-token className="input" type="password" autoComplete="new-password"
+              placeholder={info?.telegram?.token_set ? 'Token sudah tersimpan' : '123456:ABC…'}
+              value={telegram.bot_token} disabled={readOnly || busy !== ''}
+              onChange={e => setTelegram(v => ({ ...v, bot_token: e.target.value }))} />
+          </Field>
+          <Field label="Chat ID Tujuan" hint="ID chat pribadi atau grup yang sudah memulai percakapan dengan bot.">
+            <input data-backup-telegram-chat className="input" value={telegram.chat_id} disabled={readOnly || busy !== ''}
+              onChange={e => setTelegram(v => ({ ...v, chat_id: e.target.value }))} />
+          </Field>
+          <Field label="Jam Backup Harian" hint="Zona waktu aplikasi; pisahkan beberapa jam dengan koma, contoh 06:00, 15:00.">
+            <input data-backup-telegram-jam className="input" value={telegram.jam} disabled={readOnly || busy !== ''}
+              placeholder="06:00, 15:00"
+              onChange={e => setTelegram(v => ({ ...v, jam: e.target.value }))} />
+          </Field>
+          <label className="flex items-center gap-2 text-[12.5px] font-semibold text-slate-700">
+            <input data-backup-telegram-auto type="checkbox" className="h-4 w-4 accent-emerald-600"
+              checked={telegram.auto} disabled={readOnly || busy !== ''}
+              onChange={e => setTelegram(v => ({ ...v, auto: e.target.checked }))} />
+            Aktifkan backup otomatis harian
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button data-backup-telegram-save className="btn-primary btn-sm" disabled={readOnly || busy !== ''} onClick={simpanTelegram}>
+              {busy === 'simpan' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Simpan
+            </button>
+            <button data-backup-telegram-test className="btn-ghost btn-sm" disabled={readOnly || busy !== ''} onClick={ujiTelegram}>
+              {busy === 'uji' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Uji Koneksi Bot
+            </button>
+            <button data-backup-telegram-send className="btn-ghost btn-sm" disabled={readOnly || busy !== ''} onClick={kirimTelegram}>
+              {busy === 'kirim' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Kirim Backup Sekarang
+            </button>
+          </div>
+          <p className="text-[11.5px] leading-relaxed text-slate-500">
+            Backup adalah arsip satu arah, bukan sinkronisasi database dua arah. Arsip ZIP menyertakan database, CSV, dan daftar media; file foto aktual tetap berada di penyimpanan aplikasi.
+          </p>
+          {info?.telegram?.terakhir && (
+            <p data-backup-telegram-last className="text-[11.5px] text-slate-500">
+              Backup terakhir: {info.telegram.terakhir} · Status: {info.telegram.status || 'sukses'}
+            </p>
+          )}
+          {info?.telegram?.status === 'gagal' && info.telegram.error && (
+            <p className="rounded-lg bg-rose-50 p-2 text-[11.5px] text-rose-700">Pengiriman terakhir gagal: {info.telegram.error}</p>
+          )}
+        </div>
       </Card>
 
       <Card title="Restore Data (Unggah .zip / .json)" subtitle="Mengembalikan seluruh data dari berkas backup">
