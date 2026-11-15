@@ -1,0 +1,57 @@
+const { spawn } = require('child_process');
+const path = require('path'), fs = require('fs'), os = require('os');
+const { chromium } = require('playwright');
+const OUT = path.join(__dirname, '..', '..', '_shots');
+const DB = path.join(os.tmpdir(), 'stt-shot2.sqlite'); try { fs.unlinkSync(DB); } catch (e) {}
+const PORT = 5810, BASE = 'http://127.0.0.1:' + PORT;
+let PSLUG = 'smk-pgri-cikoneng';
+const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, PORT: String(PORT), DB_PATH: DB }, stdio: ['ignore', 'pipe', 'pipe'] });
+srv.stderr.on('data', d => process.stderr.write('[srv]' + d));
+(async () => {
+  await new Promise(r => setTimeout(r, 1800));
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 1440, height: 1000 } });
+  const p = await ctx.newPage();
+  await p.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await p.screenshot({ path: OUT + '/r2-login.png' });
+  await p.fill('input[autocomplete="username"]', 'admin');
+  await p.fill('input[autocomplete="current-password"]', 'admin123');
+  await p.click('button[type="submit"]');
+  await p.waitForSelector('text=Distribusi Status Disiplin', { timeout: 20000 });
+  await p.waitForTimeout(900);
+  await p.screenshot({ path: OUT + '/r2-alert.png' });
+  await p.keyboard.press('Escape'); await p.waitForTimeout(400);
+  await p.screenshot({ path: OUT + '/r2-dashboard.png', fullPage: false });
+  const nav = async (label, file, wait) => {
+    await p.click(`aside nav button:has-text("${label}")`);
+    await p.waitForTimeout(wait || 900);
+    await p.screenshot({ path: OUT + '/' + file + '.png' });
+  };
+  await nav('Data Siswa', 'r2-siswa');
+  // buka modal detail siswa pertama (baris dengan poin tinggi)
+  await p.locator('table.tbl tbody tr').first().locator('button').first().click();
+  await p.waitForTimeout(900);
+  await p.screenshot({ path: OUT + '/r2-siswa-detail.png' });
+  await p.keyboard.press('Escape');
+  await nav('Akun Pengguna', 'r2-pengguna');
+  await p.click('aside button:has-text("Profil Akun")');
+  await p.waitForTimeout(900);
+  await p.screenshot({ path: OUT + '/r2-profil.png' });
+  await nav('Tindak Lanjut', 'r2-tindaklanjut');
+  await nav('Buku Penghubung', 'r2-jurnal');
+  await nav('Analitik Pola', 'r2-analitik');
+  await p.click('aside nav button:has-text("Pengaturan")');
+  await p.waitForTimeout(600);
+  await p.click('.tab:has-text("Lokasi & Sanksi")');
+  await p.waitForTimeout(600);
+  await p.screenshot({ path: OUT + '/r2-lokasi.png' });
+  await b.close();
+  const b2 = await chromium.launch();
+  const p2 = await (await b2.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await p2.goto(BASE + '/' + PSLUG + '/portal-siswa', { waitUntil: 'networkidle' });
+  await p2.screenshot({ path: OUT + '/r2-portal.png' });
+  await b2.close();
+  srv.kill('SIGKILL');
+  ['', '-wal', '-shm'].forEach(s => { try { fs.unlinkSync(DB + s); } catch (e) {} });
+  console.log('shots done');
+})();
