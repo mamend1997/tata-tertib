@@ -107,11 +107,16 @@ sebagai Railway Variable. Nilai environment `EDUPOIN_AI_API_KEY` memiliki priori
 | `EDUPOIN_AI_API_KEY` | Opsional; API key penyedia AI |
 | `EDUPOIN_AI_BASE_URL` | Opsional; default `https://api.openai.com/v1` |
 | `EDUPOIN_AI_MODEL` | Opsional; default `gpt-4o-mini` |
+| `EDUPOIN_AI_FALLBACK_API_KEY` | Opsional; API key Groq untuk failover otomatis |
+| `EDUPOIN_AI_FALLBACK_BASE_URL` | Opsional; default `https://api.groq.com/openai/v1` |
+| `EDUPOIN_AI_FALLBACK_MODEL` | Opsional; default `llama-3.3-70b-versatile` |
 
 Endpoint publik harus menggunakan HTTPS; HTTP hanya diizinkan untuk `localhost` saat pengembangan.
 Chat mengirim pertanyaan dan dokumentasi FAQ yang relevan saja, bukan database tenant atau data siswa.
 API key tidak pernah ditampilkan kembali pada halaman pengaturan. Target tombol yang dapat disorot dibatasi
-ke daftar dokumentasi dan izin role pengguna. Tanpa API key, widget memberi tahu bahwa layanan belum dikonfigurasi.
+ke daftar dokumentasi dan izin role pengguna. Jika provider utama gagal, permintaan yang sama dicoba ke
+provider cadangan Groq. Karena itu pertanyaan dan konteks FAQ dapat dikirim ke kedua provider pada satu
+permintaan; tanpa key yang valid untuk salah satu provider, widget memberi tahu bahwa layanan belum tersedia.
 
 ### Deploy di Railway
 

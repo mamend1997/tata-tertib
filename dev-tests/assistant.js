@@ -14,12 +14,20 @@ const APP_PORT = 3793;
 let KODE = '';
 let providerCalls = 0;
 let providerPayload = null;
+let failPrimary = false;
+const providerAttempts = [];
 let providerReply = { answer: 'Buka Kalender Akademik, lalu pilih Cetak / Simpan PDF.', tour_id: 'btn-cetak-kalender' };
 const provider = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => {
     providerCalls += 1;
+    providerAttempts.push({ url: req.url, authorization: req.headers.authorization });
+    if (failPrimary && req.url.startsWith('/primary/')) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'primary unavailable' }));
+      return;
+    }
     providerPayload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(providerReply) } }] }));
@@ -33,8 +41,6 @@ const srv = () => spawn(process.execPath, [path.join(__dirname, '..', 'server.js
     PORT: APP_PORT,
     DB_PATH: DB,
     DEMO_SEED: '1',
-    EDUPOIN_AI_BASE_URL: `http://127.0.0.1:${providerPort}/v1`,
-    EDUPOIN_AI_MODEL: 'fake-model'
   },
   stdio: ['ignore', 'pipe', 'pipe']
 });
@@ -116,18 +122,35 @@ async function request(method, url, cookie, body) {
       && result.json.api_key_set === false);
 
     const secret = 'test-secret-from-super-panel';
+    const fallbackSecret = 'test-groq-secret-from-super-panel';
     result = await request('POST', '/api/super/ai-config', superCookie, {
       api_key: secret,
-      base_url: `http://127.0.0.1:${providerPort}/v1`,
-      model: 'fake-model'
+      base_url: `http://127.0.0.1:${providerPort}/primary/v1`,
+      model: 'fake-primary-model',
+      fallback_api_key: fallbackSecret,
+      fallback_base_url: `http://127.0.0.1:${providerPort}/fallback/v1`,
+      fallback_model: 'fake-groq-model'
     });
     const savedConfig = result.json;
-    ok('Super Admin dapat menyimpan API key dan konfigurasi model', result.status === 200
+    ok('Super Admin dapat menyimpan API key utama dan cadangan', result.status === 200
       && savedConfig.database_key_set && savedConfig.api_key_source === 'super_admin'
-      && !JSON.stringify(savedConfig).includes(secret), JSON.stringify(savedConfig));
+      && savedConfig.fallback_database_key_set && savedConfig.fallback_key_source === 'super_admin'
+      && !JSON.stringify(savedConfig).includes(secret) && !JSON.stringify(savedConfig).includes(fallbackSecret),
+    JSON.stringify(savedConfig));
+    result = await request('POST', '/api/super/ai-config', superCookie, {
+      fallback_base_url: `http://127.0.0.1:${providerPort}/fallback/v1`,
+      fallback_model: 'fake-groq-model'
+    });
+    const configRead = await request('GET', '/api/super/ai-config', superCookie);
+    ok('mengubah penyedia cadangan tidak menghapus konfigurasi utama dan secret tidak dikirim balik',
+      result.status === 200 && configRead.status === 200
+      && configRead.json.model === 'fake-primary-model'
+      && configRead.json.fallback_model === 'fake-groq-model'
+      && !JSON.stringify(configRead.json).includes(secret)
+      && !JSON.stringify(configRead.json).includes(fallbackSecret));
     result = await request('GET', '/api/super/qris', superCookie);
     ok('API key AI tidak bocor lewat endpoint pengaturan Super Admin lain',
-      result.status === 200 && !JSON.stringify(result.json).includes(secret));
+      result.status === 200 && !JSON.stringify(result.json).includes(secret) && !JSON.stringify(result.json).includes(fallbackSecret));
     result = await request('POST', '/api/super/ai-config', superCookie, {
       base_url: 'http://example.com/v1', model: 'fake-model'
     });
@@ -146,6 +169,21 @@ async function request(method, url, cookie, body) {
     ok('request ke AI hanya menyertakan riwayat dan pertanyaan, tanpa data sekolah', !systemPrompt.includes(KODE)
       && !JSON.stringify(providerPayload).includes('admin123'));
 
+    failPrimary = true;
+    const attemptsBeforeFallback = providerAttempts.length;
+    providerReply = { answer: 'Jawaban dari Groq cadangan.', tour_id: 'btn-cetak-kalender' };
+    result = await request('POST', '/api/assistant/chat', cookie, { message: 'Bagaimana mencetak Kalender Akademik?' });
+    const fallbackAttempts = providerAttempts.slice(attemptsBeforeFallback);
+    ok('kegagalan provider utama otomatis dicoba ke Groq cadangan',
+      result.status === 200 && result.json.answer === 'Jawaban dari Groq cadangan.'
+      && fallbackAttempts.length === 2
+      && fallbackAttempts[0].url.startsWith('/primary/')
+      && fallbackAttempts[1].url.startsWith('/fallback/')
+      && fallbackAttempts[0].authorization === `Bearer ${secret}`
+      && fallbackAttempts[1].authorization === `Bearer ${fallbackSecret}`,
+    JSON.stringify({ result: result.json, fallbackAttempts }));
+    failPrimary = false;
+
     providerReply = { answer: 'Jawaban tes.', tour_id: 'id-yang-tidak-terdaftar' };
     result = await request('POST', '/api/assistant/chat', cookie, { message: 'Cara mengatur jadwal pelajaran?' });
     ok('ID sorotan yang tidak terdaftar tidak diteruskan ke UI', result.status === 200 && result.json.tour === null);
@@ -163,10 +201,16 @@ async function request(method, url, cookie, body) {
     ok('panjang pertanyaan dibatasi', result.status === 400, JSON.stringify(result.json));
 
     result = await request('POST', '/api/super/ai-config', superCookie, {
-      api_key_clear: true, base_url: `http://127.0.0.1:${providerPort}/v1`, model: 'fake-model'
+      api_key_clear: true,
+      fallback_api_key_clear: true,
+      base_url: `http://127.0.0.1:${providerPort}/primary/v1`,
+      model: 'fake-primary-model',
+      fallback_base_url: `http://127.0.0.1:${providerPort}/fallback/v1`,
+      fallback_model: 'fake-groq-model'
     });
     ok('API key tersimpan dapat dihapus tanpa mengirimkannya kembali', result.status === 200
-      && !result.json.database_key_set && !result.json.api_key_set);
+      && !result.json.database_key_set && !result.json.api_key_set
+      && !result.json.fallback_database_key_set && !result.json.fallback_key_set);
   } catch (error) {
     console.error('FAIL assistant test execution →', error.stack || error.message);
     results.push(false);

@@ -39,6 +39,8 @@ module.exports = function mount(apiCtx) {
     s.telegram_bot_token_set = Boolean(saas.telegramCfg().token_set);
     s.edupoin_ai_api_key = '';
     s.edupoin_ai_api_key_set = Boolean(saas.setting('edupoin_ai_api_key'));
+    s.edupoin_ai_fallback_api_key = '';
+    s.edupoin_ai_fallback_api_key_set = Boolean(saas.setting('edupoin_ai_fallback_api_key'));
     return s;
   };
   /* pembatas percobaan login portal Super Admin (per IP) */
@@ -858,35 +860,52 @@ module.exports = function mount(apiCtx) {
       env_key_set: config.envKeySet,
       database_key_set: config.storedKeySet,
       base_url: config.baseUrl,
-      model: config.model
+      model: config.model,
+      fallback_key_set: !!config.fallbackApiKey,
+      fallback_key_source: config.fallbackApiKeySource,
+      fallback_env_key_set: config.fallbackEnvKeySet,
+      fallback_database_key_set: config.fallbackStoredKeySet,
+      fallback_base_url: config.fallbackBaseUrl,
+      fallback_model: config.fallbackModel
     });
   }, SAAS);
   post('/api/super/ai-config', async (req, res) => {
     const admin = guardSuper(req, res);
     if (!admin) return;
     const b = await readBody(req, 16 * 1024);
+    const has = key => Object.prototype.hasOwnProperty.call(b, key);
     const apiKey = String(b.api_key || '').trim();
-    if (apiKey.length > 500) return fail(res, 400, 'API key terlalu panjang.');
+    const fallbackApiKey = String(b.fallback_api_key || '').trim();
+    if (apiKey.length > 500 || fallbackApiKey.length > 500) return fail(res, 400, 'API key terlalu panjang.');
 
-    const baseUrl = String(b.base_url || '').trim().replace(/\/+$/, '');
-    if (baseUrl) {
+    const baseUrl = has('base_url') ? String(b.base_url || '').trim().replace(/\/+$/, '') : '';
+    const fallbackBaseUrl = has('fallback_base_url') ? String(b.fallback_base_url || '').trim().replace(/\/+$/, '') : '';
+    const validBaseUrl = value => {
+      if (!value) return true;
       try {
-        const parsed = new URL(baseUrl);
+        const parsed = new URL(value);
         const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
-        if ((parsed.protocol !== 'https:' && !localHttp) || parsed.username || parsed.password || parsed.search || parsed.hash) {
-          throw new Error('invalid URL');
-        }
-      } catch (e) {
-        return fail(res, 400, 'Base URL harus HTTPS yang valid (HTTP hanya diizinkan untuk localhost).');
-      }
+        return (parsed.protocol === 'https:' || localHttp)
+          && !parsed.username && !parsed.password && !parsed.search && !parsed.hash;
+      } catch (e) { return false; }
+    };
+    if (!validBaseUrl(baseUrl) || !validBaseUrl(fallbackBaseUrl)) {
+      return fail(res, 400, 'Base URL harus HTTPS yang valid (HTTP hanya diizinkan untuk localhost).');
     }
-    const model = String(b.model || '').trim();
-    if (model.length > 120 || /[\r\n]/.test(model)) return fail(res, 400, 'Nama model tidak valid.');
+    const model = has('model') ? String(b.model || '').trim() : '';
+    const fallbackModel = has('fallback_model') ? String(b.fallback_model || '').trim() : '';
+    if ([model, fallbackModel].some(value => value.length > 120 || /[\r\n]/.test(value))) {
+      return fail(res, 400, 'Nama model tidak valid.');
+    }
 
     if (apiKey) saas.setSetting('edupoin_ai_api_key', apiKey);
     if (bool(b.api_key_clear)) saas.setSetting('edupoin_ai_api_key', '');
-    saas.setSetting('edupoin_ai_base_url', baseUrl);
-    saas.setSetting('edupoin_ai_model', model);
+    if (fallbackApiKey) saas.setSetting('edupoin_ai_fallback_api_key', fallbackApiKey);
+    if (bool(b.fallback_api_key_clear)) saas.setSetting('edupoin_ai_fallback_api_key', '');
+    if (has('base_url')) saas.setSetting('edupoin_ai_base_url', baseUrl);
+    if (has('model')) saas.setSetting('edupoin_ai_model', model);
+    if (has('fallback_base_url')) saas.setSetting('edupoin_ai_fallback_base_url', fallbackBaseUrl);
+    if (has('fallback_model')) saas.setSetting('edupoin_ai_fallback_model', fallbackModel);
     saas.logAudit(admin.nama, 'UBAH KONFIGURASI AI', 'assistant', 'Pengaturan AI Tutorial edupoin diperbarui');
     const config = saas.assistantConfig();
     json(res, 200, {
@@ -897,7 +916,13 @@ module.exports = function mount(apiCtx) {
       env_key_set: config.envKeySet,
       database_key_set: config.storedKeySet,
       base_url: config.baseUrl,
-      model: config.model
+      model: config.model,
+      fallback_key_set: !!config.fallbackApiKey,
+      fallback_key_source: config.fallbackApiKeySource,
+      fallback_env_key_set: config.fallbackEnvKeySet,
+      fallback_database_key_set: config.fallbackStoredKeySet,
+      fallback_base_url: config.fallbackBaseUrl,
+      fallback_model: config.fallbackModel
     });
   }, SAAS);
 

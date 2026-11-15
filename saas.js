@@ -330,13 +330,23 @@ function settings() {
 function assistantConfig() {
   const envKey = clean(process.env.EDUPOIN_AI_API_KEY);
   const storedKey = clean(setting('edupoin_ai_api_key'));
+  const envFallbackKey = clean(process.env.EDUPOIN_AI_FALLBACK_API_KEY);
+  const storedFallbackKey = clean(setting('edupoin_ai_fallback_api_key'));
   return {
     apiKey: envKey || storedKey,
     envKeySet: !!envKey,
     storedKeySet: !!storedKey,
     apiKeySource: envKey ? 'environment' : (storedKey ? 'super_admin' : ''),
     baseUrl: clean(process.env.EDUPOIN_AI_BASE_URL || setting('edupoin_ai_base_url')) || 'https://api.openai.com/v1',
-    model: clean(process.env.EDUPOIN_AI_MODEL || setting('edupoin_ai_model')) || 'gpt-4o-mini'
+    model: clean(process.env.EDUPOIN_AI_MODEL || setting('edupoin_ai_model')) || 'gpt-4o-mini',
+    fallbackApiKey: envFallbackKey || storedFallbackKey,
+    fallbackEnvKeySet: !!envFallbackKey,
+    fallbackStoredKeySet: !!storedFallbackKey,
+    fallbackApiKeySource: envFallbackKey ? 'environment' : (storedFallbackKey ? 'super_admin' : ''),
+    fallbackBaseUrl: clean(process.env.EDUPOIN_AI_FALLBACK_BASE_URL || setting('edupoin_ai_fallback_base_url'))
+      || 'https://api.groq.com/openai/v1',
+    fallbackModel: clean(process.env.EDUPOIN_AI_FALLBACK_MODEL || setting('edupoin_ai_fallback_model'))
+      || 'llama-3.3-70b-versatile'
   };
 }
 /** penanda versi branding — dipakai untuk cache-busting favicon & judul tab */

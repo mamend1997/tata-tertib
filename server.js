@@ -687,64 +687,77 @@ post('/api/assistant/chat', async (req, res) => {
   }
 
   const aiConfig = saas.assistantConfig();
-  const apiKey = aiConfig.apiKey;
-  if (!apiKey) return fail(res, 503, 'Asisten AI belum dikonfigurasi. Atur API key di Super Admin → Integrasi → AI Tutorial edupoin atau melalui EDUPOIN_AI_API_KEY.');
+  const providers = [
+    { name: 'utama', apiKey: aiConfig.apiKey, baseUrl: aiConfig.baseUrl, model: aiConfig.model },
+    { name: 'cadangan', apiKey: aiConfig.fallbackApiKey, baseUrl: aiConfig.fallbackBaseUrl, model: aiConfig.fallbackModel }
+  ].filter(provider => provider.apiKey);
+  if (!providers.length) {
+    return fail(res, 503, 'Asisten AI belum dikonfigurasi. Atur API key utama atau cadangan di Super Admin → Integrasi → AI Tutorial edupoin.');
+  }
 
   const allowedTargets = assistantHelp.TARGETS.filter(target =>
     (!target.feature || (dbm.can(user, target.feature, target.action || 'view') && fiturBoleh(req, target.feature)))
   );
-  const baseUrl = aiConfig.baseUrl.replace(/\/+$/, '');
-  const model = aiConfig.model;
-  let endpoint;
-  try {
-    const parsed = new URL(baseUrl);
-    if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('protocol');
-    const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
-    if (parsed.protocol !== 'https:' && !localHttp) throw new Error('insecure');
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('url');
-    endpoint = new URL('chat/completions', baseUrl + '/').toString();
-  } catch (e) {
-    return fail(res, 503, 'EDUPOIN_AI_BASE_URL harus URL HTTPS yang valid (HTTP hanya diizinkan untuk localhost).');
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
-  try {
-    const providerRes = await fetch(endpoint, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        max_tokens: 700,
-        messages: [
-          { role: 'system', content: assistantHelp.buildSystemPrompt(allowedTargets) },
-          ...history,
-          { role: 'user', content: question }
-        ]
-      })
-    });
-    if (!providerRes.ok) {
-      console.error(`[assistant] penyedia AI merespons HTTP ${providerRes.status}`);
-      return fail(res, 502, 'Asisten AI sedang tidak dapat dihubungi. Coba lagi beberapa saat.');
+  let lastFailure = '';
+  for (const provider of providers) {
+    const baseUrl = String(provider.baseUrl || '').replace(/\/+$/, '');
+    let endpoint;
+    try {
+      const parsed = new URL(baseUrl);
+      const localHttp = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+      if ((parsed.protocol !== 'https:' && !localHttp)
+        || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('invalid URL');
+      endpoint = new URL('chat/completions', baseUrl + '/').toString();
+    } catch (e) {
+      console.error(`[assistant] base URL penyedia ${provider.name} tidak valid`);
+      lastFailure = 'base URL tidak valid';
+      continue;
     }
-    const providerData = await providerRes.json();
-    const content = providerData && providerData.choices && providerData.choices[0]
-      && providerData.choices[0].message && providerData.choices[0].message.content;
-    const parsed = assistantHelp.parseAssistantReply(content);
-    if (!parsed.answer) return fail(res, 502, 'Jawaban asisten tidak dapat diproses. Silakan coba lagi.');
-    const target = allowedTargets.find(item => item.id === parsed.tourId) || null;
-    json(res, 200, { ok: true, answer: parsed.answer, tour: target });
-  } catch (e) {
-    const timedOut = e && e.name === 'AbortError';
-    console.error(`[assistant] ${timedOut ? 'waktu permintaan habis' : 'gagal menghubungi penyedia AI'}`);
-    fail(res, 502, timedOut
-      ? 'Asisten AI membutuhkan waktu terlalu lama. Coba lagi.'
-      : 'Asisten AI sedang tidak tersedia. Periksa koneksi server lalu coba lagi.');
-  } finally {
-    clearTimeout(timeout);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const providerRes = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: provider.model,
+          temperature: 0.2,
+          max_tokens: 700,
+          messages: [
+            { role: 'system', content: assistantHelp.buildSystemPrompt(allowedTargets) },
+            ...history,
+            { role: 'user', content: question }
+          ]
+        })
+      });
+      if (!providerRes.ok) {
+        console.error(`[assistant] penyedia ${provider.name} merespons HTTP ${providerRes.status}`);
+        lastFailure = `HTTP ${providerRes.status}`;
+        continue;
+      }
+      const providerData = await providerRes.json();
+      const content = providerData && providerData.choices && providerData.choices[0]
+        && providerData.choices[0].message && providerData.choices[0].message.content;
+      const parsed = assistantHelp.parseAssistantReply(content);
+      if (!parsed.answer) {
+        console.error(`[assistant] penyedia ${provider.name} mengirim jawaban dengan format tidak valid`);
+        lastFailure = 'format jawaban tidak valid';
+        continue;
+      }
+      const target = allowedTargets.find(item => item.id === parsed.tourId) || null;
+      return json(res, 200, { ok: true, answer: parsed.answer, tour: target });
+    } catch (e) {
+      const timedOut = e && e.name === 'AbortError';
+      console.error(`[assistant] ${timedOut ? 'timeout' : 'gagal menghubungi'} penyedia ${provider.name}`);
+      lastFailure = timedOut ? 'timeout' : 'koneksi gagal';
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  console.error(`[assistant] penyedia utama dan cadangan gagal (${lastFailure || 'unknown'})`);
+  fail(res, 502, 'Asisten AI sedang tidak tersedia. Penyedia utama dan cadangan gagal dihubungi; coba lagi beberapa saat.');
 });
 
 /* ---------- rute platform (panel Super Admin + langganan sekolah) ---------- */
