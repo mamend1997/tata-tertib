@@ -121,6 +121,7 @@ module.exports = function mount(apiCtx) {
     const platform = saas.branding();
     if (!platform.pendaftaran_aktif) return fail(res, 403, 'Pendaftaran sekolah baru sedang ditutup. Hubungi layanan dukungan.');
     if (platform.maintenance) return fail(res, 503, platform.maintenance_pesan || 'Sistem sedang dalam pemeliharaan.');
+    if (!platform.daftar_otp_aktif) return fail(res, 403, 'Verifikasi OTP pendaftaran sedang dinonaktifkan oleh Super Admin.');
     if (String(b.website || b.url_situs || '').trim()) {
       return fail(res, 400, 'Permintaan ditolak karena aktivitas otomatis terdeteksi.');
     }
@@ -242,8 +243,10 @@ module.exports = function mount(apiCtx) {
     }
     if (errs.length) return fail(res, 400, errs.join(' • '));
 
-    const otp = checkDaftarOtp(phone, b.otp || b.kode_otp);
-    if (!otp.ok) return fail(res, 400, otp.error);
+    if (platform.daftar_otp_aktif) {
+      const otp = checkDaftarOtp(phone, b.otp || b.kode_otp);
+      if (!otp.ok) return fail(res, 400, otp.error);
+    }
 
     const paketDefault = saas.sdb.prepare('SELECT * FROM saas_paket WHERE kode=?').get(saas.setting('paket_default', 'basic'))
       || saas.sdb.prepare('SELECT * FROM saas_paket WHERE aktif=1 ORDER BY urutan LIMIT 1').get();
@@ -871,6 +874,9 @@ module.exports = function mount(apiCtx) {
     if (b.daftar_limit_hari !== undefined && (num(b.daftar_limit_hari, 20) < 1 || num(b.daftar_limit_hari, 20) > 500)) {
       return fail(res, 400, 'Batas pendaftaran per hari harus 1–500.');
     }
+    if (b.daftar_otp_aktif !== undefined && ![true, false, 1, 0, '1', '0', 'true', 'false', 'on', 'off'].includes(b.daftar_otp_aktif)) {
+      return fail(res, 400, 'Pengaturan verifikasi OTP tidak valid.');
+    }
     if (b.recaptcha_site !== undefined && String(b.recaptcha_site).trim() && !/^[A-Za-z0-9_-]{10,120}$/.test(String(b.recaptcha_site).trim())) {
       return fail(res, 400, 'Site key reCAPTCHA tidak valid.');
     }
@@ -892,6 +898,11 @@ module.exports = function mount(apiCtx) {
     if (b.daftar_min_detik !== undefined) saas.setSetting('daftar_min_detik', String(Math.round(num(b.daftar_min_detik, 4))));
     if (b.daftar_limit_jam !== undefined) saas.setSetting('daftar_limit_jam', String(Math.round(num(b.daftar_limit_jam, 5))));
     if (b.daftar_limit_hari !== undefined) saas.setSetting('daftar_limit_hari', String(Math.round(num(b.daftar_limit_hari, 20))));
+    if (b.daftar_otp_aktif !== undefined) {
+      const aktif = bool(b.daftar_otp_aktif);
+      saas.setSetting('daftar_otp_aktif', aktif ? '1' : '0');
+      if (!aktif) daftarOtp.clear();
+    }
     /* versi branding baru → favicon/judul tab di semua perangkat ikut diperbarui */
     const ver = saas.bumpBranding();
     saas.logAudit(adminName(req), 'UBAH BRANDING', 'branding',

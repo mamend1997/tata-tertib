@@ -264,6 +264,7 @@ const DEFAULTS = {
   daftar_limit_jam: '5',
   daftar_limit_hari: '20',
   daftar_min_detik: '4',
+  daftar_otp_aktif: '1',
   trial_hari: '7',
   paket_default: 'basic',
   domain_info: 'tata-tertib.vibecoder.co.id',
@@ -397,6 +398,7 @@ function branding() {
     daftar_min_detik: Math.max(0, Number(s.daftar_min_detik) || 0),
     daftar_limit_jam: Math.max(1, Number(s.daftar_limit_jam) || 5),
     daftar_limit_hari: Math.max(1, Number(s.daftar_limit_hari) || 20),
+    daftar_otp_aktif: isOn(s.daftar_otp_aktif),
     assistant_widget_enabled: isOn(
       s.assistant_widget_enabled === undefined ? '1' : s.assistant_widget_enabled
     )

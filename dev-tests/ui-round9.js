@@ -193,6 +193,8 @@ function apiClient() {
     await page.waitForTimeout(900);
     ok('form branding memuat teks halaman login', (await page.locator('text=Tampilan Halaman Login Utama').count()) > 0);
     ok('form branding memuat proteksi anti-spam', (await page.locator('text=Proteksi Anti-Spam').count()) > 0);
+    ok('form branding menyediakan sakelar OTP pendaftaran',
+      (await page.locator('[data-daftar-otp-toggle]').count()) === 1);
 
     /* ---- regresi: sakelar "Pendaftaran Mandiri" harus benar-benar tersimpan ---- */
     const selectDaftar = page.locator('select').filter({ has: page.locator('option[value="0"]') }).first();

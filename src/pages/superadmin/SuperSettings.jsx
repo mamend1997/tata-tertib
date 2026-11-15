@@ -125,7 +125,8 @@ export function SuperBranding({ ctx }) {
       /* proteksi anti-spam pendaftaran */
       recaptcha_site: r.s.recaptcha_site || '', recaptcha_secret: r.s.recaptcha_secret || '',
       daftar_min_detik: r.s.daftar_min_detik || '4', daftar_limit_jam: r.s.daftar_limit_jam || '5',
-      daftar_limit_hari: r.s.daftar_limit_hari || '20'
+      daftar_limit_hari: r.s.daftar_limit_hari || '20',
+      daftar_otp_aktif: !r.platform || r.platform.daftar_otp_aktif !== false
     });
   }, []);
   useEffect(() => { load().catch(e => toast.err(e.message)); }, [load]);
@@ -219,6 +220,17 @@ export function SuperBranding({ ctx }) {
                 <Field label="Batas / IP / Hari" hint="1–500"><input className="input" inputMode="numeric" value={f.daftar_limit_hari} onChange={e => setF(v => ({ ...v, daftar_limit_hari: e.target.value }))} /></Field>
                 <Field label="Waktu Isi Minimal (detik)" hint="Form lebih cepat dari ini ditolak"><input className="input" inputMode="numeric" value={f.daftar_min_detik} onChange={e => setF(v => ({ ...v, daftar_min_detik: e.target.value }))} /></Field>
               </div>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-3" data-daftar-otp-toggle>
+                <input type="checkbox" className="mt-0.5 h-4 w-4 accent-orange-600"
+                  checked={!!f.daftar_otp_aktif}
+                  onChange={e => setF(v => ({ ...v, daftar_otp_aktif: e.target.checked }))} />
+                <span>
+                  <span className="block text-[12.5px] font-semibold text-slate-700">Wajibkan kode OTP WhatsApp saat pendaftaran</span>
+                  <span className="block text-[11px] leading-relaxed text-slate-500">
+                    Matikan bila gateway bermasalah. Pembatasan pendaftaran, honeypot, dan reCAPTCHA (jika aktif) tetap berlaku. Form yang sudah terbuka perlu dimuat ulang.
+                  </span>
+                </span>
+              </label>
               <div className="grid gap-2.5 sm:grid-cols-2">
                 <Field label="reCAPTCHA Site Key" hint="Kosong = reCAPTCHA nonaktif (honeypot & rate limit tetap aktif)">
                   <input className="input font-mono text-[11.5px]" value={f.recaptcha_site} onChange={e => setF(v => ({ ...v, recaptcha_site: e.target.value }))} />

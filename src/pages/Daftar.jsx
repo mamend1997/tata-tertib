@@ -49,6 +49,7 @@ const JENJANG = [
    pratinjau hasil lebih dulu dan masuk dashboard lewat tombol sendiri. */
 export default function Daftar({ cfg, onBatal }) {
   const platform = (cfg && cfg.platform) || {};
+  const otpEnabled = platform.daftar_otp_aktif !== false;
   const [f, setF] = useState({ jenjang: 'SMK' });
   const [busy, setBusy] = useState(false);
   const [otpBusy, setOtpBusy] = useState(false);
@@ -125,7 +126,7 @@ export default function Daftar({ cfg, onBatal }) {
   const subApp = platform.login_subjudul || platform.app_subtitle || '';
   const copyright = platform.login_copyright || `© ${new Date().getFullYear()} ${namaApp}`;
   const otpSentForCurrent = Boolean(otpSentPhone && otpSentPhone === (f.telp || ''));
-  const otpReady = otpSentForCurrent && /^\d{6}$/.test(otpCode);
+  const otpReady = !otpEnabled || (otpSentForCurrent && /^\d{6}$/.test(otpCode));
 
   /* ---------------- PRATINJAU HASIL PENDAFTARAN ----------------
      Setelah pendaftaran berhasil, pendaftar TIDAK langsung dilempar ke
@@ -401,7 +402,9 @@ export default function Daftar({ cfg, onBatal }) {
                     <input className="input pl-9" required value={f.admin_nama || ''} onChange={e => setF(v => ({ ...v, admin_nama: e.target.value }))} />
                   </div>
                 </Field>
-                <Field label="No WhatsApp" required hint="Diverifikasi lewat OTP dan dipakai untuk notifikasi tagihan">
+                <Field label="No WhatsApp" required hint={otpEnabled
+                  ? 'Diverifikasi lewat OTP dan dipakai untuk notifikasi tagihan'
+                  : 'Dipakai untuk notifikasi tagihan'}>
                   <div className="relative">
                     <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input className="input pl-9" required value={f.telp || ''} onChange={e => {
@@ -411,7 +414,7 @@ export default function Daftar({ cfg, onBatal }) {
                   </div>
                 </Field>
               </div>
-              <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
+              {otpEnabled ? <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <button type="button" className="btn-secondary shrink-0" disabled={otpBusy || !f.telp} onClick={sendOtp}>
                     {otpBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
@@ -436,7 +439,11 @@ export default function Daftar({ cfg, onBatal }) {
                 <p className="mt-2 text-[11.5px] text-slate-600">
                   {otpMessage || 'Verifikasi nomor WhatsApp wajib sebelum pendaftaran dapat dikirim.'}
                 </p>
-              </div>
+              </div> : (
+                <p className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-[11.5px] text-amber-800" data-daftar-otp-disabled>
+                  Verifikasi OTP dinonaktifkan oleh administrator; nomor WhatsApp tetap diperlukan untuk pendaftaran.
+                </p>
+              )}
               <Field label="Email Admin" required hint="Dipakai sebagai username untuk masuk">
                 <div className="relative">
                   <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

@@ -100,6 +100,49 @@ function client() {
     const failedSend = await applicant.req('/api/daftar/otp', { method: 'POST', body: { telp: '081234567802' } });
     ok('gateway yang menolak pesan tidak dianggap berhasil mengirim OTP',
       failedSend.status === 503 && /tidak dapat dikirim/i.test(failedSend.body.error || ''));
+
+    let branding = await admin.req('/api/super/branding');
+    ok('OTP pendaftaran aktif secara default', branding.status === 200
+      && branding.body.platform.daftar_otp_aktif === true);
+    branding = await admin.req('/api/super/branding', {
+      method: 'POST', body: { daftar_otp_aktif: false }
+    });
+    ok('Super Admin dapat menonaktifkan OTP pendaftaran',
+      branding.status === 200 && branding.body.platform.daftar_otp_aktif === false);
+    const publicConfig = await applicant.req('/api/public/config?global=1');
+    ok('status OTP diteruskan ke halaman pendaftaran', publicConfig.body.platform.daftar_otp_aktif === false);
+    const blockedOtp = await applicant.req('/api/daftar/otp', {
+      method: 'POST', body: { telp: '081234567803' }
+    });
+    ok('endpoint pengiriman OTP ditolak saat fitur dimatikan', blockedOtp.status === 403);
+    const noOtpForm = {
+      ...form, nama_sekolah: 'SMA Tanpa OTP Uji', email: 'tanpa-otp@uji.sch.id',
+      telp: '081234567803'
+    };
+    const noOtpRegistration = await applicant.req('/api/daftar', {
+      method: 'POST', body: { ...noOtpForm, otp: '' }
+    });
+    ok('pendaftaran berhasil tanpa kode saat OTP dimatikan',
+      noOtpRegistration.status === 200 && /^\d{4}$/.test(String(noOtpRegistration.body.kode)),
+      JSON.stringify(noOtpRegistration.body).slice(0, 120));
+
+    branding = await admin.req('/api/super/branding', {
+      method: 'POST', body: { daftar_otp_aktif: true }
+    });
+    ok('Super Admin dapat mengaktifkan kembali OTP',
+      branding.status === 200 && branding.body.platform.daftar_otp_aktif === true);
+    const reenabledOtp = await applicant.req('/api/daftar/otp', {
+      method: 'POST', body: { telp: '081234567804' }
+    });
+    const requiredForm = {
+      ...form, nama_sekolah: 'SMA OTP Wajib Uji', email: 'otp-wajib@uji.sch.id',
+      telp: '081234567804'
+    };
+    const requiredOtp = await applicant.req('/api/daftar', {
+      method: 'POST', body: { ...requiredForm, otp: '' }
+    });
+    ok('OTP kembali diwajibkan setelah fitur diaktifkan',
+      reenabledOtp.status === 200 && requiredOtp.status === 400 && /OTP/i.test(requiredOtp.body.error || ''));
   } catch (error) {
     fail++;
     console.log('  ✗ EXCEPTION: ' + error.message);
