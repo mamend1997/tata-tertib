@@ -1192,7 +1192,22 @@ async function gatewaySync(order_id) {
   if (!py) throw new Error('Transaksi gateway tidak ditemukan.');
   if (py.status !== 'menunggu') return { status: py.status, paid: py.status === 'disetujui', pembayaran: py };
   const cfg = gatewayCfg();
-  const st = await payment.checkStatus(cfg, { order_id: py.order_id, amount: py.total });
+  let transactionId = '';
+  if (cfg.provider === 'kasera') {
+    try {
+      const payload = JSON.parse(String(py.gateway_payload || '{}'));
+      transactionId = clean(payload.id || (payload.data && payload.data.id));
+    } catch (e) {
+      return { status: py.status, paid: false, gateway_status: py.gateway_status || 'ERROR',
+        error: 'Respons Kasera tersimpan dengan format tidak valid; pembayaran akan diverifikasi melalui webhook.' };
+    }
+    if (!transactionId) {
+      return { status: py.status, paid: false, gateway_status: py.gateway_status || 'ERROR',
+        error: 'ID transaksi Kasera tidak tersimpan; pembayaran akan diverifikasi melalui webhook.' };
+    }
+  }
+  const st = await payment.checkStatus({ ...cfg, transaction_id: transactionId },
+    { order_id: py.order_id, amount: py.total });
   if (st.ok) sdb.prepare('UPDATE saas_pembayaran SET gateway_status=? WHERE id=?').run(clean(st.status) || 'PENDING', py.id);
   if (st.paid) {
     const r = gatewayMarkPaid(py.order_id, 'Payment Gateway');
@@ -1203,9 +1218,9 @@ async function gatewaySync(order_id) {
 
 /* ==================== WEBHOOK KASERA PAY ====================
    Notifikasi pembayaran dari Kasera (tanpa sesi). Keaslian dijamin
-   HMAC-SHA256 header `kasera-signature-v1` atas BODY MENTAH, lalu event
-   dideduplikasi lewat tabel kasera_event supaya event yang sama tidak
-   diproses dua kali (mis. kiriman ulang saat jaringan terputus).
+   HMAC-SHA256 timestamp + BODY MENTAH pada header `kasera-signature-v1`,
+   lalu event dideduplikasi lewat tabel kasera_event supaya event yang sama
+   tidak diproses dua kali (mis. kiriman ulang saat jaringan terputus).
    ============================================================ */
 function kaseraWebhookUrl(baseUrl) {
   const b = String(baseUrl || '').replace(/\/+$/, '');

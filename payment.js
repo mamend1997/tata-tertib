@@ -58,7 +58,8 @@ function publicConfig(get) {
     provider_label: (PROVIDERS.find(p => p.key === provider) || {}).label || provider,
     mode: clean(get('pay_gateway_mode')) || 'sandbox',
     expire_menit: Math.max(5, Number(get('pay_gateway_expire_menit')) || 60),
-    configured: provider === 'sandbox' ? true : !!clean(get('pay_gateway_key')),
+    configured: provider === 'sandbox' ? true
+      : !!clean(get('pay_gateway_key')) || (provider === 'kasera' && !!clean(process.env.KASERA_API_KEY)),
     /* khusus Kasera Pay */
     kasera_api: KASERA_API_MODES.includes(clean(get('pay_gateway_kasera_api')))
       ? clean(get('pay_gateway_kasera_api')) : 'auto',
@@ -71,7 +72,7 @@ function publicConfig(get) {
 
 /** base URL API Kasera (dapat diatur Super Admin bila berbeda). */
 function kaseraBase(mode) {
-  return kaseraCfg(mode).base;
+  return kaseraCfg({ mode }).base;
 }
 function kaseraHeaders(key, merchant, idempotencyKey) {
   const h = { 'Content-Type': 'application/json', Accept: 'application/json' };
@@ -95,7 +96,7 @@ function kaseraPaid(v) {
         Idempotency-Key: <nomor pesanan>
         { amount (integer), external_id, description } → checkout_url
 
-   Webhook: header `kasera-signature-v1` = HMAC-SHA256(body mentah, SECRET)
+   Webhook: header `kasera-signature-v1` = HMAC-SHA256(timestamp + "." + body mentah)
             event `payment.paid` → external_id → tagihan LUNAS
 
    Endpoint QRIS lama (/v1/qris) tetap dipakai sebagai CADANGAN agar akun
@@ -103,7 +104,7 @@ function kaseraPaid(v) {
    ===================================================================== */
 const KASERA = {
   base: 'https://pay.kasera.id',
-  base_sandbox: 'https://sandbox.kasera.id',
+  base_sandbox: 'https://pay.kasera.id',
   timeout_ms: 20000,
   event_lunas: ['payment.paid', 'payment.settled', 'payment.capture']
 };
@@ -114,8 +115,7 @@ function kaseraCfg(cfg = {}) {
   const c = cfg || {};
   const api = KASERA_API_MODES.includes(clean(c.kasera_api)) ? clean(c.kasera_api) : 'auto';
   const mode = String(c.mode || 'sandbox');
-  const base = clean(c.base) || clean(process.env.KASERA_BASE_URL)
-    || (mode === 'sandbox' ? KASERA.base_sandbox : KASERA.base);
+  const base = clean(c.base) || clean(process.env.KASERA_BASE_URL) || KASERA.base;
   return {
     api, mode,
     base: base.replace(/\/+$/, ''),
@@ -131,24 +131,48 @@ function kaseraSecrets(cfg = {}) {
 }
 /** baca field pembayaran dari berbagai bentuk respons Kasera */
 function kaseraPayload(j = {}) {
-  const d = (j && (j.data || j.transaction || j.payment || j.qris)) || j || {};
+  const roots = [j && j.data, j && j.transaction, j && j.payment, j && j.qris, j]
+    .filter(x => x && typeof x === 'object');
+  const nestedPayments = roots.map(x => x.payment).filter(x => x && typeof x === 'object');
+  const sources = [...nestedPayments, ...roots];
   const pick = (...keys) => {
-    for (const k of keys) {
-      const v = d[k];
-      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    for (const d of sources) {
+      for (const k of keys) {
+        const v = d[k];
+        if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+      }
     }
     return '';
   };
   const status = pick('status', 'transaction_status', 'payment_status', 'state').toUpperCase();
   return {
+    id: pick('id', 'transaction_id', 'payment_request_id'),
     checkout_url: pick('checkout_url', 'checkoutUrl', 'payment_url', 'paymentUrl', 'invoice_url', 'redirect_url'),
     qr_string: pick('qr_string', 'qrString', 'qr_code', 'qrCode', 'qris_string', 'qr_content'),
     qr_url: pick('qr_url', 'qrUrl', 'qr_image_url', 'qris_url'),
     expires_at: pick('expires_at', 'expired_at', 'expiry_at', 'expiresAt', 'expiry_time'),
-    status, paid: d.paid === true || kaseraPaid(status), raw: j
+    status, paid: sources.some(d => d.paid === true) || kaseraPaid(status), raw: j
   };
 }
 function kaseraUsable(p) { return !!(p && (p.checkout_url || p.qr_string || p.qr_url)); }
+function kaseraErrorMessage(j = {}) {
+  const root = j && typeof j === 'object' ? j : {};
+  const err = root.error && typeof root.error === 'object'
+    ? root.error
+    : (root.data && root.data.error && typeof root.data.error === 'object' ? root.data.error : {});
+  const code = clean(err.code || root.code);
+  const message = clean(err.message || root.message || root.error_message
+    || (typeof root.error === 'string' ? root.error : ''));
+  const fields = err.fields && typeof err.fields === 'object'
+    ? Object.keys(err.fields).join(', ') : '';
+  const requestId = clean(err.request_id || root.request_id || root.requestId);
+  return [
+    code ? `Kasera ${code}` : '',
+    message,
+    fields ? `Periksa field: ${fields}` : '',
+    requestId ? `Request ID: ${requestId}` : ''
+  ].filter(Boolean).join(' — ');
+}
 
 /** Buat permintaan pembayaran ke Kasera Pay (endpoint resmi /v1/transactions). */
 async function kaseraCreateTransaction(cfg, req = {}) {
@@ -156,6 +180,12 @@ async function kaseraCreateTransaction(cfg, req = {}) {
   const external_id = clean(req.external_id || req.order_id);
   const amount = Math.round(Number(req.amount) || 0);
   if (!k.key) return { ok: false, api: 'transactions', error: 'API Key Kasera belum diisi (KASERA_API_KEY).' };
+  if (k.mode === 'production' && k.key.startsWith('kp_test_')) {
+    return { ok: false, api: 'transactions', error: 'Mode Kasera Production memerlukan API Key kp_live_, bukan kp_test_.' };
+  }
+  if (k.mode === 'sandbox' && k.key.startsWith('kp_live_')) {
+    return { ok: false, api: 'transactions', error: 'Mode Kasera Sandbox memerlukan API Key kp_test_, bukan kp_live_.' };
+  }
   if (!external_id) return { ok: false, api: 'transactions', error: 'external_id (nomor pesanan) wajib diisi.' };
   if (!(amount > 0)) return { ok: false, api: 'transactions', error: 'Nominal pembayaran harus bilangan bulat > 0.' };
   const headers = kaseraHeaders(k.key, k.merchant, clean(req.idempotency_key) || external_id);
@@ -163,9 +193,7 @@ async function kaseraCreateTransaction(cfg, req = {}) {
     amount,
     external_id,
     description: clean(req.description) || ('Pembayaran ' + external_id),
-    currency: 'IDR',
-    reference_id: external_id,
-    order_id: external_id
+    payment_methods: ['qris']
   };
   const customer = req.customer || null;
   if (customer && (clean(customer.nama || customer.name) || clean(customer.email))) {
@@ -174,12 +202,9 @@ async function kaseraCreateTransaction(cfg, req = {}) {
       email: clean(customer.email), phone: clean(customer.phone)
     };
   }
-  const webhookUrl = clean(req.webhook_url);
-  if (webhookUrl) body.webhook_url = webhookUrl;
-  if (clean(req.callback_url)) body.callback_url = clean(req.callback_url);
   if (clean(req.return_url)) body.return_url = clean(req.return_url);
   if (Number(cfg && (cfg.expire_menit || cfg.expiry_minutes))) {
-    body.expiry_minutes = Math.max(5, Number(cfg.expire_menit || cfg.expiry_minutes) || 60);
+    body.expires_in_minutes = Math.max(1, Number(cfg.expire_menit || cfg.expiry_minutes) || 60);
   }
   try {
     const r = await fetch(`${k.base}/v1/transactions`, {
@@ -188,7 +213,7 @@ async function kaseraCreateTransaction(cfg, req = {}) {
     });
     const j = await r.json().catch(() => ({}));
     const p = kaseraPayload(j);
-    const pesan = clean(j.message || j.error_message || j.error || (j.data && j.data.message));
+    const pesan = kaseraErrorMessage(j);
     if (!r.ok) {
       return {
         ok: false, api: 'transactions', http: Number(r.status),
@@ -198,22 +223,22 @@ async function kaseraCreateTransaction(cfg, req = {}) {
     }
     if (!kaseraUsable(p)) {
       return {
-        ok: false, api: 'transactions', http: Number(r.status), fallback: !pesan,
+        ok: false, api: 'transactions', http: Number(r.status), fallback: false,
         error: pesan || 'Respons Kasera tidak memuat checkout_url / QR.', raw: j
       };
     }
     return { ok: true, api: 'transactions', http: Number(r.status), ...p, external_id, amount };
   } catch (e) {
-    return { ok: false, api: 'transactions', fallback: true, error: 'Gagal menghubungi Kasera: ' + e.message };
+    return { ok: false, api: 'transactions', fallback: false, error: 'Gagal menghubungi Kasera: ' + e.message };
   }
 }
 
-/** Cek status transaksi Kasera (endpoint transactions → QRIS lama). */
-async function kaseraCheckTransaction(cfg, order_id) {
+/** Cek status transaksi Kasera memakai id payreq_ yang dikembalikan saat create. */
+async function kaseraCheckTransaction(cfg, transaction_id) {
   const k = kaseraCfg(cfg);
   if (!k.key) return { ok: false, api: 'transactions', error: 'API Key Kasera belum diisi.' };
-  const oid = clean(order_id);
-  if (!oid) return { ok: false, api: 'transactions', error: 'order_id kosong.' };
+  const oid = clean(transaction_id);
+  if (!oid) return { ok: false, api: 'transactions', error: 'ID transaksi Kasera kosong.' };
   try {
     const r = await fetch(`${k.base}/v1/transactions/${encodeURIComponent(oid)}`, {
       headers: kaseraHeaders(k.key, k.merchant), signal: AbortSignal.timeout(15000)
@@ -223,7 +248,7 @@ async function kaseraCheckTransaction(cfg, order_id) {
       return {
         ok: false, api: 'transactions', http: Number(r.status),
         fallback: [404, 405, 501].includes(Number(r.status)),
-        error: clean(j.message || j.error_message) || `HTTP ${r.status}`, raw: j
+        error: kaseraErrorMessage(j) || `HTTP ${r.status}`, raw: j
       };
     }
     const p = kaseraPayload(j);
@@ -238,17 +263,44 @@ function kaseraSignature(rawBody, secret) {
   const raw = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody === undefined || rawBody === null ? '' : rawBody), 'utf8');
   return crypto.createHmac('sha256', String(secret || '')).update(raw).digest('hex');
 }
-/** Verifikasi header `kasera-signature-v1` terhadap body MENTAH. */
+/** Verifikasi header v1 bertimestamp dan header legacy terhadap body MENTAH. */
 function kaseraVerifySignature(rawBody, headers = {}, secrets = []) {
   const list = (Array.isArray(secrets) ? secrets : [secrets]).map(clean).filter(Boolean);
   if (!list.length) return { ok: false, reason: 'Webhook Secret Kasera belum diatur.' };
   const h = headers || {};
-  const gotRaw = clean(h['kasera-signature-v1'] || h['kasera-signature'] || h['x-kasera-signature']
+  const v1 = clean(h['kasera-signature-v1']);
+  if (v1) {
+    const signed = v1.match(/^t=(\d+),(.+)$/);
+    if (!signed) return { ok: false, reason: 'Format tanda tangan webhook v1 tidak valid.' };
+    const timestamp = Number(signed[1]);
+    if (!Number.isFinite(timestamp) || Math.abs(Math.floor(Date.now() / 1000) - timestamp) > 300) {
+      return { ok: false, reason: 'Timestamp tanda tangan webhook kedaluwarsa.' };
+    }
+    const candidates = signed[2].split(',').map(x => x.trim())
+      .filter(x => /^v1=[0-9a-f]{64}$/i.test(x)).map(x => x.slice(3).toLowerCase());
+    const raw = Buffer.isBuffer(rawBody)
+      ? rawBody
+      : Buffer.from(String(rawBody === undefined || rawBody === null ? '' : rawBody), 'utf8');
+    for (const secret of list) {
+      const expected = crypto.createHmac('sha256', secret)
+        .update(String(timestamp) + '.').update(raw).digest('hex');
+      for (const got of candidates) {
+        const a = Buffer.from(expected, 'hex'), b = Buffer.from(got, 'hex');
+        if (a.length === b.length && crypto.timingSafeEqual(a, b)) return { ok: true, secret };
+      }
+    }
+    return { ok: false, reason: 'Tanda tangan webhook tidak cocok.' };
+  }
+  const gotRaw = clean(h['kasera-signature'] || h['x-kasera-signature']
     || h['x-callback-signature'] || h['x-signature']);
   if (!gotRaw) return { ok: false, reason: 'Header kasera-signature-v1 tidak ada.' };
+  const raw = Buffer.isBuffer(rawBody)
+    ? rawBody
+    : Buffer.from(String(rawBody === undefined || rawBody === null ? '' : rawBody), 'utf8');
   const got = gotRaw.toLowerCase().replace(/^sha256=/, '');
+  if (!/^[0-9a-f]{64}$/.test(got)) return { ok: false, reason: 'Format tanda tangan webhook tidak valid.' };
   for (const secret of list) {
-    const expect = kaseraSignature(rawBody, secret);
+    const expect = kaseraSignature(raw, secret);
     try {
       const a = Buffer.from(expect, 'hex'), b = Buffer.from(got, 'hex');
       if (a.length && a.length === b.length && crypto.timingSafeEqual(a, b)) return { ok: true, secret };
@@ -378,7 +430,7 @@ async function createCharge(cfg, { order_id, amount, label, customer }) {
           return {
             ok: true, provider, order_id, api: 'transactions',
             qr_string: clean(hasil.qr_string),
-            qr_url: clean(hasil.qr_url || hasil.checkout_url),
+            qr_url: clean(hasil.qr_url),
             checkout_url: clean(hasil.checkout_url),
             expires_at: hasil.expires_at || expiresAt,
             raw: hasil.raw
@@ -474,9 +526,10 @@ async function checkStatus(cfg, { order_id, amount }) {
       const k = kaseraCfg({ ...cfg, key: key || process.env.KASERA_API_KEY, base: clean(cfg.base || cfg.base_url) });
       if (!k.key) return { ok: false, paid: false, status: 'ERROR', error: 'API Key Kasera belum diisi.' };
       if (k.api !== 'qris') {
-        const t = await kaseraCheckTransaction({ ...cfg, key: k.key, merchant: k.merchant, base: k.base, kasera_api: k.api }, order_id);
+        const t = await kaseraCheckTransaction({ ...cfg, key: k.key, merchant: k.merchant, base: k.base, kasera_api: k.api },
+          clean(cfg.transaction_id) || order_id);
         if (t.ok) return { ok: true, paid: !!t.paid, status: t.status || 'PENDING', api: 'transactions', raw: t.raw };
-        if (!t.fallback) return { ok: false, paid: false, status: 'ERROR', error: t.error || 'Gagal cek status Kasera.' };
+        return { ok: false, paid: false, status: 'ERROR', error: t.error || 'Gagal cek status Kasera.' };
       }
       const r = await fetch(`${k.base}/v1/qris/${encodeURIComponent(order_id)}`, {
         headers: kaseraHeaders(k.key, k.merchant),
@@ -533,7 +586,7 @@ function verifyCallback(cfg, body = {}, headers = {}, raw = null) {
       if (kaseraVerifySignature(bahan, headers, secrets).ok) return true;
       /* cadangan: sebagian akun menaruh tanda tangan di dalam body */
       const inBody = clean(body && (body.signature || body.callback_signature));
-      return !!inBody && kaseraVerifySignature(bahan, { 'kasera-signature-v1': inBody }, secrets).ok;
+      return !!inBody && kaseraVerifySignature(bahan, { 'kasera-signature': inBody }, secrets).ok;
     }
   } catch (e) { return false; }
   return false;

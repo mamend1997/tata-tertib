@@ -223,16 +223,21 @@ async function req(p, opts = {}) {
     const origFetch = global.fetch;
     global.fetch = async (url, opts) => {
       calls.push({ url: String(url), opts });
+      if (String(url).endsWith('/v1/transactions')) {
+        return { ok: false, status: 404, json: async () => ({ error: { code: 'not_found', message: 'not found' } }) };
+      }
       if (String(url).endsWith('/v1/qris')) {
         return { ok: true, status: 200, json: async () => ({ success: true, data: { qr_string: 'KASERA-QR-123', expires_at: '2099-01-01T00:00:00Z' } }) };
       }
-      return { ok: true, status: 200, json: async () => ({ data: { status: 'PAID', reference_id: 'TT-1-XYZ', amount: 99000 } }) };
+      return { ok: true, status: 200, json: async () => ({ id: 'payreq-tt', status: 'succeeded', external_id: 'TT-1-XYZ', amount: 99000 }) };
     };
     const charge = await payment.createCharge({ provider: 'kasera', mode: 'sandbox', base: 'https://api.kasera.id', key: 'ksr-test-key', merchant: 'M-12345' },
       { order_id: 'TT-1-XYZ', amount: 99000, label: 'Langganan 1 bulan' });
-    ok('Kasera: charge memakai Bearer + Merchant ID', calls[0] && /Bearer ksr-test-key/.test(calls[0].opts.headers.Authorization) && calls[0].opts.headers['X-Merchant-Id'] === 'M-12345', JSON.stringify(calls[0] && calls[0].opts.headers));
+    ok('Kasera legacy fallback memakai Bearer + Merchant ID setelah endpoint resmi 404',
+      calls[1] && /Bearer ksr-test-key/.test(calls[1].opts.headers.Authorization)
+        && calls[1].opts.headers['X-Merchant-Id'] === 'M-12345', JSON.stringify(calls[1] && calls[1].opts.headers));
     ok('Kasera: qr_string terbaca', charge.ok && charge.qr_string === 'KASERA-QR-123', JSON.stringify(charge));
-    const st = await payment.checkStatus({ provider: 'kasera', mode: 'sandbox', base: 'https://api.kasera.id', key: 'ksr-test-key', merchant: 'M-12345' }, { order_id: 'TT-1-XYZ' });
+    const st = await payment.checkStatus({ provider: 'kasera', mode: 'sandbox', base: 'https://api.kasera.id', key: 'ksr-test-key', merchant: 'M-12345', transaction_id: 'payreq-tt' }, { order_id: 'TT-1-XYZ' });
     ok('Kasera: status lunas terbaca', st.ok && st.paid === true, JSON.stringify(st));
     global.fetch = origFetch;
 

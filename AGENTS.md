@@ -17,14 +17,17 @@
 - `payment.js`: `KASERA` + `kaseraCfg/kaseraSecrets/kaseraCreateTransaction/kaseraCheckTransaction/
   kaseraVerifySignature/kaseraEvent/kaseraPayload`. Endpoint resmi **`POST {base}/v1/transactions`**
   (header `Authorization: Bearer`, **`Idempotency-Key`** = nomor pesanan, `Accept`/`Content-Type` JSON;
-  body `amount` integer, `external_id`, `description`) → `checkout_url`. Base default:
-  production `https://pay.kasera.id`, sandbox `https://sandbox.kasera.id` (env `KASERA_BASE_URL`).
-- **Fallback** `/v1/qris` hanya bila endpoint transaksi tidak ada (404/405/501, error jaringan, atau 2xx
-  tanpa `checkout_url`/QR). 401/422 **tidak** di-fallback agar tidak membuat tagihan ganda.
-  Mode dapat dikunci: setting `pay_gateway_kasera_api` = `auto|transactions|qris`.
+  body `amount` integer, `external_id`, `description`, `payment_methods:["qris"]` → `checkout_url`.
+  Base resmi test maupun live `https://pay.kasera.id`; mode ditentukan prefix key `kp_test_`/`kp_live_`
+  (env `KASERA_BASE_URL` dapat mengganti host).
+- Mode `auto` memakai `/v1/qris` hanya bila endpoint transaksi mengembalikan 404/405/501; pilihan `qris`
+  memaksa API lama. Timeout atau respons 2xx tanpa checkout/QR tidak di-fallback karena request pertama
+  mungkin sudah membuat tagihan. 401/422 juga tidak di-fallback. Mode API dapat dikunci lewat setting
+  `pay_gateway_kasera_api` = `auto|transactions|qris`.
 - **Webhook `POST /api/webhook/kasera`** (`saas-routes.js`, opt `{saas:true}`, TANPA sesi):
-  header `kasera-signature-v1` = HMAC-SHA256(**body mentah**, secret) — `readRaw(req)` diteruskan
-  server.js → saas-routes (`rawBodyOf`). Tanpa secret → **503**, tanda tangan salah → **401**.
+  header `Kasera-Signature-V1` = HMAC-SHA256(timestamp + "." + **body mentah**, secret), toleransi 5 menit
+  — `readRaw(req)` diteruskan server.js → saas-routes (`rawBodyOf`); header legacy `Kasera-Signature`
+  tetap diterima. Tanpa secret → **503**, tanda tangan salah → **401**.
 - `saas.kaseraHandleWebhook()`: deduplikasi tabel **`kasera_event`** (`event_id` PRIMARY KEY, hasil
   `ok|diabaikan|tidak-ditemukan|jumlah-tidak-cocok|gagal`), `payment.paid` → `external_id` →
   `gatewayMarkPaid` (perpanjangan otomatis + audit `WEBHOOK KASERA`). Nominal event < tagihan → 400.
@@ -36,7 +39,7 @@
   `[data-pay-callback]`, `[data-pay-webhook]`, tabel `[data-tbl="kasera-event"]`); `Langganan.jsx`
   menampilkan tombol **Buka Halaman Pembayaran** (`[data-checkout-url]`) bila gateway mengembalikan `checkout_url`.
   **Wajib `npx vite build`** setelah mengubah `src/`.
-- Tes: `node dev-tests/round16.js` (42 cek). Regresi lulus: `round15` (72), `round13` (41), `smoke` (58),
+- Tes: `node dev-tests/round16.js` (55 cek). Regresi lulus: `round15` (72), `round13` (41), `smoke` (58),
   `round2` (62) — jalankan `smoke`/`round2` dengan `DEMO_SEED=1`; `round13` **harus sendirian**
   (DB control plane di `/tmp/saas.sqlite` dipakai bersama bila beberapa tes dijalankan berurutan).
 

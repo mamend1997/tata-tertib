@@ -409,11 +409,19 @@ export function SuperQris({ ctx }) {
                 </select>
               </Field>
             </div>
+            {pay.provider === 'kasera' ? (
+              <p className="text-[11px] text-slate-500">
+                Kasera memakai URL API yang sama untuk test dan live; gunakan key <span className="font-mono">kp_test_</span> untuk Sandbox
+                atau <span className="font-mono">kp_live_</span> untuk Production.
+              </p>
+            ) : null}
             <Field label="Merchant Code / Merchant ID" hint="Duitku: Merchant Code · Kasera: Merchant ID. Boleh kosong untuk provider lain.">
               <input className="input" value={pay.merchant} placeholder={pay.merchant_set ? '•••• (tersimpan)' : 'mis. D1234'}
                 onChange={e => setPay(v => ({ ...v, merchant: e.target.value }))} />
             </Field>
-            <Field label="Server Key / API Key" hint={pay.key_set ? 'Kunci sudah tersimpan — isi hanya bila ingin mengganti.' : 'Belum ada kunci tersimpan.'}>
+            <Field label="Server Key / API Key" hint={pay.key_set ? 'Kunci sudah tersimpan — isi hanya bila ingin mengganti.'
+              : pay.provider === 'kasera' ? 'Masukkan API Key Kasera dari menu Developer (kp_test_… atau kp_live_…).'
+                : 'Belum ada kunci tersimpan.'}>
               <input className="input" type="password" value={pay.key} autoComplete="new-password"
                 placeholder={pay.key_set ? '•••••••• (tersimpan)' : 'tempel kunci di sini'}
                 data-pay-key onChange={e => setPay(v => ({ ...v, key: e.target.value }))} />
@@ -427,7 +435,7 @@ export function SuperQris({ ctx }) {
                   onChange={e => setPay(v => ({ ...v, expire_menit: e.target.value }))} />
               </Field>
             </div>
-            <Field label="Base URL API Gateway (opsional)" hint="Khusus Kasera: isi bila base URL API berbeda (mis. https://pay.kasera.id). Kosongkan untuk default (production https://pay.kasera.id · sandbox https://sandbox.kasera.id).">
+            <Field label="Base URL API Gateway (opsional)" hint="Khusus Kasera: isi hanya bila base URL API berbeda. URL resmi untuk Sandbox maupun Production adalah https://pay.kasera.id.">
               <input className="input font-mono text-[11.5px]" value={pay.base || ''} data-pay-base placeholder={pay.base_set ? '•••• (tersimpan)' : 'https://pay.kasera.id'}
                 onChange={e => setPay(v => ({ ...v, base: e.target.value }))} />
             </Field>
@@ -441,7 +449,7 @@ export function SuperQris({ ctx }) {
                 <div className="text-[12.5px] font-semibold text-slate-700">Kasera Pay — Transaksi &amp; Webhook Otomatis</div>
                 <div className="text-[11px] text-slate-500">
                   POST <span className="font-mono">/v1/transactions</span> → <span className="font-mono">checkout_url</span> ·
-                  verifikasi header <span className="font-mono">kasera-signature-v1</span>
+                  verifikasi tanda tangan bertimestamp <span className="font-mono">Kasera-Signature-V1</span>
                 </div>
               </div>
               <div className="grid gap-2.5 sm:grid-cols-2">

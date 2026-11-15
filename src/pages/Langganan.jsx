@@ -325,6 +325,7 @@ export default function Langganan({ ctx }) {
                         try { const r = await api('/api/langganan/gateway/status?order=' + encodeURIComponent(gtw.order_id));
                           setGtwStatus(r.paid ? 'disetujui' : (r.gateway_status || 'menunggu'));
                           if (r.paid) { toast.ok('Pembayaran terverifikasi.'); load(); ctx.reload(); }
+                          else if (r.error) toast.err(r.error);
                           else toast.info('Status: ' + (r.gateway_status || 'menunggu'));
                         } catch (e) { toast.err(e.message); }
                       }}><RefreshCw size={14} /> Cek Status</button>

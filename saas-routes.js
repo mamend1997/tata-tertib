@@ -298,7 +298,7 @@ module.exports = function mount(apiCtx) {
 
   /* ---------- WEBHOOK KASERA PAY (publik, tanpa sesi, bertanda tangan) ----------
      POST /api/webhook/kasera
-       header : kasera-signature-v1 = HMAC-SHA256(body mentah, WEBHOOK SECRET)
+       header : Kasera-Signature-V1 = HMAC-SHA256(timestamp + "." + body mentah)
        event  : payment.paid → external_id → tagihan menjadi LUNAS
      Rute ini DIKECUALIKAN dari CSRF (dipanggil server Kasera, bukan browser)
      dan idempoten: event yang sama tidak diproses dua kali. */
@@ -860,7 +860,9 @@ module.exports = function mount(apiCtx) {
       pay: {
         ...pay,
         /** kredensial TIDAK pernah dikirim balik — hanya penanda terisi */
-        merchant_set: !!cfg.merchant, key_set: !!cfg.key, key2_set: !!cfg.key2,
+        merchant_set: !!cfg.merchant,
+        key_set: !!cfg.key || (cfg.provider === 'kasera' && !!String(process.env.KASERA_API_KEY || '').trim()),
+        key2_set: !!cfg.key2,
         callback_set: !!cfg.callback, base_set: !!cfg.base,
         /** log webhook Kasera terakhir (8 baris) */
         events: (() => { try { return saas.kaseraEvents(8); } catch (e) { return []; } })()
@@ -888,8 +890,10 @@ module.exports = function mount(apiCtx) {
       if (pay.merchant !== undefined) saas.setSetting('pay_gateway_merchant', String(pay.merchant || '').trim());
       if (String(pay.key || '').trim()) saas.setSetting('pay_gateway_key', String(pay.key).trim());
       if (bool(pay.key_hapus)) saas.setSetting('pay_gateway_key', '');
-      if (pay.key2 !== undefined) saas.setSetting('pay_gateway_key2', String(pay.key2 || '').trim());
-      if (pay.callback !== undefined) saas.setSetting('pay_gateway_callback', String(pay.callback || '').trim());
+      if (String(pay.key2 || '').trim()) saas.setSetting('pay_gateway_key2', String(pay.key2).trim());
+      if (bool(pay.key2_hapus)) saas.setSetting('pay_gateway_key2', '');
+      if (String(pay.callback || '').trim()) saas.setSetting('pay_gateway_callback', String(pay.callback).trim());
+      if (bool(pay.callback_hapus)) saas.setSetting('pay_gateway_callback', '');
       if (pay.base !== undefined) saas.setSetting('pay_gateway_base', String(pay.base || '').trim());
       /* Kasera Pay: pilihan API (auto/transactions/qris) */
       if (pay.kasera_api !== undefined) {
