@@ -282,6 +282,40 @@ const base = Math.min(cur, 1440 - 160);
       ok('slot dapat dibuat pada tahun pelajaran lain (dilewati: hanya 1 TA)', false, 'hanya satu TA');
       ok('sesi pada TA pilihan tetap muncul di absensi guru', false, 'hanya satu TA');
     }
+
+    /* ================= 6. HAPUS TERPILIH & RESET MATRIKS ================= */
+    console.log('\n== 6. HAPUS SLOT TERPILIH & RESET MATRIKS ==');
+    cookie = '';
+    await login('admin', 'admin123');
+    const slotHapus1 = await req('/api/jadwal/slot', { method: 'POST', body: {
+      hari: HARI, sesi: 1, mapel_id: mapelMtk, kelas_ids: [kelas[0].id], abaikan: 1, ta: idTaBaru
+    } });
+    const slotHapus2 = await req('/api/jadwal/slot', { method: 'POST', body: {
+      hari: HARI, sesi: 3, mapel_id: mapelMtk, kelas_ids: [kelas[0].id], abaikan: 1, ta: idTaBaru
+    } });
+    ok('slot uji untuk hapus terpilih dibuat', slotHapus1.status === 200 && slotHapus2.status === 200,
+      `${slotHapus1.status}: ${slotHapus1.body?.error || slotHapus1.body?.id}; ${slotHapus2.status}: ${slotHapus2.body?.error || slotHapus2.body?.id}`);
+    r = await req('/api/jadwal/slot/delete-masal', { method: 'POST', body: { ta: idTaBaru, ids: [] } });
+    ok('hapus terpilih tanpa pilihan ditolak', r.status === 400);
+    r = await req('/api/jadwal/slot/delete-masal', {
+      method: 'POST', body: { ta: idTaBaru, ids: [slotHapus1.body.id, slotHapus2.body.id] }
+    });
+    ok('hapus terpilih berhasil', r.status === 200 && r.body.jumlah === 2, JSON.stringify(r.body));
+    r = await req('/api/jadwal?ta=' + idTaBaru);
+    ok('slot terpilih benar-benar terhapus', (r.body.rows || []).length === 0);
+    r = await req('/api/jadwal/slot/delete-masal', {
+      method: 'POST', body: { ta: idTaBaru, ids: [slotBaru.id] }
+    });
+    ok('hapus terpilih menolak slot dari TA lain', r.status === 404);
+    await req('/api/jadwal/slot', { method: 'POST', body: {
+      hari: HARI, sesi: 3, mapel_id: mapelMtk, kelas_ids: [kelas[0].id], abaikan: 1, ta: idTaBaru
+    } });
+    r = await req('/api/jadwal/reset', { method: 'POST', body: { ta: idTaBaru } });
+    ok('reset matriks menghapus semua slot pada TA terpilih', r.status === 200 && r.body.jumlah === 1, JSON.stringify(r.body));
+    r = await req('/api/jadwal?ta=' + idTaBaru);
+    ok('reset tidak menyisakan slot pada TA terpilih', (r.body.rows || []).length === 0);
+    r = await req('/api/jadwal/reset', { method: 'POST', body: { ta: idTaBaru } });
+    ok('reset matriks kosong ditolak dengan jelas', r.status === 400);
   } catch (e) {
     fail++; fails.push('exception: ' + e.message);
     console.error(e);

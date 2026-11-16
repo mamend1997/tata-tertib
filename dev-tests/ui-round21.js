@@ -2,7 +2,7 @@
 /* Uji UI ronde 21 (Playwright):
    - Form slot: guru pengampu TERKUNCI (tidak ada select guru)
    - Tab Mata Pelajaran: guru pengampu tampil, tombol Import + template
-   - Matriks: 4 mode tampilan (kelas/vertikal/guru/semua)
+   - Matriks: 3 mode tampilan (per kelas/semua kelas/per guru), hapus massal & sticky header
    - Pengaturan: editor sesi jam khusus per hari (mis. Upacara)
    - Cetak/ekspor jadwal tidak menampilkan pesan "belum ada kelas atau slot"
    - Menu Absensi Guru: sesi hari ini langsung muncul
@@ -134,18 +134,57 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     console.log('\n== 3. MULTI-TAMPILAN MATRIKS ==');
     await page.click('text=Matriks Jadwal');
     await page.waitForTimeout(700);
-    ok('4 pilihan tampilan tersedia', await page.locator('[data-view]').count() === 4);
+    ok('3 pilihan tampilan dengan urutan Per Kelas → Semua Kelas → Per Guru',
+      await page.locator('[data-view]').count() === 3
+      && (await page.locator('[data-view]').allTextContents()).map(x => x.trim()).join('|').includes('Per Kelas|Semua Kelas|Per Guru'));
     ok('tampilan default per kelas', await page.locator('[data-grid-jadwal]').count() === 1);
     ok('kartu slot menampilkan kode mapel', (await page.locator('[data-slot]').first().innerText()).includes('MTK'),
       await page.locator('[data-slot]').first().innerText());
-    await page.click('[data-view="vertikal"]');
+    ok('kontrol hapus massal tampil untuk pengguna berizin',
+      await page.locator('[data-pilih-semua-slot]').count() === 1
+      && await page.locator('[data-slot-hapus-terpilih]').count() === 1
+      && await page.locator('[data-reset-matriks]').count() === 1);
+    const cekSlot = page.locator('[data-slot-pilih]').first();
+    await cekSlot.check();
+    ok('menandai slot mengaktifkan tombol Hapus Terpilih',
+      await page.locator('[data-slot-hapus-terpilih]').isEnabled());
+    await cekSlot.uncheck();
+    await page.click('[data-view="semua"]');
     await page.waitForTimeout(800);
-    ok('tampilan matriks vertikal tampil', await page.locator('[data-grid-vertikal]').count() === 1);
-    const headerVert = await page.locator('[data-grid-vertikal] thead').innerText();
-    ok('kolom vertikal berisi daftar kelas', headerVert.includes(setup.kelasNama), headerVert.slice(0, 80));
-    const bodyVert = await page.locator('[data-grid-vertikal] tbody').innerText();
-    ok('baris vertikal berisi hari & jam pelajaran', /Jam ke-1/.test(bodyVert) && bodyVert.length > 20);
-    ok('sel vertikal menampilkan kode mapel', /MTK|BIN/.test(bodyVert));
+    ok('tampilan semua kelas menampilkan grid bersama', await page.locator('[data-grid-semua]').count() === 1);
+    const headerSemua = await page.locator('[data-grid-semua] thead').innerText();
+    ok('grid semua kelas memuat judul Hari/Jam dan nama kelas',
+      /Hari \/ Jam/i.test(headerSemua) && headerSemua.includes(setup.kelasNama), headerSemua.slice(0, 80));
+    const bodySemua = await page.locator('[data-grid-semua] tbody').innerText();
+    ok('grid semua kelas berisi hari, jam, dan mapel', /Jam ke-1/.test(bodySemua) && /MTK|BIN/.test(bodySemua));
+    const stickySemua = await page.evaluate(async () => {
+      const scroller = document.querySelector('[data-grid-semua-scroll]');
+      const heading = scroller?.querySelector('thead th');
+      if (!scroller || !heading) return false;
+      scroller.scrollTop = 500;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return Math.abs(heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top) <= 3;
+    });
+    ok('judul Hari/Jam dan kelas tetap terlihat saat grid semua kelas digulir', stickySemua);
+    await page.click('[data-view="kelas"]');
+    await page.waitForTimeout(500);
+    const stickyKelas = await page.evaluate(async () => {
+      const grid = document.querySelector('[data-grid-jadwal]');
+      const heading = grid?.querySelector('[data-header-hari]');
+      if (!grid || !heading) return null;
+      window.scrollTo(0, grid.getBoundingClientRect().top + window.scrollY + 100);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const info = {
+        top: Math.round(heading.getBoundingClientRect().top),
+        gridTop: Math.round(grid.getBoundingClientRect().top),
+        gridBottom: Math.round(grid.getBoundingClientRect().bottom),
+        scrollY: Math.round(window.scrollY)
+      };
+      window.scrollTo(0, 0);
+      return info;
+    });
+    ok('judul hari per kelas melekat saat halaman digulir',
+      !!stickyKelas && stickyKelas.top >= 0 && stickyKelas.top <= 10, JSON.stringify(stickyKelas));
     await page.click('[data-view="guru"]');
     await page.waitForTimeout(700);
     ok('pilihan guru muncul pada tampilan per guru', await page.locator('[data-pilih-guru]').count() === 1);
@@ -154,7 +193,7 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     ok('tampilan per guru merender grid jadwal guru', await page.locator('[data-grid-jadwal]').count() === 1);
     await page.click('[data-view="semua"]');
     await page.waitForTimeout(800);
-    ok('tampilan semua kelas dalam satu grid', await page.locator('[data-grid-vertikal]').count() === 1);
+    ok('tampilan semua kelas dalam satu grid', await page.locator('[data-grid-semua]').count() === 1);
     ok('tanpa error JS pada semua tampilan', errors.length === 0, errors.slice(0, 2).join(' | '));
 
     /* ---------------- 4. SESI JAM KHUSUS PER HARI ---------------- */
@@ -192,7 +231,7 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
 
     /* ---------------- 5. CETAK / EKSPOR JADWAL ---------------- */
     console.log('\n== 5. CETAK & EKSPOR JADWAL ==');
-    for (const [mode, label] of [['kelas', 'Per Kelas'], ['vertikal', 'Matriks Vertikal'], ['guru', 'Per Guru'], ['semua', 'Semua Kelas']]) {
+    for (const [mode, label] of [['kelas', 'Per Kelas'], ['semua', 'Semua Kelas'], ['guru', 'Per Guru']]) {
       await page.click(`[data-view="${mode}"]`);
       await page.waitForTimeout(500);
       if (mode === 'guru' && (await page.locator('[data-pilih-guru]').count())) {
@@ -256,6 +295,21 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
       const of = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       ok('tanpa overflow horizontal ' + p, of <= 2, 'overflow ' + of + 'px');
     }
+    await page.goto(BASE + '/#/jadwal');
+    await page.waitForSelector('[data-reset-matriks]', { timeout: 15000 });
+    const resetBefore = await page.evaluate(async () => {
+      const r = await (await fetch('/api/jadwal', { credentials: 'same-origin' })).json();
+      return { ta: r.ta, count: (r.rows || []).length };
+    });
+    page.once('dialog', dialog => dialog.accept());
+    await page.click('[data-reset-matriks]');
+    await page.waitForTimeout(1200);
+    const resetAfter = await page.evaluate(async ta => {
+      const r = await (await fetch(`/api/jadwal?ta=${ta}`, { credentials: 'same-origin' })).json();
+      return (r.rows || []).length;
+    }, resetBefore.ta);
+    ok('Reset Matriks menghapus slot pada TA terpilih setelah konfirmasi',
+      resetBefore.count > 0 && resetAfter === 0, `${resetBefore.count} → ${resetAfter}`);
     ok('tanpa error JS pada pengujian mobile', errors.length === 0, errors.slice(0, 2).join(' | '));
   } catch (e) {
     fail++; fails.push('exception: ' + e.message);

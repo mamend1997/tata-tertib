@@ -179,15 +179,15 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     ok('cetak tanpa instruksi & footer "Dicetak"',
       !/Pratinjau cetak/i.test(cetak.html) && !/Ctrl\/Cmd/i.test(cetak.html) && !/Dicetak\s+\d/.test(cetak.html));
 
-    /* ================= 5. MATRIKS VERTIKAL ================= */
-    console.log('\n== 5. MATRIKS VERTIKAL (LEBAR & RATA TENGAH) ==');
+    /* ================= 5. MATRIKS SEMUA KELAS ================= */
+    console.log('\n== 5. MATRIKS SEMUA KELAS (LEBAR & RATA TENGAH) ==');
     await page.goto(BASE + '/#/jadwal');
     await page.waitForSelector('[data-grid-jadwal]', { timeout: 15000 });
-    await page.click('[data-view="vertikal"]');
-    await page.waitForSelector('[data-grid-vertikal]', { timeout: 10000 });
+    await page.click('[data-view="semua"]');
+    await page.waitForSelector('[data-grid-semua]', { timeout: 10000 });
     await page.waitForTimeout(600);
     const lebar = await page.evaluate(() => {
-      const t = document.querySelector('[data-grid-vertikal]');
+      const t = document.querySelector('[data-grid-semua]');
       const hari = t.querySelector('tr.bg-slate-200\\/70 td, tr td[colspan]');
       const tr = [...t.querySelectorAll('tbody tr')][0];
       return {
@@ -198,7 +198,7 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     });
     ok('baris hari tidak melebar melebihi tabel', lebar.barisHari <= lebar.tabel + 2, JSON.stringify(lebar));
     const rata = await page.evaluate(() => {
-      const td = document.querySelector('[data-grid-vertikal] tbody td');
+      const td = document.querySelector('[data-grid-semua] tbody td');
       if (!td) return '';
       const st = getComputedStyle(td);
       return `${st.textAlign}|${st.verticalAlign}`;

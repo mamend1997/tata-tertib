@@ -26,7 +26,7 @@ export default function Jadwal({ ctx }) {
   const [edit, setEdit] = useState(null);          // slot yang diedit / slot baru
   const [importOpen, setImportOpen] = useState(false);
   const [pubOpen, setPubOpen] = useState(false);
-  const [view, setView] = useState('kelas');        // kelas | vertikal | guru | semua
+  const [view, setView] = useState('kelas');        // kelas | semua | guru
   const [guruId, setGuruId] = useState('');
 
   const ta = filters?.ta || '';
@@ -104,6 +104,29 @@ export default function Jadwal({ ctx }) {
     catch (e) { toast.err(e.message); }
   }
 
+  async function hapusSlotTerpilih(ids) {
+    if (!ids.length) return false;
+    if (!window.confirm(`Hapus ${ids.length} slot jadwal terpilih beserta data absensi terkait? Tindakan ini tidak dapat dibatalkan.`)) return false;
+    try {
+      const r = await api('/api/jadwal/slot/delete-masal', { method: 'POST', body: { ids, ta: data?.ta || ta } });
+      toast.ok(r.pesan || `${r.jumlah} slot jadwal dihapus.`);
+      load();
+      return true;
+    } catch (e) { toast.err(e.message); return false; }
+  }
+
+  async function resetMatriks() {
+    if (!rows.length) return;
+    const namaTa = data?.ta_nama || 'tahun pelajaran terpilih';
+    if (!window.confirm(`Reset seluruh matriks untuk ${namaTa}?\n\n${rows.length} slot jadwal beserta data absensi terkait akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.`)) return false;
+    try {
+      const r = await api('/api/jadwal/reset', { method: 'POST', body: { ta: data?.ta || ta } });
+      toast.ok(r.pesan || 'Matriks jadwal direset.');
+      load();
+      return true;
+    } catch (e) { toast.err(e.message); return false; }
+  }
+
   /* DUPLIKAT SLOT: salin ke sesi berikutnya (atau hari/sesi pilihan lewat modal) */
   const [dup, setDup] = useState(null);            // slot yang akan diduplikasi
   const [dupBusy, setDupBusy] = useState(false);
@@ -163,6 +186,7 @@ export default function Jadwal({ ctx }) {
           ctx={ctx} data={data} cfg={cfg} kelas={kelas} kelasId={kelasId} setKelasId={setKelasId}
           mapelById={mapelById} guruById={guruById} sesiById={sesiById} hariAktif={hariAktif} sesi={sesi} sesiHari={sesiHari} rows={rows}
           dragId={dragId} setDragId={setDragId} pindah={pindah} hapus={hapus}
+          onHapusTerpilih={hapusSlotTerpilih} onResetMatriks={resetMatriks}
           onEdit={setEdit} onLoad={load} ta={ta} onDuplikat={setDup}
           view={view} setView={setView} guruId={guruId} setGuruId={setGuruId}
         />
@@ -190,33 +214,64 @@ export default function Jadwal({ ctx }) {
 }
 
 /* ==================================================================
-   MATRIKS JADWAL (drag & drop) — 4 mode tampilan:
-   · kelas    : satu rombel, hari × jam (drag & drop)
-   · vertikal : kolom = kelas, baris = hari + jam (ASC timetable style)
-   · guru     : semua jadwal satu guru
-   · semua    : semua kelas dalam satu grid (kolom = kelas)
+   MATRIKS JADWAL (drag & drop) — 3 mode tampilan:
+   · kelas : satu rombel, hari × jam
+   · semua : semua kelas dalam satu grid
+   · guru  : jadwal satu guru
    ================================================================== */
 const VIEWS = [
   { key: 'kelas', label: 'Per Kelas', icon: CalendarRange },
-  { key: 'vertikal', label: 'Matriks Vertikal', icon: Table2 },
-  { key: 'guru', label: 'Per Guru', icon: Users },
-  { key: 'semua', label: 'Semua Kelas', icon: Table2 }
+  { key: 'semua', label: 'Semua Kelas', icon: Table2 },
+  { key: 'guru', label: 'Per Guru', icon: Users }
 ];
 
 function Matriks({
   ctx, data, cfg, kelas, kelasId, setKelasId, mapelById, guruById, hariAktif, sesi, sesiHari, rows,
-  dragId, setDragId, pindah, hapus, onEdit, view, setView, guruId, setGuruId, onDuplikat
+  dragId, setDragId, pindah, hapus, onEdit, view, setView, guruId, setGuruId, onDuplikat,
+  onHapusTerpilih, onResetMatriks
 }) {
+  const [slotTerpilih, setSlotTerpilih] = useState([]);
+  const [hapusBusy, setHapusBusy] = useState(false);
+  const headerScrollRef = useRef(null);
+  const bodyScrollRef = useRef(null);
   const k = kelas.find(x => String(x.id) === String(kelasId));
   const sesiUntuk = (hari) => (sesiHari && sesiHari[Number(hari)]) || sesi || [];
   const rowOf = (hari, sesiIdx, kelasTerpilih) => rows.find(r => Number(r.hari) === Number(hari)
     && Number(r.sesi) === Number(sesiIdx) && kelasTerpilih && r.kelas_ids.includes(Number(kelasTerpilih.id)));
   const jumlahJam = (sesi || []).filter(s => !s.istirahat).length;
-  const kelasTampil = (view === 'kelas' && k) ? [k] : kelas;
+  const slotTerlihatIds = useMemo(() => [...new Set(rows.filter(r => {
+    if (!hariAktif.includes(Number(r.hari))) return false;
+    const sesiHariIni = sesiUntuk(r.hari).find(s => Number(s.idx) === Number(r.sesi));
+    if (!sesiHariIni || sesiHariIni.istirahat) return false;
+    if ((view === 'kelas' || view === 'guru') && (!k || !r.kelas_ids.includes(Number(k.id)))) return false;
+    if (view === 'guru' && (!guruId || Number(r.guru_id) !== Number(guruId))) return false;
+    return true;
+  }).map(r => Number(r.id)))], [rows, view, k?.id, guruId, hariAktif.join(','), JSON.stringify(sesiHari || {}), JSON.stringify(sesi || [])]);
+  const allVisibleSelected = slotTerlihatIds.length > 0 && slotTerlihatIds.every(id => slotTerpilih.includes(id));
+  const toggleSlot = (id) => setSlotTerpilih(selected => selected.includes(Number(id))
+    ? selected.filter(x => x !== Number(id)) : [...selected, Number(id)]);
+  const pilihSlot = (row) => ctx.can('jadwal', 'delete') ? (
+    <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-rose-600"
+      aria-label={`Pilih slot ${row.mapel_nama || ''}`}
+      checked={slotTerpilih.includes(Number(row.id))}
+      onChange={() => toggleSlot(row.id)}
+      onClick={e => e.stopPropagation()}
+      onDragStart={e => e.preventDefault()}
+      data-slot-pilih={row.id} />
+  ) : null;
+  const hapusTerpilih = async () => {
+    setHapusBusy(true);
+    try {
+      if (await onHapusTerpilih(slotTerpilih)) setSlotTerpilih([]);
+    } finally { setHapusBusy(false); }
+  };
+  const resetMatriksPilih = async () => {
+    if (await onResetMatriks()) setSlotTerpilih([]);
+  };
   /* Catatan: grid horizontal TIDAK lagi memakai baris seragam — setiap kolom
      hari merender daftar sesinya sendiri (lihat gridHorizontal). */
-  /* baris grid vertikal: satu baris = satu hari + satu sesi */
-  const barisVertikal = useMemo(() => {
+  /* baris grid semua kelas: satu baris = satu hari + satu sesi */
+  const barisSemua = useMemo(() => {
     const out = [];
     for (const h of hariAktif) {
       for (const s of sesiUntuk(h)) {
@@ -281,7 +336,8 @@ function Matriks({
               {s ? `${s.mulai}–${s.selesai}` : ''}
             </p>
           </div>
-          <div className="flex shrink-0 gap-0.5">
+          <div className="flex shrink-0 items-center gap-0.5">
+            {pilihSlot(row)}
             <button type="button" title="Ubah slot" data-slot-aksi="edit"
               onClick={e => { e.stopPropagation(); onEdit(row); }}
               className="rounded bg-white/90 p-0.5 text-slate-500 transition hover:text-orange-600"><Pencil size={10} /></button>
@@ -353,87 +409,107 @@ function Matriks({
   const gridHorizontal = (daftarKelas) => {
     const aktif = daftarKelas[0] || null;
     return (
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-card" data-grid-jadwal>
-        <div className="flex min-w-full items-start gap-2">
-          {hariAktif.map(h => {
-            const daftar = sesiUntuk(h);
-            const khusus = !!(sesiHari && sesiHari[h]);
-            const jamPelajaran = daftar.filter(s => !s.istirahat).length;
-            return (
-              <div key={h} className="min-w-[186px] flex-1" data-hari={h} data-hari-khusus={khusus ? 1 : 0}>
-                {/* kepala kolom hari */}
-                <div className={cx('mb-1 rounded-lg border px-1.5 py-1 text-center',
-                  khusus ? 'border-violet-200 bg-violet-50' : 'border-slate-200 bg-slate-50')}>
-                  <p className="text-[11.5px] font-extrabold uppercase tracking-wide text-slate-700">
-                    {HARI[h]}
-                    {khusus ? <span className="ml-1 rounded bg-violet-200 px-1 text-[8.5px] font-bold text-violet-800">khusus</span> : null}
-                  </p>
-                  <p className="text-[9.5px] font-semibold text-slate-500">
-                    {jamPelajaran} jam · {daftar.length} sesi
-                  </p>
-                </div>
-                {/* sesi hari tersebut (urut sesuai pengaturan hari itu) */}
-                <div className="space-y-1">
-                  {daftar.map(s => {
-                    if (s.istirahat) {
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-card" data-grid-jadwal>
+        <div className="sticky top-0 z-30 rounded-t-2xl border-b border-slate-100 bg-white px-2 pt-2" data-grid-jadwal-header>
+          <div className="overflow-x-auto" ref={headerScrollRef}
+            onScroll={e => {
+              const target = bodyScrollRef.current;
+              if (target && target.scrollLeft !== e.currentTarget.scrollLeft) target.scrollLeft = e.currentTarget.scrollLeft;
+            }}>
+            <div className="flex min-w-full items-start gap-2">
+              {hariAktif.map(h => {
+                const daftar = sesiUntuk(h);
+                const khusus = !!(sesiHari && sesiHari[h]);
+                const jamPelajaran = daftar.filter(s => !s.istirahat).length;
+                return (
+                  <div key={h} className="min-w-[186px] flex-1">
+                    <div className={cx('mb-1 rounded-lg border px-1.5 py-1 text-center',
+                      khusus ? 'border-violet-200 bg-violet-50' : 'border-slate-200 bg-slate-50')}
+                      data-header-hari={h}>
+                      <p className="text-[11.5px] font-extrabold uppercase tracking-wide text-slate-700">
+                        {HARI[h]}
+                        {khusus ? <span className="ml-1 rounded bg-violet-200 px-1 text-[8.5px] font-bold text-violet-800">khusus</span> : null}
+                      </p>
+                      <p className="text-[9.5px] font-semibold text-slate-500">
+                        {jamPelajaran} jam · {daftar.length} sesi
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto px-2 pb-2" ref={bodyScrollRef} data-grid-jadwal-body
+          onScroll={e => {
+            const target = headerScrollRef.current;
+            if (target && target.scrollLeft !== e.currentTarget.scrollLeft) target.scrollLeft = e.currentTarget.scrollLeft;
+          }}>
+          <div className="flex min-w-full items-start gap-2">
+            {hariAktif.map(h => {
+              const daftar = sesiUntuk(h);
+              return (
+                <div key={h} className="min-w-[186px] flex-1" data-hari={h} data-hari-khusus={sesiHari && sesiHari[h] ? 1 : 0}>
+                  <div className="space-y-1">
+                    {daftar.map(s => {
+                      if (s.istirahat) {
+                        return (
+                          <div key={s.idx} data-sesi-istirahat={`${h}-${s.idx}`}
+                            style={{ minHeight: tinggiSesi(s) }}
+                            className="flex items-center justify-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-1 text-center">
+                            <span className="text-[9.5px] font-bold uppercase tracking-wide text-amber-700">{s.label}</span>
+                            <span className="text-[9px] font-semibold text-amber-600">{s.mulai}–{s.selesai}</span>
+                          </div>
+                        );
+                      }
+                      const row = rowOf(h, s.idx, aktif);
                       return (
-                        <div key={s.idx} data-sesi-istirahat={`${h}-${s.idx}`}
-                          style={{ minHeight: tinggiSesi(s) }}
-                          className="flex items-center justify-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-1 text-center">
-                          <span className="text-[9.5px] font-bold uppercase tracking-wide text-amber-700">{s.label}</span>
-                          <span className="text-[9px] font-semibold text-amber-600">{s.mulai}–{s.selesai}</span>
+                        <div key={s.idx} data-sesi-cell={`${h}-${s.idx}`}
+                          className="rounded-lg p-0.5"
+                          {...selDrag(row, h, s.idx, aktif ? aktif.id : null)}>
+                          {row ? kartu(row, s) : kosongBtn(h, s.idx, aktif, s)}
                         </div>
                       );
-                    }
-                    const row = rowOf(h, s.idx, aktif);
-                    return (
-                      <div key={s.idx} data-sesi-cell={`${h}-${s.idx}`}
-                        className="rounded-lg p-0.5"
-                        {...selDrag(row, h, s.idx, aktif ? aktif.id : null)}>
-                        {row ? kartu(row, s) : kosongBtn(h, s.idx, aktif, s)}
-                      </div>
-                    );
-                  })}
-                  {!daftar.length ? (
-                    <p className="rounded-lg border border-dashed border-slate-200 px-2 py-6 text-center text-[11px] text-slate-400">
-                      Tidak ada sesi pada hari ini.
-                    </p>
-                  ) : null}
+                    })}
+                    {!daftar.length ? (
+                      <p className="rounded-lg border border-dashed border-slate-200 px-2 py-6 text-center text-[11px] text-slate-400">
+                        Tidak ada sesi pada hari ini.
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
     );
   };
 
-  /* ---------- grid vertikal: kolom = kelas, baris = hari + jam ---------- */
-  const gridVertikal = () => {
-    const kolom = view === 'guru'
-      ? kelas.filter(x => rows.some(r => Number(r.guru_id) === Number(guruId) && r.kelas_ids.includes(Number(x.id))))
-      : kelas;
+  /* ---------- grid semua kelas: kolom = kelas, baris = hari + jam ---------- */
+  const gridSemua = () => {
+    const kolom = kelas;
     const dipakai = kolom.length ? kolom : kelas;
     /* selalu ada minimal satu kolom agar colspan baris hari konsisten dengan <thead> */
     const daftarKolom = dipakai.length ? dipakai : [{ id: 0, nama: '(belum ada kelas)' }];
     let hariSebelum = null;
     return (
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-card">
-        <table className="w-full border-collapse text-[12px]" data-grid-vertikal>
+      <div className="max-h-[75vh] overflow-auto rounded-2xl border border-slate-200 bg-white shadow-card" data-grid-semua-scroll>
+        <table className="w-full border-collapse text-[12px]" data-grid-semua>
           <thead>
             <tr className="bg-slate-50">
-              <th className="sticky left-0 z-[2] w-[132px] min-w-[132px] border-b border-slate-200 bg-slate-50 px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-500">Hari / Jam</th>
+              <th className="sticky left-0 top-0 z-[30] w-[132px] min-w-[132px] border-b border-slate-200 bg-slate-50 px-2 py-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-500">Hari / Jam</th>
               {daftarKolom.map(x => (
-                <th key={x.id} className="min-w-[132px] border-b border-l border-slate-200 px-2 py-2 text-center text-[11.5px] font-bold text-slate-600">{x.nama}</th>
+                <th key={x.id} className="sticky top-0 z-[20] min-w-[132px] border-b border-l border-slate-200 bg-slate-50 px-2 py-2 text-center text-[11.5px] font-bold text-slate-600">{x.nama}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {!barisVertikal.length ? (
+            {!barisSemua.length ? (
               <tr><td colSpan={daftarKolom.length + 1} className="px-3 py-6 text-center text-[12px] text-slate-400">
                 Belum ada sesi jam pelajaran — atur di tab Pengaturan Jadwal.
               </td></tr>
-            ) : barisVertikal.map((b, i) => {
+            ) : barisSemua.map((b, i) => {
               const hariBaru = b.hari !== hariSebelum;
               hariSebelum = b.hari;
               return (
@@ -470,7 +546,8 @@ function Matriks({
                                 <span className="truncate text-[9px] font-extrabold uppercase tracking-wide text-orange-700" data-slot-label>
                                   {b.label}
                                 </span>
-                                <span className="flex shrink-0 gap-0.5">
+                                <span className="flex shrink-0 items-center gap-0.5">
+                                  {pilihSlot(row)}
                                   <button type="button" title="Ubah slot" data-slot-aksi="edit"
                                     onClick={e => { e.stopPropagation(); onEdit(row); }}
                                     className="rounded bg-white/90 p-0.5 text-slate-500 hover:text-orange-600"><Pencil size={9} /></button>
@@ -509,7 +586,7 @@ function Matriks({
           {VIEWS.map(v => {
             const Ikon = v.icon;
             return (
-              <button key={v.key} onClick={() => setView(v.key)}
+              <button key={v.key} onClick={() => { setSlotTerpilih([]); setView(v.key); }}
                 className={cx('tab flex items-center gap-1.5 !py-1.5', view === v.key && 'active')} data-view={v.key}>
                 <Ikon size={13} /> {v.label}
               </button>
@@ -517,7 +594,8 @@ function Matriks({
           })}
         </div>
         {view === 'kelas' || view === 'guru' ? (
-          <select className="input !w-auto min-w-[180px]" value={kelasId} onChange={e => setKelasId(e.target.value)} data-pilih-kelas>
+          <select className="input !w-auto min-w-[180px]" value={kelasId}
+            onChange={e => { setSlotTerpilih([]); setKelasId(e.target.value); }} data-pilih-kelas>
             {kelas.length ? kelas.map(x => (
               <option key={x.id} value={x.id}>
                 {x.nama}{x.status_target === 'kurang' ? ` — kurang ${x.terisi}/${x.target} jam`
@@ -527,7 +605,8 @@ function Matriks({
           </select>
         ) : null}
         {view === 'guru' ? (
-          <select className="input !w-auto min-w-[190px]" value={guruId} onChange={e => setGuruId(e.target.value)} data-pilih-guru>
+          <select className="input !w-auto min-w-[190px]" value={guruId}
+            onChange={e => { setSlotTerpilih([]); setGuruId(e.target.value); }} data-pilih-guru>
             <option value="">— pilih guru —</option>
             {(data?.guru || []).map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
           </select>
@@ -545,6 +624,28 @@ function Matriks({
           </span>
         ) : null}
         {view === 'kelas' ? <span className="text-[11.5px] text-slate-400">Tarik kartu pelajaran untuk memindahkan slot.</span> : null}
+        {ctx.can('jadwal', 'delete') ? (
+          <div className="flex flex-wrap items-center gap-2 border-l border-slate-200 pl-2" data-kontrol-hapus-matriks>
+            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-slate-600">
+              <input type="checkbox" className="h-3.5 w-3.5 accent-rose-600" checked={allVisibleSelected}
+                disabled={!slotTerlihatIds.length}
+                onChange={e => setSlotTerpilih(selected => e.target.checked
+                  ? [...new Set([...selected, ...slotTerlihatIds])]
+                  : selected.filter(id => !slotTerlihatIds.includes(id)))}
+                data-pilih-semua-slot />
+              Pilih semua pada tampilan
+            </label>
+            <button type="button" className="btn-ghost btn-sm text-rose-700" disabled={!slotTerpilih.length || hapusBusy}
+              onClick={hapusTerpilih} data-slot-hapus-terpilih>
+              {hapusBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              Hapus Terpilih ({slotTerpilih.length})
+            </button>
+            <button type="button" className="btn-ghost btn-sm text-rose-700" disabled={!rows.length}
+              onClick={resetMatriksPilih} data-reset-matriks>
+              <RefreshCw size={13} /> Reset Matriks TA Dipilih
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* VALIDASI TARGET JAM: peringatan per kelas (kurang / lebih dari target) */}
@@ -578,7 +679,7 @@ function Matriks({
 
       {!kelas.length ? <Card><Empty icon={Users} title="Belum ada kelas" desc="Tambahkan kelas/rombel terlebih dahulu di menu Data Kelas." /></Card>
         : !hariAktif.length ? <Card><Empty icon={CalendarDays} title="Hari pembelajaran belum diatur" desc="Buka tab Pengaturan Jadwal untuk memilih hari aktif dan jam pelajaran." /></Card>
-          : view === 'vertikal' || view === 'semua' ? gridVertikal()
+          : view === 'semua' ? gridSemua()
             : view === 'guru' ? (
               !guruTerpilih ? (
                 <Card><Empty icon={Users} title="Pilih guru" desc="Pilih nama guru untuk melihat dan menyusun jadwal mengajarnya." /></Card>

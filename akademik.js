@@ -734,32 +734,58 @@ module.exports = function mount(api) {
     });
   });
 
+  const hapusSlotDalamTransaksi = (row) => {
+    /* Hapus seluruh turunan agar absensi/alfa/izin tidak tertinggal tanpa slot. */
+    const sesiIds = db.prepare('SELECT id FROM absensi_sesi WHERE jadwal_id=?').all(Number(row.id)).map(r => Number(r.id));
+    db.prepare('DELETE FROM absensi_guru WHERE jadwal_id=?').run(Number(row.id));
+    db.prepare('DELETE FROM absensi_guru_izin WHERE jadwal_id=?').run(Number(row.id));
+    db.prepare('DELETE FROM absensi_pencatat WHERE jadwal_id=?').run(Number(row.id));
+    if (sesiIds.length) {
+      const ph = sesiIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM kejadian WHERE sumber='absensi' AND ref_id IN (
+        SELECT id FROM absensi_siswa WHERE sesi_id IN (${ph}))`).run(...sesiIds);
+      db.prepare(`DELETE FROM absensi_siswa WHERE sesi_id IN (${ph})`).run(...sesiIds);
+      db.prepare(`DELETE FROM absensi_sesi WHERE id IN (${ph})`).run(...sesiIds);
+    }
+    db.prepare('DELETE FROM jadwal_tukar WHERE jadwal_id=?').run(Number(row.id));
+    db.prepare('DELETE FROM jadwal WHERE id=?').run(Number(row.id));
+  };
+  const hapusSlotJadwal = (rows, user, req, res, keterangan) => {
+    db.transaction(() => rows.forEach(hapusSlotDalamTransaksi))();
+    dbm.logAudit(user, 'HAPUS', 'jadwal', keterangan, ipOf(req));
+    json(res, 200, { ok: true, jumlah: rows.length, pesan: `${rows.length} slot jadwal dihapus.` });
+  };
+
   del('/api/jadwal/slot/:id', (req, res, q, params) => {
     const user = guard(req, res, 'jadwal', 'delete'); if (!user) return;
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(params.id) || 0);
     if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
     const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(Number(row.mapel_id)) || {};
-    /* CASCADE: hapus slot saja dulu meninggalkan baris absensi guru (termasuk
-       ALFA otomatis) & rekam izin yang tetap tampil di panel "Notifikasi Guru
-       Tidak Hadir" tanpa mapel/sesi — jadi seluruh turunannya ikut dibersihkan. */
-    const sesiIds = db.prepare('SELECT id FROM absensi_sesi WHERE jadwal_id=?').all(Number(row.id)).map(r => Number(r.id));
-    db.transaction(() => {
-      db.prepare('DELETE FROM absensi_guru WHERE jadwal_id=?').run(Number(row.id));
-      db.prepare('DELETE FROM absensi_guru_izin WHERE jadwal_id=?').run(Number(row.id));
-      db.prepare('DELETE FROM absensi_pencatat WHERE jadwal_id=?').run(Number(row.id));
-      if (sesiIds.length) {
-        const ph = sesiIds.map(() => '?').join(',');
-        db.prepare(`DELETE FROM kejadian WHERE sumber='absensi' AND ref_id IN (
-          SELECT id FROM absensi_siswa WHERE sesi_id IN (${ph}))`).run(...sesiIds);
-        db.prepare(`DELETE FROM absensi_siswa WHERE sesi_id IN (${ph})`).run(...sesiIds);
-        db.prepare(`DELETE FROM absensi_sesi WHERE id IN (${ph})`).run(...sesiIds);
-      }
-      db.prepare('DELETE FROM jadwal_tukar WHERE jadwal_id=?').run(Number(row.id));
-      db.prepare('DELETE FROM jadwal WHERE id=?').run(row.id);
-    })();
-    dbm.logAudit(user, 'HAPUS', 'jadwal',
-      `Hapus slot ${dbm.HARI_LABEL[Number(row.hari)] || row.hari} sesi ${row.sesi} (${mapel.nama || '-'})`, ipOf(req));
-    json(res, 200, { ok: true, pesan: 'Slot jadwal dihapus.' });
+    hapusSlotJadwal([row], user, req, res,
+      `Hapus slot ${dbm.HARI_LABEL[Number(row.hari)] || row.hari} sesi ${row.sesi} (${mapel.nama || '-'})`);
+  });
+
+  post('/api/jadwal/slot/delete-masal', async (req, res) => {
+    const user = guard(req, res, 'jadwal', 'delete'); if (!user) return;
+    const b = await readBody(req);
+    const taId = Number(b.ta) || 0;
+    if (!taAda(taId)) return fail(res, 400, 'Tahun pelajaran tidak valid.');
+    const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (!ids.length) return fail(res, 400, 'Pilih minimal satu slot jadwal.');
+    if (ids.length > 1000) return fail(res, 400, 'Maksimal 1.000 slot dapat dihapus sekaligus.');
+    const rows = db.prepare(`SELECT * FROM jadwal WHERE ta_id=? AND id IN (${ids.map(() => '?').join(',')})`).all(taId, ...ids);
+    if (rows.length !== ids.length) return fail(res, 404, 'Sebagian slot tidak ditemukan pada tahun pelajaran terpilih.');
+    hapusSlotJadwal(rows, user, req, res, `Hapus ${rows.length} slot jadwal terpilih pada TA ${taId}`);
+  });
+
+  post('/api/jadwal/reset', async (req, res) => {
+    const user = guard(req, res, 'jadwal', 'delete'); if (!user) return;
+    const b = await readBody(req);
+    const taId = Number(b.ta) || 0;
+    if (!taAda(taId)) return fail(res, 400, 'Tahun pelajaran tidak valid.');
+    const rows = db.prepare('SELECT * FROM jadwal WHERE ta_id=? ORDER BY id').all(taId);
+    if (!rows.length) return fail(res, 400, 'Tidak ada slot jadwal pada tahun pelajaran terpilih.');
+    hapusSlotJadwal(rows, user, req, res, `Reset matriks jadwal: hapus ${rows.length} slot pada TA ${taId}`);
   });
 
   /* =================================================================
