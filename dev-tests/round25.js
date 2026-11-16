@@ -319,6 +319,30 @@ function startWa() {
     r = await req(`/api/guru-pengganti?tanggal=${TODAY}`);
     ok('penugasan tetap aktif setelah pengganti mulai mengisi',
       (r.body.slots || []).some(s => Number(s.jadwal_id) === Number(slotNanti) && Number(s.guru_efektif_id) === Number(gB)));
+    r = await req('/api/guru-pengganti/riwayat/hapus', { method: 'POST', body: { ids: [idTunjuk] } });
+    ok('hapus riwayat menolak penugasan yang masih aktif', r.status === 409, r.body?.error);
+
+    const fixtureDb = new (require('better-sqlite3'))(DB);
+    const taFixture = fixtureDb.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(slotBelum).ta_id;
+    const fixture = fixtureDb.prepare(`INSERT INTO jadwal_tukar
+      (jadwal_id,tanggal,ta_id,dari_guru,ke_guru,mapel_id,alasan,status,jenis,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,'uji hapus riwayat','batal','penugasan','2000-01-01 00:00:00','2000-01-01 00:00:00')`);
+    const riwayatFixtureA = Number(fixture.run(slotBelum, TODAY, taFixture, gA, gB, mA).lastInsertRowid);
+    fixture.run(slotBesok, TODAY, taFixture, gA, gB, mA);
+    fixtureDb.close();
+    await login('gurua', 'guru123');
+    r = await req('/api/guru-pengganti/riwayat/hapus', {
+      method: 'POST', body: { ids: [riwayatFixtureA] }
+    });
+    ok('guru biasa tidak boleh menghapus riwayat pengganti', r.status === 403, r.body?.error);
+    await login('admin', 'admin123');
+    r = await req('/api/guru-pengganti/riwayat/hapus', {
+      method: 'POST', body: { ids: [riwayatFixtureA] }
+    });
+    ok('hapus terpilih menghapus seluruh slot dalam riwayat', r.status === 200 && Number(r.body.dihapus) === 2, JSON.stringify(r.body));
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}&riwayat_periode=semua`);
+    ok('riwayat terpilih sudah tidak muncul', !(r.body.riwayat || []).some(x => (x.riwayat_ids || [x.id]).includes(riwayatFixtureA)),
+      JSON.stringify((r.body.riwayat || []).map(x => x.riwayat_ids)));
 
     /* RBAC */
     await login('gurua', 'guru123');

@@ -6,7 +6,7 @@
       hapus terpilih (modal PIN) & form hapus per tanggal/kelas
    C. Rekap Absensi Guru — tab "Hapus Riwayat" (ceklis + rentang tanggal)
    D. Rekap Bulanan Kelas — filter, tab kehadiran/asesmen/kejadian, tombol ekspor
-   E. Guru Piket & Pengganti — tabel slot, modal penunjukan + kandidat
+   E. Guru Piket & Pengganti — tabel slot, penunjukan, pilih semua & hapus riwayat
    F. Pengaturan → WhatsApp Gateway: pilihan Fonnte + template alfa/izin
    G. Mobile 390px tanpa overflow & tanpa error JS
    Jalankan: node dev-tests/ui-round25.js */
@@ -256,6 +256,23 @@ const ok = (name, cond, extra) => {
     ok('tombol Batal muncul untuk penugasan', await page.locator('[data-batal]').count() >= 1);
     ok('kolom guru efektif berubah menjadi pengganti',
       /Pengganti/i.test(await page.locator('[data-tbl="guru-pengganti"]').innerText()));
+    ok('kontrol Pilih Semua tersedia pada riwayat', await page.locator('[data-riwayat-all]').count() === 1);
+    ok('riwayat aktif tidak dapat dipilih untuk dihapus',
+      await page.locator('[data-riwayat-item]').count() >= 1
+        && await page.locator('[data-riwayat-item]').first().isDisabled()
+        && await page.locator('[data-riwayat-hapus]').isDisabled());
+    page.on('dialog', dialog => dialog.accept());
+    await page.locator('[data-batal]').first().click();
+    await page.waitForTimeout(1200);
+    ok('penugasan yang dibatalkan menjadi dapat dipilih',
+      await page.locator('[data-riwayat-item]:not([disabled])').count() >= 1);
+    await page.locator('[data-riwayat-all]').check();
+    ok('Pilih Semua memilih semua riwayat terminal',
+      await page.locator('[data-riwayat-count]').innerText().then(x => x.trim()) === '1 dipilih');
+    await page.locator('[data-riwayat-hapus]').click();
+    await page.waitForTimeout(1200);
+    ok('Hapus Terpilih menghapus riwayat yang dibatalkan',
+      await page.locator('[data-riwayat-pengganti]').count() === 0);
 
     /* ---------------- F. PENGATURAN WHATSAPP ---------------- */
     console.log('\n== F. PENGATURAN WHATSAPP (FONNTE) ==');

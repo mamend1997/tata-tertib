@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Loader2, RefreshCw,
-  Repeat, Search, UserPlus, Users, XCircle
+  Repeat, Search, Trash2, UserPlus, Users, XCircle
 } from 'lucide-react';
 import { api, hariIni } from '../api';
 import { Alert, Card, Empty, Field, Modal, Spinner, Stat, cx, useToast } from '../ui';
@@ -19,6 +19,7 @@ const geserTanggal = (iso, n) => {
   const p = v => String(v).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+const NO_RIWAYAT = [];
 
 export default function GuruPengganti({ ctx }) {
   const { toast, can, filters } = ctx;
@@ -33,6 +34,8 @@ export default function GuruPengganti({ ctx }) {
   });
   const [pilihSlot, setPilihSlot] = useState(null);   // slot untuk modal penunjukan
   const [busy, setBusy] = useState(0);
+  const [riwayatDipilih, setRiwayatDipilih] = useState([]);
+  const [hapusRiwayatBusy, setHapusRiwayatBusy] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -51,6 +54,42 @@ export default function GuruPengganti({ ctx }) {
       .then(r => setData(r)).catch(e => toast.err(e.message)).finally(() => setLoading(false));
   }, [tanggal, filterSlot, filterRiwayat, filters?.ta]);
   useEffect(load, [load]);
+  const riwayat = data?.riwayat || NO_RIWAYAT;
+  const riwayatBisaDihapus = useMemo(() => riwayat.filter(r => ['batal', 'ditolak'].includes(String(r.status))), [riwayat]);
+  const riwayatPilihSet = useMemo(() => new Set(riwayatDipilih.map(Number)), [riwayatDipilih]);
+  const semuaRiwayatDipilih = riwayatBisaDihapus.length > 0
+    && riwayatBisaDihapus.every(r => riwayatPilihSet.has(Number(r.id)));
+  useEffect(() => {
+    const tersedia = new Set(riwayatBisaDihapus.map(r => Number(r.id)));
+    setRiwayatDipilih(ids => {
+      const next = ids.filter(id => tersedia.has(Number(id)));
+      return next.length === ids.length ? ids : next;
+    });
+  }, [riwayatBisaDihapus]);
+
+  function pilihSemuaRiwayat(checked) {
+    setRiwayatDipilih(checked ? riwayatBisaDihapus.map(r => Number(r.id)) : []);
+  }
+
+  function pilihRiwayat(id, checked) {
+    setRiwayatDipilih(ids => checked
+      ? [...new Set([...ids, Number(id)])]
+      : ids.filter(x => Number(x) !== Number(id)));
+  }
+
+  async function hapusRiwayat() {
+    if (!riwayatDipilih.length || !window.confirm(`Hapus ${riwayatDipilih.length} riwayat yang dipilih? Riwayat aktif atau menunggu tidak akan dihapus.`)) return;
+    setHapusRiwayatBusy(true);
+    try {
+      const ids = [...new Set(riwayat.filter(r => riwayatPilihSet.has(Number(r.id)))
+        .flatMap(r => (r.riwayat_ids || [r.id]).map(Number)))];
+      const result = await api('/api/guru-pengganti/riwayat/hapus', { method: 'POST', body: { ids } });
+      toast.ok(result.pesan || 'Riwayat terpilih dihapus.');
+      setRiwayatDipilih([]);
+      load();
+    } catch (e) { toast.err(e.message); }
+    finally { setHapusRiwayatBusy(false); }
+  }
 
   async function batal(p) {
     if (!window.confirm(`Batalkan penunjukan ${p.ke_nama} dan kembalikan sesi ke guru semula?`)) return;
@@ -291,30 +330,60 @@ export default function GuruPengganti({ ctx }) {
             })}>Reset</button>
           </div>
         </div>
-        {!(data?.riwayat || []).length ? (
+        {!riwayat.length ? (
           <Empty icon={Repeat} title="Belum ada riwayat penugasan"
             desc="Penunjukan guru piket/pengganti akan tercatat di sini setelah disimpan." />
         ) : (
-          <div className="tbl-wrap max-h-[42vh]">
-            <table className="tbl" data-tbl="riwayat-guru-pengganti">
-              <thead><tr><th>Jam</th><th>Kelas</th><th>Mapel</th><th>Guru Utama</th><th>Pengganti</th><th>Status</th><th>Catatan</th></tr></thead>
-              <tbody>
-                {data.riwayat.map(r => (
-                  <tr key={r.id} data-riwayat-pengganti={r.id}>
-                    <td>{r.sesi ? `Jam ${r.sesi}${r.pasangan_sesi ? ` ↔ ${r.pasangan_sesi}` : ''}` : '-'} · {r.tanggal}</td>
-                    <td>{r.kelas_nama || '-'}</td>
-                    <td>{r.mapel_nama || '-'}</td>
-                    <td>{r.dari_nama || '-'}</td>
-                    <td>{r.ke_nama || '-'}</td>
-                    <td><span className={cx('badge', r.status === 'diterima' ? 'badge-aman' : 'badge-netral')}>
-                      {r.status === 'diterima' ? 'Aktif' : r.status === 'batal' ? 'Dibatalkan' : r.status}
-                    </span>{r.jumlah_slot > 1 ? ` · ${r.jumlah_slot} jam` : ''}</td>
-                    <td className="text-[11px]">{r.alasan || r.catatan_putus || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-[12px] font-semibold text-slate-700">
+                <input type="checkbox" checked={semuaRiwayatDipilih}
+                  disabled={!riwayatBisaDihapus.length || hapusRiwayatBusy}
+                  onChange={e => pilihSemuaRiwayat(e.target.checked)} data-riwayat-all />
+                Pilih Semua
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-500" data-riwayat-count>{riwayatDipilih.length} dipilih</span>
+                <button type="button" className="btn-danger btn-sm" onClick={hapusRiwayat}
+                  disabled={!riwayatDipilih.length || hapusRiwayatBusy} data-riwayat-hapus>
+                  {hapusRiwayatBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                  Hapus Terpilih
+                </button>
+              </div>
+            </div>
+            <p className="mb-2 text-[10.5px] text-slate-500">
+              Hanya riwayat yang sudah dibatalkan atau ditolak yang dapat dihapus. Penugasan aktif dan permintaan menunggu harus diselesaikan terlebih dahulu.
+            </p>
+            <div className="tbl-wrap max-h-[42vh]">
+              <table className="tbl" data-tbl="riwayat-guru-pengganti">
+                <thead><tr><th className="w-10 c">Pilih</th><th>Jam</th><th>Kelas</th><th>Mapel</th><th>Guru Utama</th><th>Pengganti</th><th>Status</th><th>Catatan</th></tr></thead>
+                <tbody>
+                  {riwayat.map(r => {
+                    const dapatDihapus = ['batal', 'ditolak'].includes(String(r.status));
+                    return (
+                      <tr key={r.id} data-riwayat-pengganti={r.id}>
+                        <td className="c">
+                          <input type="checkbox" checked={riwayatPilihSet.has(Number(r.id))}
+                            disabled={!dapatDihapus || hapusRiwayatBusy}
+                            onChange={e => pilihRiwayat(r.id, e.target.checked)}
+                            aria-label={`Pilih riwayat ${r.id}`} data-riwayat-item={r.id} />
+                        </td>
+                        <td>{r.sesi ? `Jam ${r.sesi}${r.pasangan_sesi ? ` ↔ ${r.pasangan_sesi}` : ''}` : '-'} · {r.tanggal}</td>
+                        <td>{r.kelas_nama || '-'}</td>
+                        <td>{r.mapel_nama || '-'}</td>
+                        <td>{r.dari_nama || '-'}</td>
+                        <td>{r.ke_nama || '-'}</td>
+                        <td><span className={cx('badge', r.status === 'diterima' ? 'badge-aman' : 'badge-netral')}>
+                          {r.status === 'diterima' ? 'Aktif' : r.status === 'batal' ? 'Dibatalkan' : r.status}
+                        </span>{r.jumlah_slot > 1 ? ` · ${r.jumlah_slot} jam` : ''}</td>
+                        <td className="text-[11px]">{r.alasan || r.catatan_putus || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Card>
 

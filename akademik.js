@@ -54,14 +54,32 @@ module.exports = function mount(api) {
   const isAdmin = (u) => rolesOf(u).includes('admin');
   const isKurikulum = (u) => isAdmin(u) || rolesOf(u).includes('wakasek_kurikulum');
   /**
-   * PENGAWAS AKADEMIK (hanya MELIHAT seluruh slot).
-   * Admin, Wakasek Kurikulum, Kepala Sekolah, dan **Wakasek Kesiswaan** berhak
-   * melihat SELURUH jadwal pada menu Absensi Guru Mapel & Absensi Siswa per Mapel
-   * (bukan hanya jadwal miliknya). Hak MENGELOLA absensi guru (check-in atas nama
-   * guru lain, koreksi status, jurnal) tetap hanya admin/Wakasek Kurikulum —
-   * lihat isKurikulum().
+   * Leadership roles can view broadly, but only admins and headmasters see all
+   * attendance slots. Wakasek Kurikulum/Kesiswaan are scoped to their effective
+   * teacher slots; only the assigned teacher or admin may perform actions.
    */
   const isPengawas = (u) => isKurikulum(u) || rolesOf(u).includes('kepala_sekolah') || rolesOf(u).includes('kesiswaan');
+  const hanyaJadwalSendiri = (u) => !isAdmin(u) && !rolesOf(u).includes('kepala_sekolah')
+    && rolesOf(u).some(r => ['wakasek_kurikulum', 'kesiswaan'].includes(r));
+  const lihatSemuaJadwalAbsensi = (u) => isPengawas(u) && !hanyaJadwalSendiri(u);
+  const rekapAbsensiUntuk = (rekap, user) => {
+    if (lihatSemuaJadwalAbsensi(user)) return rekap;
+    const rows = rekap.rows.filter(r => Number(r.guru_id) === Number(user.id));
+    const hitung = { hadir: 0, izin: 0, sakit: 0, alpha: 0, belum: 0, sebagian: 0 };
+    for (const row of rows) {
+      if (row.ringkas === 'Hadir') hitung.hadir++;
+      else if (row.ringkas === 'Izin') hitung.izin++;
+      else if (row.ringkas === 'Sakit') hitung.sakit++;
+      else if (row.ringkas === 'Alpha') hitung.alpha++;
+      else if (row.ringkas === 'Sebagian') hitung.sebagian++;
+      else hitung.belum++;
+    }
+    return {
+      ...rekap, rows, guru: rows.length,
+      jadwal: rows.reduce((total, row) => total + Number(row.jadwal || 0), 0),
+      hitung, belum_absen: rows.filter(r => r.ringkas !== 'Hadir')
+    };
+  };
   const intArr = (v) => (Array.isArray(v) ? v : String(v === undefined || v === null ? '' : v).split(','))
     .map(x => Number(x)).filter(n => Number.isInteger(n));
   const strIds = (v) => intArr(v).filter(Boolean);
@@ -1686,10 +1704,8 @@ ${isi}
     const cfg = dbm.jadwalConfig();
     const hari = dbm.hariOf(tanggal);
     const guruId = Number(q.guru) || 0;
-    const lihatSemua = isPengawas(user);
-    /* Wakasek Kurikulum / Kepala Sekolah / admin / Wakasek Kesiswaan melihat SELURUH
-       slot pada hari itu (bila memilih guru tertentu → hanya guru tersebut).
-       Guru biasa hanya slot miliknya. */
+    const lihatSemua = lihatSemuaJadwalAbsensi(user);
+    /* Wakasek Kurikulum dan Kesiswaan hanya melihat slot milik guru efektifnya. */
     const targetGuru = lihatSemua ? (guruId || 0) : user.id;
     /* SINKRONISASI JADWAL → ABSENSI: slot hari ini bisa saja tersimpan pada tahun
        pelajaran lain (mis. saat menyusun jadwal TA berikutnya). Bila TA yang
@@ -1722,8 +1738,8 @@ ${isi}
       const guruEfektif = gidEfektif && gidEfektif !== Number(r.guru_id)
         ? db.prepare('SELECT id,nama,nip FROM users WHERE id=?').get(gidEfektif) : null;
       const milikSaya = !!user.id && gidEfektif === Number(user.id);
-      /* boleh bertindak atas nama guru lain: admin / Wakasek Kurikulum */
-      const atasNama = isKurikulum(user);
+      const atasNama = isAdmin(user);
+      const bolehTulis = dbm.can(user, 'absensi_guru', 'write');
       return {
         alur,
         ...r, ...mapelEfektif(r, tukar), jam: w.sesi ? `${w.sesi.mulai}–${w.selesai}` : '',
@@ -1751,10 +1767,10 @@ ${isi}
            NONAKTIF setelah jam pelajaran selesai (+ toleransi) — sama di server.
            KEPEMILIKAN: pengawas yang hanya boleh MELIHAT (mis. Wakasek Kesiswaan)
            tidak mendapat tombol aktif pada slot milik guru lain — server juga menolak. */
-        bisa_checkin: !!w.aktif && !a && (milikSaya || atasNama),
-        bisa_isi: !!w.aktif || !!a,
-        bisa_ubah: !!(a && w.aktif && !viaCheckin && !autoAlfa && (milikSaya || atasNama)),
-        bisa_jurnal: !!(a && w.aktif && (milikSaya || atasNama)),
+        bisa_checkin: !!w.aktif && !a && bolehTulis && (milikSaya || atasNama),
+        bisa_isi: (milikSaya || atasNama) && (!!w.aktif || !!a),
+        bisa_ubah: !!(a && w.aktif && bolehTulis && !viaCheckin && !autoAlfa && (milikSaya || atasNama)),
+        bisa_jurnal: !!(a && w.aktif && bolehTulis && (milikSaya || atasNama)),
         terkunci: !w.aktif,
         /* tombol "Tukar Jadwal" hanya untuk guru pemilik sesi pada hari ini dan
            masih SEBELUM jam pelajaran berakhir */
@@ -1764,12 +1780,12 @@ ${isi}
     };
     const jadwalGuru = semua.filter(r => !targetGuru || guruEfektifOf(r) === Number(targetGuru)).map(mapRow);
     const jadwalHari = lihatSemua ? semua.map(mapRow) : [];
-    const rekap = dbm.absensiGuruRekap(tanggal, taPakai);
+    const rekap = rekapAbsensiUntuk(dbm.absensiGuruRekap(tanggal, taPakai), user);
     const hanyaGuru = !lihatSemua;
     json(res, 200, {
       ok: true, tanggal, hari, tanggal_label: dbm.tanggalPanjang(tanggal), hari_label: dbm.HARI_LABEL,
       ta: taPakai,
-      jumlah_slot: semua.length,
+      jumlah_slot: jadwalGuru.length,
       /* KALENDER AKADEMIK: hari libur / ujian / kegiatan → jadwal reguler tidak berlaku */
       kalender: (() => {
         const k = dbm.kalenderOfDate(tanggal);
@@ -1789,7 +1805,7 @@ ${isi}
       saya: { id: user.id, nama: user.nama, role_label: dbm.roleLabelOf(user) },
       guru: lihatSemua ? guruList() : [], lihat_semua: lihatSemua,
       jadwal: jadwalGuru, jadwal_hari: hanyaGuru ? [] : jadwalHari,
-      rekap: lihatSemua ? rekap : { ...rekap, rows: rekap.rows.filter(r => Number(r.guru_id) === user.id) },
+      rekap,
       /* permintaan tukar jadwal: masuk (harus dijawab) & riwayat yang saya ajukan */
       tukar_masuk: dbm.tukarMasuk(user.id),
       tukar_keluar: dbm.tukarKeluar(user.id, 20),
@@ -1816,7 +1832,7 @@ ${isi}
     const user = guard(req, res, 'absensi_guru', 'view'); if (!user) return;
     const cfg = dbm.jadwalConfig();
     const jumlahHari = Math.max(1, Math.min(21, Number(q.hari) || 7));
-    const lihatSemua = isPengawas(user);
+    const lihatSemua = lihatSemuaJadwalAbsensi(user);
     const guruTarget = lihatSemua ? (Number(q.guru) || 0) : Number(user.id);
     const taId = taOf(q);
     const mulai = dbm.today();
@@ -1888,14 +1904,15 @@ ${isi}
             hari_ini: hariIni, hari_ok: !!w.hariOk, terkunci: !!w.terkunci
           },
           terkunci: !w.aktif, alasan_singkat: alasanSingkat, countdown,
-          bisa_checkin: !!w.aktif && !groupAbs.length
+          bisa_checkin: !!w.aktif && !groupAbs.length && dbm.can(user, 'absensi_guru', 'write')
             && group.every(x => {
               const t = tukarHari.get(Number(x.id));
               return (t ? Number(t.ke_guru) : Number(x.guru_id)) === guruEfektif;
             })
-            && (guruEfektif === Number(user.id) || isKurikulum(user)),
+            && (guruEfektif === Number(user.id) || isAdmin(user)),
           bisa_tukar: !!w.aktif && !groupAbs.length && !tukar && guruEfektif === Number(user.id),
-          bisa_jurnal: !!a && !!w.aktif && (guruEfektif === Number(user.id) || isKurikulum(user))
+          bisa_jurnal: !!a && !!w.aktif && dbm.can(user, 'absensi_guru', 'write')
+            && (guruEfektif === Number(user.id) || isAdmin(user))
         };
       }).filter(s => !guruTarget || Number(s.guru_efektif_id) === guruTarget);
       if (!slots.length) continue;
@@ -1935,7 +1952,7 @@ ${isi}
     const tukarIni = dbm.tukarAktif(row.id, tanggal);
     const pemilik = tukarIni ? Number(tukarIni.ke_guru) : Number(row.guru_id);
     const atasNama = pemilik !== Number(user.id);
-    if (atasNama && !isKurikulum(user)) {
+    if (atasNama && !isAdmin(user)) {
       return fail(res, 403, 'Anda hanya dapat melakukan check-in untuk slot jadwal mengajar Anda sendiri.');
     }
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(b)).filter(r => Number(r.hari) === Number(row.hari));
@@ -2000,6 +2017,9 @@ ${isi}
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jadwalId);
     if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(q.tanggal || '')) ? String(q.tanggal) : dbm.today();
+    if (hanyaJadwalSendiri(user) && dbm.tukarGuruEfektif(row, tanggal) !== Number(user.id)) {
+      return fail(res, 403, 'Anda hanya dapat melihat alur absensi pada jadwal mengajar Anda sendiri.');
+    }
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(q)).filter(r => Number(r.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, dbm.jadwalConfig());
     const alur = alurKelompok(group, tanggal);
@@ -2030,7 +2050,7 @@ ${isi}
     if (!ada) return fail(res, 400, 'Check-in slot ini belum tercatat.');
     const tukarIni = dbm.tukarAktif(row.id, tanggal);
     const pemilik = tukarIni ? Number(tukarIni.ke_guru) : Number(row.guru_id);
-    if (pemilik !== Number(user.id) && !isKurikulum(user)) {
+    if (pemilik !== Number(user.id) && !isAdmin(user)) {
       return fail(res, 403, 'Anda hanya dapat mengisi jurnal pada slot jadwal Anda sendiri.');
     }
     const cfg = dbm.jadwalConfig();
@@ -2110,7 +2130,7 @@ ${isi}
     const tukarIni = dbm.tukarAktif(row.id, tanggal);
     const pemilik = tukarIni ? Number(tukarIni.ke_guru) : Number(row.guru_id);
     const atasNama = pemilik !== Number(user.id);
-    if (atasNama && !isKurikulum(user)) {
+    if (atasNama && !isAdmin(user)) {
       return fail(res, 403, 'Anda hanya dapat mengisi absensi untuk slot jadwal mengajar Anda sendiri.');
     }
     /* 4) jendela waktu */
@@ -2125,7 +2145,7 @@ ${isi}
     if (ada) {
       const viaCheckin = /"sumber"\s*:\s*"checkin"/.test(String(ada.validasi || ''));
       const autoAlfa = /"auto"\s*:\s*true/.test(String(ada.validasi || ''));
-      if ((viaCheckin || autoAlfa) && status !== ada.status && !isKurikulum(user)) {
+      if ((viaCheckin || autoAlfa) && status !== ada.status && !isAdmin(user)) {
         return fail(res, 409, `Status absensi sesi ini sudah terkunci sebagai ${String(ada.status).toUpperCase()}. Anda hanya dapat melengkapi jurnal & foto bukti.`);
       }
     }
@@ -2192,10 +2212,12 @@ ${isi}
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(q.tanggal || '')) ? String(q.tanggal) : dbm.today();
     let auto = { dibuat: 0 };
     try { auto = dbm.autoAlfaGuru(tanggal); } catch (e) { /* abaikan */ }
-    const rekap = dbm.absensiGuruRekap(tanggal, taId);
-    const catatan = db.prepare(`SELECT a.*, m.nama AS mapel_nama, u.nama AS guru_nama, j.sesi, j.kelas_ids
+    const rekap = rekapAbsensiUntuk(dbm.absensiGuruRekap(tanggal, taId), user);
+    const semuaCatatan = db.prepare(`SELECT a.*, m.nama AS mapel_nama, u.nama AS guru_nama, j.sesi, j.kelas_ids
       FROM absensi_guru a LEFT JOIN jadwal j ON j.id=a.jadwal_id LEFT JOIN mapel m ON m.id=j.mapel_id
       LEFT JOIN users u ON u.id=a.guru_id WHERE a.tanggal=? AND a.ta_id=? ORDER BY u.nama, j.sesi`).all(tanggal, taId);
+    const catatan = lihatSemuaJadwalAbsensi(user)
+      ? semuaCatatan : semuaCatatan.filter(c => Number(c.guru_id) === Number(user.id));
     const kelasMap = new Map(kelasPicker().map(k => [Number(k.id), k.nama]));
     json(res, 200, {
       ok: true, rekap, auto_alpha: auto.dibuat || 0,
@@ -2718,6 +2740,7 @@ ${isi}
       if (!cocokKelas || !cocokGuru || !cocokMapel || !cocokKata) continue;
       riwayat.push({
         ...utama, group_ids: anggota.map(y => Number(y.jadwal_id)), jumlah_slot: anggota.length,
+        riwayat_ids: anggota.map(y => Number(y.id)),
         kelas_nama: kelasNama, mapel_nama: mapelNama,
         mapel_asal_nama: utama.mapel_asal_nama || '', pasangan_sesi: anggota
           .filter(y => Number(y.id) !== Number(utama.id)).map(y => y.sesi).filter(Boolean).join(', ')
@@ -2868,6 +2891,43 @@ ${isi}
     });
   });
 
+  post('/api/guru-pengganti/riwayat/hapus', async (req, res) => {
+    const user = guard(req, res, 'guru_pengganti', 'write'); if (!user) return;
+    const b = await readBody(req);
+    const ids = [...new Set((Array.isArray(b.ids) ? b.ids : [])
+      .map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (!ids.length) return fail(res, 400, 'Pilih minimal satu riwayat yang dapat dihapus.');
+    if (ids.length > 500) return fail(res, 400, 'Maksimal 500 baris riwayat dapat dihapus sekaligus.');
+    const selected = db.prepare(`SELECT * FROM jadwal_tukar WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
+    if (selected.length !== ids.length) return fail(res, 404, 'Sebagian riwayat yang dipilih tidak ditemukan.');
+    const semuaIds = new Set();
+    for (const row of selected) {
+      let related;
+      if (Number(row.permintaan_id)) {
+        related = db.prepare('SELECT id,status FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
+          .all(Number(row.permintaan_id));
+      } else {
+        related = db.prepare(`SELECT id,status FROM jadwal_tukar
+          WHERE tanggal=? AND created_at=? AND dari_guru=? AND ke_guru=? AND COALESCE(jenis,'tukar')=?`)
+          .all(row.tanggal, row.created_at, Number(row.dari_guru), Number(row.ke_guru), row.jenis || 'tukar');
+        if (!related.length) related = [{ id: row.id, status: row.status }];
+      }
+      for (const entry of related) {
+        if (!['batal', 'ditolak'].includes(String(entry.status))) {
+          return fail(res, 409, 'Riwayat yang masih aktif atau menunggu tidak dapat dihapus. Batalkan atau selesaikan prosesnya terlebih dahulu.');
+        }
+        semuaIds.add(Number(entry.id));
+      }
+    }
+    if (semuaIds.size > 1000) return fail(res, 400, 'Pilihan mencakup terlalu banyak baris riwayat.');
+    const hapusIds = [...semuaIds];
+    db.transaction(() => {
+      db.prepare(`DELETE FROM jadwal_tukar WHERE id IN (${hapusIds.map(() => '?').join(',')})`).run(...hapusIds);
+    })();
+    dbm.logAudit(user, 'HAPUS', 'jadwal', `Hapus ${hapusIds.length} baris riwayat guru piket/pengganti`, ipOf(req));
+    json(res, 200, { ok: true, dihapus: hapusIds.length, pesan: `${hapusIds.length} baris riwayat dihapus.` });
+  });
+
   /* batalkan penunjukan pengganti (kembali ke guru semula) */
   post('/api/guru-pengganti/batal', async (req, res) => {
     const user = guard(req, res, 'guru_pengganti', 'write'); if (!user) return;
@@ -2925,17 +2985,16 @@ ${isi}
      ================================================================= */
   const sesiBolehKelola = (user, jadwalRow, tanggal) => {
     const r = rolesOf(user);
-    /* admin, Wakasek Kurikulum, Kepala Sekolah, dan Wakasek Kesiswaan boleh mengelola
-       presensi semua sesi (Wakasek Kesiswaan = pembinaan kehadiran siswa). */
-    if (r.includes('admin') || r.includes('wakasek_kurikulum') || r.includes('kepala_sekolah')
-      || r.includes('kesiswaan')) return true;
     /* TUKAR JADWAL: pada tanggal yang sudah ditukar, sesi dikelola guru pengganti
        (guru asli tidak lagi berhak mengisi presensi sesi tersebut hari itu). */
     const tgl = String(tanggal || dbm.today()).slice(0, 10);
     const tukar = dbm.tukarAktif(jadwalRow.id, tgl);
-    if (tukar) {
-      if (Number(tukar.ke_guru) === Number(user.id)) return true;
-    } else if (Number(jadwalRow.guru_id) === Number(user.id)) return true;
+    const guruEfektif = tukar ? Number(tukar.ke_guru) : Number(jadwalRow.guru_id);
+    if (guruEfektif === Number(user.id)) return true;
+    if (isAdmin(user)) return true;
+    /* Wakasek/Kepala Sekolah may view wider schedules, but not operate another
+       teacher's session. Wakasek roles must also be the assigned slot owner. */
+    if (hanyaJadwalSendiri(user) || r.includes('kepala_sekolah')) return false;
     /* guru pengampu mapel (Data Master Mata Pelajaran) boleh mengelola sesi */
     if (!tukar && Number(jadwalRow.mapel_id)) {
       const pengampu = db.prepare('SELECT 1 FROM guru_mapel WHERE mapel_id=? AND guru_id=?')
@@ -3057,7 +3116,7 @@ ${isi}
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(q.tanggal || '')) ? String(q.tanggal) : dbm.today();
     const hari = dbm.hariOf(tanggal);
     const cfg = dbm.jadwalConfig();
-    const lihatSemua = isPengawas(user);
+    const lihatSemua = lihatSemuaJadwalAbsensi(user);
     /* SINKRONISASI: slot hari ini bisa berada pada TA lain (jadwal disusun untuk TA
        berikutnya) — pakai TA yang benar-benar memiliki slot pada hari tersebut. */
     let semua = dbm.jadwalRows(taId).filter(r => Number(r.hari) === hari);
@@ -3091,6 +3150,7 @@ ${isi}
         const t = tukarHari.get(Number(r.id));
         const guruEfektif = t ? Number(t.ke_guru) : Number(r.guru_id);
         if (guruEfektif === Number(user.id)) return true;
+        if (hanyaJadwalSendiri(user)) return false;
         /* slot hasil tukar bukan lagi milik guru asli */
         return !t && mapelDiampu.has(Number(r.mapel_id));
       })
@@ -3109,7 +3169,7 @@ ${isi}
           terisi: Object.values(h).reduce((a, b) => a + b, 0),
           hadir: h.H || 0, alpa: (h.A || 0) + (h.B || 0),
           window: { aktif: w.aktif, alasan: w.alasan },
-          bisa: sesiBolehKelola(user, r, tanggal)
+          bisa: sesiBolehKelola(user, r, tanggal) && dbm.can(user, 'absensi_siswa', 'write')
         };
       });
     json(res, 200, {
@@ -3149,7 +3209,7 @@ ${isi}
     const q = await qrUntuk(req, sesi);
     json(res, 200, {
       ok: true, ...detail, qr: q,
-      bisa_simpan: detail.window.terbuka || isKurikulum(user)
+      bisa_simpan: detail.window.terbuka && dbm.can(user, 'absensi_siswa', 'write')
     });
   });
 
@@ -3168,7 +3228,7 @@ ${isi}
     (async () => {
       const detail = sesiDetail(req, sesi, { auth: true });
       const qrData = await qrUntuk(req, sesi);
-      json(res, 200, { ok: true, ...detail, qr: qrData, bisa_simpan: detail.window.terbuka || isKurikulum(user) });
+      json(res, 200, { ok: true, ...detail, qr: qrData, bisa_simpan: detail.window.terbuka && dbm.can(user, 'absensi_siswa', 'write') });
     })().catch(e => fail(res, 500, e.message));
   });
 

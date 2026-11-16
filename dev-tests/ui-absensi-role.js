@@ -3,8 +3,8 @@
    UI — MENU ABSENSI TERSEDIA UNTUK PIMPINAN & GURU BERPENJADWAL (Playwright)
 
    Memastikan di antarmuka:
-   · Wakasek Kesiswaan melihat menu Absensi Guru Mapel / Absensi Siswa per Mapel
-   · Navigasi langsung membuka halaman absensi
+   · Wakasek Kesiswaan melihat menu absensi dan hanya jadwal miliknya
+   · Jadwal guru lain tidak muncul dan tidak dapat dikelola
    · Tanpa error JS & tanpa overflow di 390px
 
    Jalankan: node dev-tests/ui-absensi-role.js
@@ -69,6 +69,7 @@ async function req(p, opt = {}) {
     const users = (await req('/api/users')).body.rows;
     const gA = users.find(u => u.username === 'guA');
     const gB = users.find(u => u.username === 'guB');
+    const wks = users.find(u => u.username === 'wks');
 
     const matrix = JSON.parse(JSON.stringify((await req('/api/users')).body.perms));
     const perm = matrix.kesiswaan || {};
@@ -91,8 +92,13 @@ async function req(p, opt = {}) {
         wa: { aktif: 0, jam: '14:00' }
       }
     });
-    await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 1, mapel_id: mapelA, kelas_ids: [kelas[0].id], abaikan: 1 } });
-    await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 1, mapel_id: mapelB, kelas_ids: [kelas[1].id], abaikan: 1 } });
+    const slotA = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 1, mapel_id: mapelA, kelas_ids: [kelas[0].id], abaikan: 1 } });
+    const slotB = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 1, mapel_id: mapelB, kelas_ids: [kelas[1].id], abaikan: 1 } });
+    await req('/api/mapel/save', { method: 'POST', body: { id: mapelA, nama: 'Mapel A', kode: 'MPA', guru_ids: [wks.id] } });
+    await req('/api/jadwal/slot', {
+      method: 'POST',
+      body: { id: slotA.body.id, hari: HARI, sesi: 1, mapel_id: mapelA, guru_id: wks.id, kelas_ids: [kelas[0].id], abaikan: 1 }
+    });
 
     /* ---------------- Playwright ---------------- */
     const errs = [];
@@ -113,12 +119,16 @@ async function req(p, opt = {}) {
     ok('menu Absensi Siswa per Mapel tampil', /Absensi Siswa per Mapel/i.test(navText), navText);
     await page.goto(BASE + '/#/absensi_guru', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
-    ok('akses langsung Absensi Guru membuka agenda', await page.locator('[data-agenda-jadwal]').count() > 0,
+    ok('agenda Absensi Guru menampilkan hanya slot Wakasek', await page.locator('[data-agenda-slot]').count() === 1,
       await page.locator('h2').first().innerText().catch(() => ''));
+    ok('agenda tidak menampilkan slot guru lain', !(await page.locator('[data-agenda-jadwal]').innerText()).includes('Mapel B'));
+    ok('slot guru lain tidak menyediakan tombol check-in', await page.locator(`[data-agenda-slot="${slotB.body.id}"]`).count() === 0);
     await page.goto(BASE + '/#/absensi_siswa', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1800);
     ok('akses langsung Absensi Siswa membuka halaman', await page.locator('h2[data-tour-id="btn-absensi-siswa"]').count() === 1,
       await page.locator('h2').first().innerText().catch(() => ''));
+    ok('Absensi Siswa hanya menampilkan slot Wakasek', await page.locator('[data-sesi-jadwal]').count() === 1);
+    ok('slot guru lain tidak menyediakan tombol sesi', await page.locator(`[data-sesi-jadwal="${slotB.body.id}"]`).count() === 0);
 
     /* ---------- mobile 390px ---------- */
     await page.close();

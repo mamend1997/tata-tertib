@@ -90,8 +90,7 @@ export default function AbsensiGuru({ ctx }) {
     }));
   }, [jadwal]);
   const rekap = data?.rekap;
-  /* pengawas (admin/kurikulum/kepsek/wakasek kesiswaan) tanpa filter guru =
-     agenda menampilkan jadwal SELURUH guru */
+  /* Admin/kepala sekolah may view the whole agenda; other roles see their own slots. */
   const agendaSemua = !!(agenda?.lihat_semua && !agenda?.target_guru);
   const agendaTampil = useMemo(() => (agenda?.hari || []).map(h => {
     const seen = new Set();
@@ -205,7 +204,7 @@ export default function AbsensiGuru({ ctx }) {
         ? 'Jadwal Mengajar Seluruh Guru — Hari Ini & Hari Berikutnya'
         : 'Jadwal Mengajar Saya — Hari Ini & Hari Berikutnya'}
         subtitle={agendaSemua
-          ? 'Semua sesi seluruh guru ditampilkan (akses pengawas). Tombol check-in hanya dapat ditekan oleh guru pemilik sesi, admin, dan Wakasek Kurikulum.'
+          ? 'Jadwal seluruh guru hanya untuk dilihat. Aksi absensi hanya dapat dilakukan guru pemilik sesi atau admin.'
           : 'Seluruh sesi yang Anda ampu tetap tampil (termasuk hari esok). Tombol aksi hanya aktif pada hari-H saat jam pelajaran berlangsung.'}
         right={<div className="flex items-center gap-2">
           <span className="chip"><CalendarDays size={12} /> {agenda?.jumlah_hari || 7} hari</span>
@@ -230,8 +229,7 @@ export default function AbsensiGuru({ ctx }) {
                   {h.slots.map(sl => {
                     const sisa = sisaDetik(sl.countdown, agenda?.dimuat, tick);
                     const aktif = h.hari_ini && sl.window?.aktif && sl.window?.hari_ok;
-                    /* server menentukan boleh-tidaknya check-in (pemilik sesi / pengawas
-                       yang berhak) — jangan hanya mengandalkan jendela waktu. */
+                    /* Server determines ownership and permission; do not rely on time alone. */
                     const tombolSiap = (sl.bisa_checkin !== undefined ? !!sl.bisa_checkin : (aktif && !sl.status_absensi));
                     const bukanMilik = !sl.milik_saya;
                     return (
@@ -266,7 +264,7 @@ export default function AbsensiGuru({ ctx }) {
                           <button className="btn-sm cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
                             disabled
                             title={!sl.bisa_checkin && !sl.status_absensi && aktif && bukanMilik && !agenda?.target_guru
-                              ? 'Hanya guru pemilik sesi (atau admin/Wakasek Kurikulum) yang dapat check-in.'
+                              ? 'Hanya guru pemilik sesi atau admin yang dapat check-in.'
                               : sl.alasan_singkat}
                             data-agenda-terkunci={sl.jadwal_id}>
                             <Lock size={12} /> {!sl.bisa_checkin && !sl.status_absensi && aktif && bukanMilik && !agenda?.target_guru ? 'Sesi guru lain' : 'Nonaktif'}
@@ -288,7 +286,7 @@ export default function AbsensiGuru({ ctx }) {
 
       <Card title={`Jadwal Mengajar — ${data?.tanggal_label || ''}`}
         subtitle={data?.lihat_semua
-          ? 'Seluruh jadwal guru pada tanggal ini. Check-in hanya dapat dilakukan guru pemilik sesi, admin, dan Wakasek Kurikulum.'
+          ? 'Seluruh jadwal dapat dilihat; aksi absensi hanya tersedia untuk guru pemilik sesi atau admin.'
           : 'Slot di bawah adalah jadwal mengajar Anda pada tanggal ini.'}>
         {!jadwal.length ? (
           <Empty icon={CalendarClock} title="Tidak ada jadwal mengajar" desc={data?.lihat_semua ? 'Belum ada slot jadwal pada tanggal ini.' : 'Belum ada slot jadwal untuk Anda pada tanggal ini. Hubungi Wakasek Kurikulum bila jadwal belum diatur.'} />
@@ -355,7 +353,11 @@ export default function AbsensiGuru({ ctx }) {
                     </button>
                   </div>
                   {a ? (
-                    <button className={cx('btn-sm mt-1.5 justify-center', j.alur && j.alur.selesai ? 'btn-ghost' : 'btn-soft')}
+                    <button className={cx('btn-sm mt-1.5 justify-center',
+                      !j.bisa_jurnal ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400'
+                        : j.alur && j.alur.selesai ? 'btn-ghost' : 'btn-soft')}
+                        disabled={!j.bisa_jurnal}
+                        title={!j.bisa_jurnal ? 'Hanya guru pemilik sesi atau admin yang dapat melengkapi jurnal.' : undefined}
                         onClick={() => setJurnal({ slot: j })} data-jurnal={j.id}>
                       {j.alur && j.alur.selesai ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
                       {j.alur && j.alur.selesai ? 'Laporan lengkap' : 'Lanjutkan: Absensi → Jurnal → Foto'}

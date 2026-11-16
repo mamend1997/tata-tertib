@@ -114,9 +114,12 @@ export default function AbsensiSiswa({ ctx }) {
 
           {!detail ? (
             <Card title={`Sesi Mata Pelajaran — ${data?.tanggal_label || ''}`}
-              subtitle={data?.lihat_semua ? 'Seluruh jadwal hari ini (akses Admin / Wakasek Kurikulum / Kepala Sekolah / Wakasek Kesiswaan).' : 'Jadwal mengajar Anda hari ini.'}>
+              subtitle={data?.lihat_semua
+                ? 'Admin dan Kepala Sekolah dapat melihat seluruh jadwal; tindakan hanya tersedia bagi guru pemilik sesi atau admin.'
+                : 'Jadwal mengajar Anda hari ini.'}>
               {loading ? <Spinner /> : !jadwal.length ? (
-                <Empty icon={CalendarClock} title="Tidak ada jadwal pada tanggal ini" desc="Belum ada slot jadwal untuk tanggal yang dipilih." />
+                <Empty icon={CalendarClock} title="Tidak ada jadwal pada tanggal ini"
+                  desc={data?.lihat_semua ? 'Belum ada slot jadwal pada tanggal yang dipilih.' : 'Belum ada slot jadwal mengajar untuk akun ini pada tanggal yang dipilih.'} />
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {jadwal.map(j => (
@@ -141,20 +144,20 @@ export default function AbsensiSiswa({ ctx }) {
                         {j.sesi_id ? (
                           <button className="btn-primary btn-sm flex-1" onClick={() => bukaSesiAda(j)}
                             disabled={!bolehKelola || !j.bisa || busyId === j.id} data-buka-presensi={j.id}
-                            title={!bolehKelola || !j.bisa ? 'Hanya guru pengampu, wali kelas, atau pengawas yang berhak mengisi presensi sesi ini.' : undefined}>
+                            title={!bolehKelola || !j.bisa ? 'Hanya guru pemilik sesi, wali kelas yang berwenang, atau admin yang berhak mengelola presensi ini.' : undefined}>
                             {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <Users size={13} />} Buka Presensi
                           </button>
                         ) : (
                           <button className="btn-primary btn-sm flex-1" onClick={() => bukaSesi(j)}
                             disabled={!bolehKelola || !j.bisa || busyId === j.id} data-buat-sesi={j.id}
-                            title={!bolehKelola || !j.bisa ? 'Hanya guru pengampu, wali kelas, atau pengawas yang berhak membuka sesi presensi ini.' : undefined}>
+                            title={!bolehKelola || !j.bisa ? 'Hanya guru pemilik sesi, wali kelas yang berwenang, atau admin yang berhak membuka presensi ini.' : undefined}>
                             {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />} Buat Sesi &amp; QR
                           </button>
                         )}
                       </div>
-                      {data?.lihat_semua && !j.bisa ? (
+                      {!j.bisa ? (
                         <p className="mt-1 text-[10.5px] text-slate-500" data-sesi-hanya-lihat={j.id}>
-                          Hanya dapat dilihat — pengampu sesi ini guru mata pelajaran lain.
+                          Hanya dapat dilihat — pengelolaan hanya untuk guru pemilik sesi, wali kelas yang berwenang, atau admin.
                         </p>
                       ) : null}
                       {j.tukar ? (

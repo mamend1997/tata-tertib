@@ -2,13 +2,10 @@
 /* =====================================================================
    CAKUPAN MENU ABSENSI UNTUK PENGAWAS (Wakasek Kesiswaan)
 
-   Bug: role `kesiswaan` (Wakasek Kesiswaan) hanya melihat jadwal miliknya
-   sendiri pada menu Absensi Guru Mapel & Absensi Siswa per Mapel, karena
-   `lihatSemua` hanya mengenali admin / wakasek_kurikulum / kepala_sekolah.
-
-   Perbaikan: helper `isPengawas()` (admin, wakasek_kurikulum, kepala_sekolah,
-   kesiswaan) dipakai ketiga endpoint absensi. Hak MENGELOLA absensi guru
-   (check-in/jurnal atas nama guru lain) tetap hanya admin/Wakasek Kurikulum.
+   Memastikan Wakasek Kurikulum/Kesiswaan hanya melihat jadwal milik guru
+   efektifnya, tidak dapat mengelola sesi guru lain, dan admin tetap memiliki
+   akses lintas guru. Kepala Sekolah dapat melihat seluruh jadwal tanpa
+   mengambil alih absensi guru lain.
 
    Jalankan: node dev-tests/absensi-role.js
    ===================================================================== */
@@ -169,8 +166,8 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     ok('guru tanpa jadwal tidak mendapat menu absensi', r.body.absensi_menu_visible === false,
       JSON.stringify(r.body.absensi_menu_visible));
 
-    /* ---------- 2. WAKASEK KESISWAAN: seluruh jadwal ---------- */
-    console.log('\n== 2. WAKASEK KESISWAAN MELIHAT SELURUH JADWAL ==');
+    /* ---------- 2. WAKASEK KESISWAAN: hanya jadwal sendiri ---------- */
+    console.log('\n== 2. WAKASEK KESISWAAN HANYA MELIHAT JADWAL SENDIRI ==');
     r = await login('wakesis', 'wakesis123');
     ok('login wakasek kesiswaan', r.status === 200, JSON.stringify(r.body));
     r = await req('/api/bootstrap');
@@ -185,39 +182,29 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
       JSON.stringify(r.body.bottom_nav));
 
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
-    ok('absensi guru: lihat_semua = true untuk Wakasek Kesiswaan', r.body.lihat_semua === true, JSON.stringify(r.body.lihat_semua));
+    ok('absensi guru: lihat_semua = false untuk Wakasek Kesiswaan', r.body.lihat_semua === false, JSON.stringify(r.body.lihat_semua));
     const idsGuru = (r.body.jadwal || []).map(x => Number(x.id));
-    ok('absensi guru: SEMUA slot tampil (2 slot, dua guru berbeda)',
-      idsGuru.includes(Number(slotA)) && idsGuru.includes(Number(slotB)), JSON.stringify(idsGuru));
-    ok('absensi guru: daftar guru tersedia untuk filter', (r.body.guru || []).length > 1, String((r.body.guru || []).length));
-    ok('absensi guru: rekap seluruh guru ikut', (r.body.rekap && (r.body.rekap.rows || []).length) > 0,
-      JSON.stringify(r.body.rekap && (r.body.rekap.rows || []).length));
-    const slotMilikOrang = (r.body.jadwal || []).find(x => Number(x.id) === Number(slotB)) || {};
-    ok('absensi guru: slot guru lain tidak bisa di-check-in oleh kesiswaan', slotMilikOrang.bisa_checkin === false,
-      JSON.stringify(slotMilikOrang.bisa_checkin));
+    ok('absensi guru: jadwal guru lain tidak tampil', idsGuru.length === 0, JSON.stringify(idsGuru));
+    ok('absensi guru: filter guru lain tidak tersedia', (r.body.guru || []).length === 0, String((r.body.guru || []).length));
+    ok('absensi guru: rekap tidak membocorkan guru lain', (r.body.rekap?.rows || []).every(x => Number(x.guru_id) === Number(wakesis.id)),
+      JSON.stringify((r.body.rekap?.rows || []).map(x => x.guru_id)));
 
     r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY, status: 'hadir' } });
     ok('server menolak check-in atas nama guru lain (403)', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
 
     r = await req(`/api/absensi-siswa?tanggal=${TODAY}`);
-    ok('absensi siswa: lihat_semua = true', r.body.lihat_semua === true, JSON.stringify(r.body.lihat_semua));
+    ok('absensi siswa: lihat_semua = false', r.body.lihat_semua === false, JSON.stringify(r.body.lihat_semua));
     const idsSiswa = (r.body.jadwal || []).map(x => Number(x.id));
-    ok('absensi siswa: SEMUA sesi mapel tampil',
-      idsSiswa.includes(Number(slotA)) && idsSiswa.includes(Number(slotB)), JSON.stringify(idsSiswa));
-    ok('absensi siswa: sesi dapat dikelola pengawas (bisa = true)',
-      (r.body.jadwal || []).every(x => x.bisa === true), JSON.stringify((r.body.jadwal || []).map(x => x.bisa)));
+    ok('absensi siswa: jadwal guru lain tidak tampil', idsSiswa.length === 0, JSON.stringify(idsSiswa));
 
     r = await req('/api/absensi-guru/jadwal-mengajar?hari=7');
     const semuaSlotAgenda = (r.body.hari || []).flatMap(h => h.slots);
-    ok('agenda: lihat_semua = true', r.body.lihat_semua === true, JSON.stringify(r.body.lihat_semua));
-    ok('agenda: slot kedua guru tampil', semuaSlotAgenda.length >= 2, String(semuaSlotAgenda.length));
-    const agendaOrangLain = semuaSlotAgenda.find(s => Number(s.jadwal_id) === Number(slotB)) || {};
-    ok('agenda: tombol check-in slot guru lain nonaktif', agendaOrangLain.bisa_checkin === false,
-      JSON.stringify(agendaOrangLain.bisa_checkin));
+    ok('agenda: lihat_semua = false', r.body.lihat_semua === false, JSON.stringify(r.body.lihat_semua));
+    ok('agenda: jadwal guru lain tidak tampil', semuaSlotAgenda.length === 0, String(semuaSlotAgenda.length));
 
-    /* sesi presensi untuk mapel guru lain tetap boleh dibuka Wakasek Kesiswaan */
+    /* sesi presensi untuk mapel guru lain tidak dapat dibuka Wakasek Kesiswaan */
     r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY } });
-    ok('Wakasek Kesiswaan dapat membuka sesi presensi mapel guru lain', r.status === 200, `${r.status} ${JSON.stringify(r.body)}`);
+    ok('Wakasek Kesiswaan ditolak membuka sesi guru lain', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
 
     await login('wakkur', 'wakkur123');
     r = await req('/api/bootstrap');
@@ -227,6 +214,13 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     ok('pintasan ponsel Wakasek Kurikulum memuat kedua menu',
       ['absensi_guru', 'absensi_siswa'].every(key => (r.body.bottom_nav || []).some(item => item.key === key)),
       JSON.stringify(r.body.bottom_nav));
+    r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
+    ok('Wakasek Kurikulum tidak melihat jadwal guru lain', r.body.lihat_semua === false
+      && (r.body.jadwal || []).length === 0, JSON.stringify({ semua: r.body.lihat_semua, jadwal: (r.body.jadwal || []).map(x => x.id) }));
+    r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY, status: 'hadir' } });
+    ok('Wakasek Kurikulum ditolak check-in guru lain', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
+    r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY } });
+    ok('Wakasek Kurikulum ditolak membuka sesi guru lain', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
 
     /* ---------- 3. ADMIN / KURIKULUM tetap bisa bertindak atas nama guru ---------- */
     console.log('\n== 3. ADMIN TETAP BISA CHECK-IN ATAS NAMA GURU ==');
@@ -256,8 +250,12 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
       ['absensi_guru', 'absensi_siswa'].every(key => (r.body.bottom_nav || []).some(item => item.key === key)),
       JSON.stringify(r.body.bottom_nav));
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
-    ok('kepala sekolah melihat semua slot', r.body.lihat_semua === true && (r.body.jadwal || []).length >= 2,
+    ok('kepala sekolah dapat melihat semua slot', r.body.lihat_semua === true && (r.body.jadwal || []).length >= 2,
       JSON.stringify({ l: r.body.lihat_semua, n: (r.body.jadwal || []).length }));
+    ok('kepala sekolah tidak dapat check-in untuk guru lain',
+      (r.body.jadwal || []).find(x => Number(x.id) === Number(slotB))?.bisa_checkin === false);
+    r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY, status: 'hadir' } });
+    ok('API menolak check-in Kepala Sekolah untuk guru lain', r.status === 403, `${r.status} ${JSON.stringify(r.body)}`);
 
     /* pemegang jabatan pimpinan yang memiliki jadwal juga mendapat menu */
     await login('admin', 'admin123');
@@ -280,6 +278,22 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
       r = await req('/api/bootstrap');
       ok(`${label}: menu absensi tampil saat memiliki jadwal`, r.body.absensi_menu_visible === true,
         JSON.stringify(r.body.absensi_menu_visible));
+      r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
+      if (akun === 'kepseku') {
+        ok(`${label}: tetap dapat melihat semua jadwal`, r.body.lihat_semua === true
+          && (r.body.jadwal || []).length >= 2, JSON.stringify((r.body.jadwal || []).map(x => x.id)));
+      } else {
+        ok(`${label}: hanya slot milik sendiri yang tampil`, r.body.lihat_semua === false
+          && (r.body.jadwal || []).length === 1 && Number(r.body.jadwal[0].id) === Number(slotA),
+        JSON.stringify((r.body.jadwal || []).map(x => x.id)));
+        r = await req(`/api/absensi-siswa?tanggal=${TODAY}`);
+        ok(`${label}: absensi siswa hanya menampilkan slot milik sendiri`, (r.body.jadwal || []).length === 1
+          && Number(r.body.jadwal[0].id) === Number(slotA), JSON.stringify((r.body.jadwal || []).map(x => x.id)));
+        r = await req('/api/absensi-guru/jadwal-mengajar?hari=7');
+        ok(`${label}: agenda hanya memuat guru efektif akun ini`,
+          (r.body.hari || []).flatMap(h => h.slots).every(s => Number(s.guru_efektif_id) === Number(pengguna.id)),
+          JSON.stringify((r.body.hari || []).flatMap(h => h.slots).map(s => s.guru_efektif_id)));
+      }
     }
   } catch (e) {
     fail++;
