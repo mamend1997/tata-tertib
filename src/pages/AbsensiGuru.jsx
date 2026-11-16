@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CalendarClock, CalendarDays, Camera, CheckCircle2, Circle, Clock, Loader2, Lock, RefreshCw, Repeat,
   Send, ShieldCheck, Stethoscope, Timer, UserCheck, UserRoundX, XCircle
@@ -75,10 +75,34 @@ export default function AbsensiGuru({ ctx }) {
   }, []);
 
   const jadwal = data?.jadwal || [];
+  const jadwalTampil = useMemo(() => {
+    const seen = new Set();
+    return jadwal.filter(j => {
+      const ids = (j.group_ids || [j.id]).map(Number);
+      const key = ids.join(',');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(j => ({
+      ...j,
+      jam: j.group_jam || j.jam,
+      group_ids: (j.group_ids || [j.id]).map(Number)
+    }));
+  }, [jadwal]);
   const rekap = data?.rekap;
   /* pengawas (admin/kurikulum/kepsek/wakasek kesiswaan) tanpa filter guru =
      agenda menampilkan jadwal SELURUH guru */
   const agendaSemua = !!(agenda?.lihat_semua && !agenda?.target_guru);
+  const agendaTampil = useMemo(() => (agenda?.hari || []).map(h => {
+    const seen = new Set();
+    const slots = h.slots.filter(sl => {
+      const key = (sl.group_ids || [sl.jadwal_id]).map(Number).join(',');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(sl => ({ ...sl, jam: sl.group_jam || sl.jam }));
+    return { ...h, slots };
+  }), [agenda]);
   const sudah = jadwal.filter(j => j.absensi).length;
   const belum = jadwal.filter(j => !j.absensi).length;
   const autoAktif = !!(data?.auto_alpha && data.auto_alpha.aktif);
@@ -191,7 +215,7 @@ export default function AbsensiGuru({ ctx }) {
           <Empty icon={CalendarClock} title="Belum ada jadwal" desc="Belum ada slot jadwal mengajar untuk akun Anda pada sepekan ke depan." />
         ) : (
           <div className="space-y-3" data-agenda-jadwal>
-            {agenda.hari.map(h => (
+            {agendaTampil.map(h => (
               <div key={h.tanggal} className={cx('rounded-xl border p-2.5',
                 h.hari_ini ? 'border-orange-300 bg-orange-50/50' : 'border-slate-200 bg-white')}>
                 <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
@@ -235,7 +259,7 @@ export default function AbsensiGuru({ ctx }) {
                         </span>
                         {tombolSiap ? (
                           <button className="btn-sm bg-emerald-600 text-white" disabled={busyId === sl.jadwal_id}
-                            onClick={() => checkin({ id: sl.jadwal_id }, 'hadir')} data-agenda-checkin={sl.jadwal_id}>
+                            onClick={() => checkin({ ...sl, id: sl.jadwal_id }, 'hadir')} data-agenda-checkin={sl.jadwal_id}>
                             {busyId === sl.jadwal_id ? <Loader2 size={12} className="animate-spin" /> : <UserCheck size={12} />} Check-in
                           </button>
                         ) : (
@@ -270,7 +294,7 @@ export default function AbsensiGuru({ ctx }) {
           <Empty icon={CalendarClock} title="Tidak ada jadwal mengajar" desc={data?.lihat_semua ? 'Belum ada slot jadwal pada tanggal ini.' : 'Belum ada slot jadwal untuk Anda pada tanggal ini. Hubungi Wakasek Kurikulum bila jadwal belum diatur.'} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {jadwal.map((j, index) => {
+            {jadwalTampil.map((j, index) => {
               const a = j.absensi;
               const tone = a ? STATUS_TONE[a.status] : 'badge-netral';
               const bisa = !!j.bisa_checkin;
@@ -287,11 +311,12 @@ export default function AbsensiGuru({ ctx }) {
                       </p>
                     </div>
                     <span className={cx('badge shrink-0', tone)} data-status-slot={j.id}>
-                      {a ? STATUS_LABEL[a.status] || a.status : 'Belum Absen'}
+                      {a ? STATUS_LABEL[a.status] || a.status
+                        : j.tukar?.jenis === 'penugasan' ? 'Digantikan' : 'Belum Absen'}
                     </span>
                   </div>
                   <p className="mt-2 flex items-center gap-1.5 text-[11.5px] font-semibold text-slate-600">
-                    <Clock size={12} /> Jam {j.jam_no || '-'} · {j.jam}
+                    <Clock size={12} /> {j.group_label || `Jam ${j.jam_no || '-'}`} · {j.jam}
                   </p>
                   <p className={cx('mt-1 flex items-start gap-1.5 text-[11px]',
                     j.window.aktif ? 'text-emerald-700' : (j.window.terkunci ? 'font-semibold text-amber-700' : 'text-slate-500'))}>
@@ -331,7 +356,7 @@ export default function AbsensiGuru({ ctx }) {
                   </div>
                   {a ? (
                     <button className={cx('btn-sm mt-1.5 justify-center', j.alur && j.alur.selesai ? 'btn-ghost' : 'btn-soft')}
-                      onClick={() => setJurnal({ slot: j })} data-jurnal={j.id}>
+                        onClick={() => setJurnal({ slot: j })} data-jurnal={j.id}>
                       {j.alur && j.alur.selesai ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
                       {j.alur && j.alur.selesai ? 'Laporan lengkap' : 'Lanjutkan: Absensi → Jurnal → Foto'}
                     </button>
@@ -345,7 +370,9 @@ export default function AbsensiGuru({ ctx }) {
                   {j.tukar ? (
                     <p className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-violet-50 px-2 py-1.5 text-[11px] font-semibold text-violet-800" data-tukar-aktif={j.id}>
                       <Repeat size={12} />
-                      {Number(j.tukar.ke_guru) === Number(data?.saya?.id)
+                      {j.tukar.jenis === 'penugasan'
+                        ? <>Slot ditugaskan kepada <b>{j.tukar.ke_nama}</b>. Check-in guru utama dinonaktifkan.</>
+                        : Number(j.tukar.ke_guru) === Number(data?.saya?.id)
                         ? <>Sesi pengganti dari <b>{j.tukar.dari_nama}</b> (tukar jadwal hari ini)</>
                         : <>Ditukar ke <b>{j.tukar.ke_nama}</b> untuk hari ini</>}
                     </p>
@@ -706,7 +733,7 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
     try {
       const r = await api('/api/absensi-guru/jurnal', {
         method: 'POST', body: {
-          jadwal_id: slot.id, tanggal, materi, catatan,
+          jadwal_id: slot.id, group_ids: slot.group_ids || [slot.id], tanggal, materi, catatan,
           foto: foto?.base64 || '', foto_nama: foto?.nama || ''
         }
       });

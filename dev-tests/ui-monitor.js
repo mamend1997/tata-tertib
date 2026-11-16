@@ -217,6 +217,26 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
     ok('bar progres jurnal tampil', (await page.locator('[data-jurnal-bar]').count()) === 1);
     const persenAwal = (await page.textContent('[data-jurnal-persen]')) || '';
     ok('persentase jurnal terisi angka', /\d+%/.test(persenAwal), persenAwal);
+    const urutanMatriks = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll('section.card')];
+      const jurnal = cards.find(el => el.textContent.includes('Kelengkapan Jurnal Mengajar Hari Ini'));
+      const matriks = cards.find(el => el.textContent.includes('Matriks Jadwal Mengajar'));
+      return !!jurnal && !!matriks && (jurnal.compareDocumentPosition(matriks) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    });
+    ok('matriks jadwal hari ini tampil tepat setelah ringkasan jurnal',
+      urutanMatriks && (await page.locator('[data-tbl="monitor-jadwal"]').count()) === 1
+      && await page.locator('[data-monitor-jadwal]').count() >= 3
+      && await page.locator('[data-monitor-grid-mode]').inputValue() === 'semua');
+    ok('status real-time tampil pada sel matriks',
+      (await page.locator('[data-monitor-grid-status]').count()) >= 1);
+    await page.selectOption('[data-monitor-grid-mode]', 'kelas');
+    ok('filter matriks per kelas tersedia', (await page.locator('[data-monitor-grid-kelas]').count()) === 1);
+    await page.selectOption('[data-monitor-grid-mode]', 'guru');
+    ok('filter matriks per guru tersedia', (await page.locator('[data-monitor-grid-guru]').count()) === 1);
+    await page.selectOption('[data-monitor-grid-guru]', String(setup.guruA));
+    ok('filter guru menyisakan jadwal guru terpilih',
+      (await page.locator('[data-monitor-jadwal]').count()) >= 1);
+    await page.selectOption('[data-monitor-grid-mode]', 'semua');
     ok('daftar kelas sedang belajar tampil', (await page.locator('[data-monitor-aktif]').count()) === 1);
     ok('kartu kelas aktif memuat status guru', (await page.locator('[data-monitor-status]').count()) >= 1,
       String(await page.locator('[data-monitor-status]').count()));

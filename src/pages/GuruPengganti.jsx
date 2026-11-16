@@ -51,9 +51,15 @@ export default function GuruPengganti({ ctx }) {
   const slots = useMemo(() => {
     const list = data?.slots || [];
     const kw = cari.trim().toLowerCase();
-    if (!kw) return list;
-    return list.filter(s => (s.mapel_nama + ' ' + s.kelas_nama + ' ' + s.guru_nama + ' ' + (s.guru_efektif_nama || ''))
-      .toLowerCase().includes(kw));
+    const seen = new Set();
+    return list.filter(s => {
+      const ids = (s.group_ids || [s.jadwal_id]).map(Number);
+      const key = ids.join(',');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return !kw || (s.mapel_nama + ' ' + s.kelas_nama + ' ' + s.guru_nama + ' ' + (s.guru_efektif_nama || ''))
+        .toLowerCase().includes(kw);
+    });
   }, [data, cari]);
 
   if (loading && !data) return <Spinner label="Memuat data guru piket…" />;
@@ -137,7 +143,7 @@ export default function GuruPengganti({ ctx }) {
                   return (
                     <tr key={s.jadwal_id} data-slot-pengganti={s.jadwal_id}
                       className={cx(izin && !p && 'bg-rose-50/50')}>
-                      <td className="c font-bold">{s.sesi}</td>
+                      <td className="c font-bold">{s.label_sesi}</td>
                       <td className="whitespace-nowrap text-[11.5px]">{s.jam}</td>
                       <td className="font-semibold text-slate-700">{s.mapel_nama}</td>
                       <td className="text-[11.5px]">{s.kelas_nama}</td>
@@ -168,7 +174,8 @@ export default function GuruPengganti({ ctx }) {
                             <UserPlus size={13} /> {p ? 'Ganti' : 'Tunjuk'}
                           </button>
                           {p && p.jenis === 'penugasan' ? (
-                            <button className="btn-sm border border-rose-200 bg-rose-50 text-rose-700" disabled={!bolehUbah || busy === p.id}
+                            <button className="btn-sm border border-rose-200 bg-rose-50 text-rose-700"
+                              disabled={!bolehUbah || busy === p.id || (s.absensi && Number(s.absensi.oleh) === Number(p.ke_guru))}
                               onClick={() => batal(p)} data-batal={p.id}>
                               {busy === p.id ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={13} />} Batal
                             </button>
@@ -189,6 +196,35 @@ export default function GuruPengganti({ ctx }) {
         ) : null}
       </Card>
 
+      <Card title="Riwayat Guru Piket / Pengganti"
+        subtitle="Penugasan pada tanggal terpilih, termasuk yang sudah selesai atau dibatalkan.">
+        {!(data?.riwayat || []).length ? (
+          <Empty icon={Repeat} title="Belum ada riwayat penugasan"
+            desc="Penunjukan guru piket/pengganti akan tercatat di sini setelah disimpan." />
+        ) : (
+          <div className="tbl-wrap max-h-[42vh]">
+            <table className="tbl" data-tbl="riwayat-guru-pengganti">
+              <thead><tr><th>Jam</th><th>Kelas</th><th>Mapel</th><th>Guru Utama</th><th>Pengganti</th><th>Status</th><th>Catatan</th></tr></thead>
+              <tbody>
+                {data.riwayat.map(r => (
+                  <tr key={r.id} data-riwayat-pengganti={r.id}>
+                    <td>{r.sesi ? `Jam ${r.sesi}` : '-'} · {r.tanggal}</td>
+                    <td>{r.kelas_nama || '-'}</td>
+                    <td>{r.mapel_nama || '-'}</td>
+                    <td>{r.dari_nama || '-'}</td>
+                    <td>{r.ke_nama || '-'}</td>
+                    <td><span className={cx('badge', r.status === 'diterima' ? 'badge-aman' : 'badge-netral')}>
+                      {r.status === 'diterima' ? 'Aktif' : r.status === 'batal' ? 'Dibatalkan' : r.status}
+                    </span>{r.jumlah_slot > 1 ? ` · ${r.jumlah_slot} jam` : ''}</td>
+                    <td className="text-[11px]">{r.alasan || r.catatan_putus || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       <ModalTunjuk open={!!pilihSlot} slot={pilihSlot} tanggal={tanggal}
         onClose={() => setPilihSlot(null)} onSaved={() => { setPilihSlot(null); load(); }} />
     </div>
@@ -201,13 +237,14 @@ function ModalTunjuk({ open, slot, tanggal, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [guruId, setGuruId] = useState('');
+  const [status, setStatus] = useState('sakit');
   const [alasan, setAlasan] = useState('');
   const [busy, setBusy] = useState(false);
   const [cari, setCari] = useState('');
 
   useEffect(() => {
     if (!open || !slot) return;
-    setLoading(true); setData(null); setGuruId(''); setAlasan(''); setCari('');
+    setLoading(true); setData(null); setGuruId(''); setStatus('sakit'); setAlasan(''); setCari('');
     api(`/api/guru-pengganti/kandidat?jadwal_id=${slot.jadwal_id}&tanggal=${tanggal}`)
       .then(r => setData(r)).catch(e => toast.err(e.message)).finally(() => setLoading(false));
   }, [open, slot?.jadwal_id, tanggal]);
@@ -221,10 +258,13 @@ function ModalTunjuk({ open, slot, tanggal, onClose, onSaved }) {
 
   async function kirim() {
     if (!guruId) return toast.err('Pilih guru pengganti terlebih dahulu.');
+    if (alasan.trim().length < 5) return toast.err('Catatan sakit/izin wajib diisi minimal 5 karakter.');
     setBusy(true);
     try {
       const r = await api('/api/guru-pengganti/tunjuk', {
-        method: 'POST', body: { jadwal_id: slot.jadwal_id, tanggal, ke_guru: Number(guruId), alasan }
+        method: 'POST', body: {
+          jadwal_id: slot.jadwal_id, tanggal, ke_guru: Number(guruId), status, catatan: alasan, alasan
+        }
       });
       toast.ok(r.pesan || 'Guru pengganti ditunjuk.');
       onSaved?.();
@@ -237,7 +277,7 @@ function ModalTunjuk({ open, slot, tanggal, onClose, onSaved }) {
       subtitle={data?.slot ? `${data.slot.mapel_nama} · ${data.slot.kelas_nama} · ${data.slot.label_sesi} (${data.slot.jam})` : ''}
       footer={<>
         <button className="btn-ghost" onClick={onClose}>Batal</button>
-        <button className="btn-primary" disabled={busy || loading || !guruId} onClick={kirim} data-simpan-pengganti>
+        <button className="btn-primary" disabled={busy || loading || !guruId || alasan.trim().length < 5} onClick={kirim} data-simpan-pengganti>
           {busy ? <Loader2 size={15} className="animate-spin" /> : <UserPlus size={15} />} Tunjuk sebagai Pengganti
         </button>
       </>}>
@@ -283,9 +323,25 @@ function ModalTunjuk({ open, slot, tanggal, onClose, onSaved }) {
             ))}
           </div>
 
-          <Field label="Alasan / Catatan (opsional)">
+          <Field label="Guru utama tidak dapat mengajar karena" required>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ['sakit', 'Sakit'],
+                ['izin', 'Izin']
+              ].map(([value, label]) => (
+                <button key={value} type="button" onClick={() => setStatus(value)}
+                  className={cx('btn-sm justify-center', status === value
+                    ? 'border border-orange-300 bg-orange-50 text-orange-800'
+                    : 'btn-ghost')}
+                  aria-pressed={status === value} data-status-pengganti={value}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Catatan sakit / izin" required hint="Minimal 5 karakter; dicatat sebagai alasan ketidakhadiran guru utama.">
             <textarea className="input" rows={2} value={alasan} onChange={e => setAlasan(e.target.value)}
-              placeholder="mis. menggantikan guru yang sakit sampai jam pelajaran berakhir" data-alasan-pengganti />
+              placeholder="Tuliskan keterangan sakit atau izin…" data-alasan-pengganti />
           </Field>
 
           <p className="flex items-start gap-1.5 rounded-xl bg-violet-50 px-3 py-2 text-[11.5px] text-violet-900">

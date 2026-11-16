@@ -276,11 +276,13 @@ function startWa() {
     r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY, status: 'hadir' } });
     ok('guru pengganti dapat check-in (tidak terblokir rekam izin)', r.status === 200, r.body?.error);
 
-    /* guru asli tidak lagi memiliki sesi tsb */
+    /* guru asli tetap melihat slot sebagai read-only; sesi terkunci setelah diambil alih */
     await login('gurua', 'guru123');
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
-    ok('guru asli tidak lagi melihat sesi yang digantikan', !(r.body.jadwal || []).some(j => Number(j.id) === Number(slotNanti)),
-      JSON.stringify((r.body.jadwal || []).map(j => j.id)));
+    const slotAsli = (r.body.jadwal || []).find(j => Number(j.id) === Number(slotNanti));
+    ok('slot guru utama tetap tampil nonaktif setelah check-in pengganti',
+      !!slotAsli && slotAsli.bisa_checkin === false && Number(slotAsli.guru_efektif_id) === Number(gB),
+      JSON.stringify(slotAsli && { bisa: slotAsli.bisa_checkin, efektif: slotAsli.guru_efektif_id }));
 
     /* rekap tetap menghitung izin guru asli */
     await login('admin', 'admin123');
@@ -289,15 +291,16 @@ function startWa() {
     ok('rekap memuat baris izin guru asli + baris guru pengganti', rekapIzin.length >= 2,
       JSON.stringify(rekapIzin.map(x => ({ g: x.guru_nama, s: x.status }))));
 
-    /* batal penunjukan → kembali ke guru asli */
+    /* pengambilalihan tidak dapat dibatalkan setelah pengganti mulai mengisi */
     r = await req('/api/guru-pengganti/batal', { method: 'POST', body: { id: idTunjuk } });
-    ok('penunjukan dapat dibatalkan', r.status === 200, r.body?.error);
-    await login('gurua', 'guru123');
-    r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
-    ok('setelah dibatalkan sesi kembali ke guru asli', (r.body.jadwal || []).some(j => Number(j.id) === Number(slotNanti)),
-      JSON.stringify((r.body.jadwal || []).map(j => j.id)));
+    ok('penunjukan terkunci setelah pengganti mulai mengisi', r.status === 409, r.body?.error);
+    await login('admin', 'admin123');
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}`);
+    ok('penugasan tetap aktif setelah pengganti mulai mengisi',
+      (r.body.slots || []).some(s => Number(s.jadwal_id) === Number(slotNanti) && Number(s.guru_efektif_id) === Number(gB)));
 
     /* RBAC */
+    await login('gurua', 'guru123');
     r = await req('/api/guru-pengganti/tunjuk', { method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY, ke_guru: gB } });
     ok('guru biasa tidak boleh menunjuk pengganti (403)', r.status === 403, r.body?.error);
 

@@ -1171,7 +1171,7 @@ const DEFAULT_PERMS = {
   guru_bk: {
     view: ['dashboard', 'kejadian', 'kalender', 'deteksi', 'jurnal', 'tindak_lanjut', 'siswa', 'kategori', 'laporan', 'analitik', 'dashboard', 'kalender',
       'jadwal', 'kalender_akademik', 'absensi_guru', 'absensi_siswa', 'rekap_absensi_guru', 'rekap_absensi_siswa', 'rekap_bulanan',
-      'bk_layanan', 'asesmen', 'asesmen_soal', 'aduan'],
+      'guru_pengganti', 'bk_layanan', 'asesmen', 'asesmen_soal', 'aduan'],
     write: ['kejadian', 'jurnal', 'tindak_lanjut', 'siswa', 'kategori', 'laporan', 'analitik', 'deteksi', 'dashboard', 'kalender', 'absensi_siswa',
       'bk_layanan', 'asesmen', 'asesmen_soal', 'aduan'],
     delete: ['kejadian', 'tindak_lanjut', 'bk_layanan']
@@ -1185,18 +1185,18 @@ const DEFAULT_PERMS = {
   },
   wali_kelas: {
     view: ['dashboard', 'kejadian', 'kalender', 'deteksi', 'jurnal', 'tindak_lanjut', 'analitik', 'siswa', 'kelas', 'kategori', 'laporan', 'jadwal', 'kalender_akademik', 'absensi_guru', 'absensi_siswa',
-      'rekap_absensi_guru', 'rekap_absensi_siswa', 'rekap_bulanan', 'bk_layanan', 'asesmen', 'aduan'],
-    write: ['kejadian', 'jurnal', 'aduan']
+      'rekap_absensi_guru', 'rekap_absensi_siswa', 'rekap_bulanan', 'guru_pengganti', 'bk_layanan', 'asesmen', 'aduan'],
+    write: ['kejadian', 'jurnal', 'absensi_siswa', 'aduan']
   },
   guru: {
     view: ['dashboard', 'kejadian', 'kalender', 'deteksi', 'jurnal', 'siswa', 'laporan', 'jadwal', 'kalender_akademik', 'absensi_guru', 'absensi_siswa',
-      'rekap_absensi_guru', 'rekap_absensi_siswa', 'bk_layanan', 'aduan'],
+      'rekap_absensi_guru', 'rekap_absensi_siswa', 'guru_pengganti', 'bk_layanan', 'aduan'],
     write: ['jurnal', 'absensi_guru', 'absensi_siswa', 'aduan']
   },
   guru_umum: {
-    view: ['dashboard', 'kejadian', 'kalender', 'deteksi', 'jurnal', 'analitik', 'siswa', 'kelas', 'laporan', 'jadwal', 'absensi_guru',
-      'rekap_absensi_guru', 'bk_layanan', 'aduan'],
-    write: ['kejadian', 'jurnal', 'absensi_guru', 'aduan']
+    view: ['dashboard', 'kejadian', 'kalender', 'deteksi', 'jurnal', 'analitik', 'siswa', 'kelas', 'laporan', 'jadwal', 'absensi_guru', 'absensi_siswa',
+      'rekap_absensi_guru', 'guru_pengganti', 'bk_layanan', 'aduan'],
+    write: ['kejadian', 'jurnal', 'absensi_guru', 'absensi_siswa', 'aduan']
   },
   tu: {
     view: ['dashboard', 'kejadian', 'kalender', 'deteksi', 'jurnal', 'analitik', 'siswa', 'kelas', 'laporan', 'jadwal', 'absensi_guru', 'absensi_siswa',
@@ -4281,6 +4281,63 @@ function absensiWindow(jadwalRow, tanggal, cfg) {
     sekarang: menitJam(now)
   };
 }
+/** Slot berurutan untuk mapel, guru, dan himpunan kelas yang sama. */
+function absensiKelompok(jadwalRow, rows, cfg) {
+  const c = cfg || jadwalConfig();
+  const sesi = sesiOfHari(c, jadwalRow.hari).filter(s => !s.istirahat);
+  const kelasKey = r => (Array.isArray(r.kelas_ids) ? r.kelas_ids.map(Number) : jadwalKelasIds(r))
+    .sort((a, b) => a - b).join(',');
+  const cocok = r => Number(r.hari) === Number(jadwalRow.hari)
+    && Number(r.mapel_id) === Number(jadwalRow.mapel_id)
+    && Number(r.guru_id) === Number(jadwalRow.guru_id)
+    && kelasKey(r) === kelasKey(jadwalRow);
+  const sesiByNo = new Map(sesi.map(s => [Number(s.no), s]));
+  const jadwalByNo = new Map();
+  for (const r of rows.filter(cocok)) {
+    const s = sesi.find(x => Number(x.idx) === Number(r.sesi));
+    if (s && !jadwalByNo.has(Number(s.no))) jadwalByNo.set(Number(s.no), r);
+  }
+  const utama = sesi.find(s => Number(s.idx) === Number(jadwalRow.sesi));
+  if (!utama || !Number(utama.no)) return [jadwalRow];
+  const bisaMenyambung = (noA, noB) => {
+    const sebelumnya = sesi.find(s => Number(s.no) === noA);
+    const berikutnya = sesi.find(s => Number(s.no) === noB);
+    return !!sebelumnya && !!berikutnya
+      && jamMenit(berikutnya.mulai) - jamMenit(sebelumnya.selesai) <= 30;
+  };
+  let awal = Number(utama.no), akhir = awal;
+  while (jadwalByNo.has(awal - 1) && sesiByNo.has(awal - 1) && bisaMenyambung(awal - 1, awal)) awal--;
+  while (jadwalByNo.has(akhir + 1) && sesiByNo.has(akhir + 1) && bisaMenyambung(akhir, akhir + 1)) akhir++;
+  return Array.from({ length: akhir - awal + 1 }, (_, i) => jadwalByNo.get(awal + i))
+    .filter(Boolean).sort((a, b) => Number(a.sesi) - Number(b.sesi));
+}
+/** Jendela absensi bersama untuk rentang sesi berurutan. */
+function absensiWindowKelompok(items, tanggal, cfg) {
+  if (!Array.isArray(items) || !items.length) {
+    return { aktif: false, alasan: 'Slot jadwal tidak ditemukan.', sesi: null };
+  }
+  const c = cfg || jadwalConfig();
+  const sorted = [...items].sort((a, b) => Number(a.sesi) - Number(b.sesi));
+  const pertama = absensiWindow(sorted[0], tanggal, c);
+  const sesiSemua = sesiOfHari(c, sorted[0].hari);
+  const sesiAkhir = sesiSemua.find(s => Number(s.idx) === Number(sorted[sorted.length - 1].sesi));
+  if (!pertama.sesi || !sesiAkhir) return pertama;
+  const buka = jamMenit(pertama.sesi.mulai) - c.bukaMenit;
+  const tutup = jamMenit(sesiAkhir.selesai) + (c.toleransiTutup || 0);
+  const now = nowMenit();
+  let alasan = '';
+  if (pertama.nonaktif) alasan = pertama.alasan;
+  else if (!pertama.hariIni) alasan = 'Absensi hanya dapat dilakukan pada hari pelajaran tersebut berlangsung.';
+  else if (!pertama.hariOk) alasan = `Jadwal ini bukan untuk hari ${HARI_LABEL[hariOf(tanggal)]}.`;
+  else if (now < buka) alasan = `Absensi dibuka mulai ${menitJam(buka)} (${c.bukaMenit} menit sebelum ${pertama.sesi.mulai}).`;
+  else if (now > tutup) alasan = `Sesi absensi sudah DITUTUP — jam pelajaran ${pertama.sesi.mulai}–${sesiAkhir.selesai} telah berakhir.`;
+  return {
+    ...pertama, aktif: !alasan, alasan,
+    buka: menitJam(buka), tutup: menitJam(tutup), selesai: sesiAkhir.selesai,
+    terkunci: !pertama.hariIni || !pertama.hariOk || now > tutup || !!pertama.nonaktif,
+    sesi_akhir: sesiAkhir
+  };
+}
 /* ---------- pencatat presensi (audit trail halaman publik) ---------- */
 /** pencatat terakhir sebuah sesi presensi (nama & kelas) */
 function pencatatOf(sesiId) {
@@ -4380,48 +4437,65 @@ function autoAlfaGuru(tanggal) {
     const t = tukar.get(Number(r.id));
     return t ? Number(t.ke_guru) : Number(r.guru_id);
   };
-  const ada = new Set(db.prepare('SELECT jadwal_id FROM absensi_guru WHERE tanggal=?').all(tgl).map(r => Number(r.jadwal_id)));
+  const kelompok = new Map();
+  for (const r of slots) {
+    const items = absensiKelompok(r, slots, cfg);
+    kelompok.set(items.map(x => Number(x.id)).sort((a, b) => a - b).join(','), items);
+  }
   const kini = nowMenit();
   let dibuat = 0, diturunkan = 0;
   db.transaction(() => {
-    for (const r of slots) {
-      const w = absensiWindow(r, tgl, cfg);
+    for (const items of kelompok.values()) {
+      const w = absensiWindowKelompok(items, tgl, cfg);
       if (!w.sesi || w.sesi.istirahat || !w.hariOk) continue;
       const tutup = jamMenit(w.tutup);
       if (tutup === null || kini <= tutup) continue;   // jendela masih berjalan / belum mulai
-      if (!ada.has(Number(r.id))) {
-        const validasi = JSON.stringify({ auto: true, alasan: 'Tidak ada check-in sampai jam pelajaran berakhir', jendela: w.tutup });
-        const r2 = db.prepare(`INSERT OR IGNORE INTO absensi_guru(jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,foto_url,foto_id,waktu_submit,ip,validasi,created_at,updated_at)
-          VALUES(?,?,?,?,'alpha','','Otomatis ALFA — guru tidak melakukan check-in hingga jam pelajaran berakhir',NULL,NULL,?,?,?,?,?)`)
-          .run(Number(r.id), tgl, guruEfektif(r), Number(r.ta_id) || taId || 0, now(), 'sistem', validasi, now(), now());
-        if (r2.changes) dibuat++;
+      const ids = items.map(x => Number(x.id));
+      const ada = db.prepare(`SELECT jadwal_id FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
+        .all(tgl, ...ids);
+      if (!ada.length) {
+        const validasi = JSON.stringify({
+          auto: true, group_ids: ids,
+          alasan: 'Tidak ada check-in sampai jam pelajaran berakhir', jendela: w.tutup
+        });
+        for (const r of items) {
+          const r2 = db.prepare(`INSERT OR IGNORE INTO absensi_guru(jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,foto_url,foto_id,waktu_submit,ip,validasi,created_at,updated_at)
+            VALUES(?,?,?,?,'alpha','','Otomatis ALFA — guru tidak melakukan check-in hingga jam pelajaran berakhir',NULL,NULL,?,?,?,?,?)`)
+            .run(Number(r.id), tgl, guruEfektif(r), Number(r.ta_id) || taId || 0, now(), 'sistem', validasi, now(), now());
+          if (r2.changes) dibuat++;
+        }
       }
     }
     /* SANKSI ALFA: check-in HADIR tetapi absensi siswa / jurnal belum selesai hingga
        jam pelajaran berakhir → status diturunkan menjadi alpha (terkunci). */
-    for (const r of slots) {
-      const row = db.prepare('SELECT * FROM absensi_guru WHERE jadwal_id=? AND tanggal=?').get(Number(r.id), tgl);
-      if (!row || row.status !== 'hadir') continue;
-      if (String(row.validasi || '').includes('"auto":true')) continue;
-      const alur = absensiAlur(r.id, tgl);
-      if (alur.selesai) continue;
-      const w = absensiWindow(r, tgl, cfg);
+    for (const items of kelompok.values()) {
+      const ids = items.map(x => Number(x.id));
+      const rows = db.prepare(`SELECT * FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
+        .all(tgl, ...ids);
+      if (!rows.some(row => row.status === 'hadir') || rows.every(row => String(row.validasi || '').includes('"auto":true'))) continue;
+      const alurList = items.map(r => absensiAlur(r.id, tgl));
+      if (alurList.every(alur => alur.selesai)) continue;
+      const w = absensiWindowKelompok(items, tgl, cfg);
       const tutup = w.tutup ? jamMenit(w.tutup) : null;
       if (tutup === null || kini <= tutup) continue;
       const kurang = [];
-      if (alur.perlu_absensi_siswa && !alur.absensi_siswa.lengkap) {
-        kurang.push(`absensi siswa ${alur.absensi_siswa.terisi}/${alur.absensi_siswa.total}`);
+      const siswaKurang = alurList.filter(alur => alur.perlu_absensi_siswa && !alur.absensi_siswa.lengkap);
+      if (siswaKurang.length) {
+        kurang.push(`absensi siswa pada ${siswaKurang.length} jam belum lengkap`);
       }
-      if (!alur.jurnal.lengkap) kurang.push('jurnal mengajar');
-      if (alur.foto.wajib && !alur.foto.ada) kurang.push('foto bukti');
+      if (alurList.some(alur => !alur.jurnal.lengkap)) kurang.push('jurnal mengajar');
+      if (alurList.some(alur => alur.foto.wajib && !alur.foto.ada)) kurang.push('foto bukti');
       const validasi = JSON.stringify({
-        auto: true, alasan: 'Alur absensi tidak diselesaikan sampai jam pelajaran berakhir',
-        kurang, jendela: w.tutup, checkin: row.waktu_submit || ''
+        auto: true, group_ids: ids,
+        alasan: 'Alur absensi tidak diselesaikan sampai jam pelajaran berakhir',
+        kurang, jendela: w.tutup, checkin: (rows.find(row => row.status === 'hadir') || {}).waktu_submit || ''
       });
-      db.prepare(`UPDATE absensi_guru SET status='alpha', catatan=?, validasi=?, updated_at=? WHERE id=?`)
-        .run(`Otomatis ALFA — belum menyelesaikan ${kurang.join(', ')} hingga jam pelajaran berakhir`,
-          validasi, now(), row.id);
-      diturunkan++;
+      for (const row of rows.filter(x => x.status === 'hadir')) {
+        db.prepare(`UPDATE absensi_guru SET status='alpha', catatan=?, validasi=?, updated_at=? WHERE id=?`)
+          .run(`Otomatis ALFA — belum menyelesaikan ${kurang.join(', ')} hingga jam pelajaran berakhir`,
+            validasi, now(), row.id);
+        diturunkan++;
+      }
     }
   })();
   return { dibuat, diturunkan, tgl };
@@ -4598,7 +4672,8 @@ module.exports = {
   userRoleList, roleLabelOf, permsFor, seedPermissions,
   HARI_LABEL, DEFAULT_HARI, DEFAULT_SESI, ABSENSI_SISWA_STATUS, ABSENSI_GURU_STATUS,
   jamMenit, menitJam, nowMenit, hariOf, tanggalPanjang, jadwalConfig, jadwalDesain, jadwalTampil, normSesi, sesiBernomor, sesiHariMap, sesiOfHari, mapelList,
-  jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiGuruOf, absensiGuruRekap, autoAlfaGuru, absensiAlur,
+  jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiKelompok, absensiWindowKelompok,
+  absensiGuruOf, absensiGuruRekap, autoAlfaGuru, absensiAlur,
   targetJamConfig, kelasTargetJam, bebanKelas, targetKelasRows,
   guruTargetMap, guruTargetRows, guruTargetSave, hariEfektifBulan,
   /* ---- AI TIMETABLE GENERATOR ---- */

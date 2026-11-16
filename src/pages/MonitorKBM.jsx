@@ -25,6 +25,9 @@ export default function MonitorKBM({ ctx }) {
   const [loading, setLoading] = useState(true);
   const [auto, setAuto] = useState(true);
   const [detik, setDetik] = useState(0);
+  const [gridMode, setGridMode] = useState('semua');
+  const [gridKelas, setGridKelas] = useState('');
+  const [gridGuru, setGridGuru] = useState('');
   const ta = filters?.ta || '';
 
   const load = useCallback((silent = false) => {
@@ -48,10 +51,31 @@ export default function MonitorKBM({ ctx }) {
     const t = setInterval(() => setDetik(s => s + 1), 1000);
     return () => clearInterval(t);
   }, [auto]);
+  useEffect(() => {
+    const kelas = d?.kelas || [];
+    if (kelas.length && !kelas.some(k => String(k.id) === gridKelas)) setGridKelas(String(kelas[0].id));
+  }, [d?.kelas, gridKelas]);
 
   const stats = d?.stats || {};
   const perKelas = d?.per_kelas || [];
   const berlangsung = d?.sedang_belajar || [];
+  const jadwalMonitor = d?.monitor_jadwal || [];
+  const kelasMonitor = d?.kelas || [];
+  const guruMonitor = d?.guru || [];
+  const kolomKelas = useMemo(() => {
+    if (gridMode === 'kelas' && gridKelas) return kelasMonitor.filter(k => String(k.id) === gridKelas);
+    if (gridMode === 'guru' && gridGuru) {
+      const ids = new Set(jadwalMonitor.filter(x => Number(x.guru_efektif_id) === Number(gridGuru))
+        .flatMap(x => (x.kelas_ids || []).map(Number)));
+      return kelasMonitor.filter(k => ids.has(Number(k.id)));
+    }
+    return kelasMonitor;
+  }, [gridMode, gridKelas, gridGuru, kelasMonitor, jadwalMonitor]);
+  const barisGrid = useMemo(() => jadwalMonitor
+    .filter(x => gridMode !== 'kelas' || !gridKelas || (x.kelas_ids || []).some(id => Number(id) === Number(gridKelas)))
+    .filter(x => gridMode !== 'guru' || !gridGuru || Number(x.guru_efektif_id) === Number(gridGuru))
+    .sort((a, b) => String(a.mulai).localeCompare(String(b.mulai)) || Number(a.jadwal_id) - Number(b.jadwal_id)),
+  [jadwalMonitor, gridMode, gridKelas, gridGuru]);
 
   const kelasDenganStatus = useMemo(() => new Map(perKelas.map(k => [Number(k.kelas_id), k])), [perKelas]);
 
@@ -148,6 +172,80 @@ export default function MonitorKBM({ ctx }) {
           <span className="chip"><UserCheck size={11} /> {stats.hadir || 0} guru check-in</span>
           <span className="chip">Tanggal: {tgl(d?.tanggal, { long: true })}</span>
         </div>
+      </Card>
+
+      <Card title={`Matriks Jadwal Mengajar — ${d?.hari_label || ''}`}
+        subtitle={`Status absensi diperbarui otomatis setiap ${REFRESH_MS / 1000} detik. Tanggal: ${tgl(d?.tanggal, { long: true })}`}
+        right={<div className="flex flex-wrap gap-1.5">
+          <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridMode}
+            onChange={e => setGridMode(e.target.value)} data-monitor-grid-mode>
+            <option value="semua">Semua kelas</option>
+            <option value="kelas">Pilih kelas</option>
+            <option value="guru">Per guru</option>
+          </select>
+          {gridMode === 'kelas' ? (
+            <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridKelas}
+              onChange={e => setGridKelas(e.target.value)} data-monitor-grid-kelas>
+              {kelasMonitor.map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
+            </select>
+          ) : null}
+          {gridMode === 'guru' ? (
+            <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridGuru}
+              onChange={e => setGridGuru(e.target.value)} data-monitor-grid-guru>
+              <option value="">Semua guru</option>
+              {guruMonitor.map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
+            </select>
+          ) : null}
+        </div>}>
+        {!barisGrid.length || !kolomKelas.length ? (
+          <Empty icon={CalendarClock} title="Tidak ada jadwal untuk filter ini"
+            desc="Pilih kelas atau guru lain, atau ubah tanggal monitoring." />
+        ) : (
+          <div className="tbl-wrap max-h-[58vh]">
+            <table className="tbl min-w-[760px] text-center align-middle" data-tbl="monitor-jadwal">
+              <thead>
+                <tr><th className="sticky left-0 z-10 bg-slate-50">Jam / Mapel</th>
+                  {kolomKelas.map(k => <th key={k.id} className="min-w-[180px] text-center">{k.nama}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {barisGrid.map(x => (
+                  <tr key={x.jadwal_id} data-monitor-jadwal={x.jadwal_id}>
+                    <td className="sticky left-0 z-[1] whitespace-nowrap bg-white text-center">
+                      <b>{x.label_sesi}</b><span className="block text-[10.5px] text-slate-500">{x.jam}</span>
+                    </td>
+                    {kolomKelas.map(k => {
+                      if (!(x.kelas_ids || []).some(id => Number(id) === Number(k.id))) {
+                        return <td key={k.id} className="text-center text-slate-300">—</td>;
+                      }
+                      const statusTone = ['hadir', 'sedang berlangsung'].includes(String(x.status_label).toLowerCase())
+                        ? 'badge-aman'
+                        : ['sakit'].includes(String(x.status_label).toLowerCase()) ? 'badge-perhatian'
+                          : ['izin', 'akan datang'].includes(String(x.status_label).toLowerCase()) ? 'badge-pantau'
+                            : ['alpha', 'belum check-in'].includes(String(x.status_label).toLowerCase()) ? 'badge-siaga'
+                              : 'badge-netral';
+                      return (
+                        <td key={k.id} className="text-center align-middle">
+                          <div className="mx-auto max-w-[220px] rounded-lg border border-slate-200 bg-white p-2 text-center">
+                            <p className="text-[11.5px] font-extrabold text-slate-800">{x.mapel_kode ? `${x.mapel_kode} · ` : ''}{x.mapel_nama}</p>
+                            <p className="mt-0.5 truncate text-[10.5px] text-slate-500">{x.guru_efektif_nama || x.guru_nama || '-'}</p>
+                            <span className={cx('badge mt-1', statusTone)} data-monitor-grid-status={x.jadwal_id}>
+                              {x.status_label}
+                            </span>
+                            {x.status_detail ? <span className="ml-1 text-[10px] capitalize text-slate-500">{x.status_detail}</span> : null}
+                            {x.pengganti ? <p className="mt-1 text-[10px] font-semibold text-violet-700">
+                              {x.pengganti.jenis === 'penugasan' ? 'Guru piket/pengganti' : 'Tukar jadwal'}
+                            </p> : null}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* kelas yang sedang belajar */}

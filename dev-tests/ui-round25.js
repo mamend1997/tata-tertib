@@ -120,13 +120,13 @@ const ok = (name, cond, extra) => {
     await page.waitForTimeout(600);
     ok('daftar jadwal mengajar tampil', await page.locator('[data-agenda-jadwal]').count() === 1);
     const agendaSlot = await page.locator('[data-agenda-slot]').count();
-    ok('seluruh sesi guru muncul (hari ini + hari berikutnya)', agendaSlot >= 3, String(agendaSlot));
-    ok('sesi hari ini yang berlangsung punya tombol Check-in',
-      await page.locator(`[data-agenda-checkin="${setup.slotKini}"]`).count() === 1);
-    ok('sesi yang sudah berakhir berstatus NONAKTIF',
-      await page.locator(`[data-agenda-terkunci="${setup.slotLalu}"]`).count() === 1);
-    const teksLalu = await page.locator('[data-agenda-slot]').first().innerText();
-    ok('keterangan terkunci tampil pada daftar', /berakhir|ditutup|Nonaktif|hari/i.test(teksLalu), teksLalu.replace(/\n/g, ' | '));
+    ok('rentang sesi berurutan tampil sebagai satu kartu, ditambah jadwal besok', agendaSlot === 2, String(agendaSlot));
+    ok('check-in rentang tersedia satu kali pada kartu gabungan',
+      await page.locator(`[data-agenda-checkin="${setup.slotLalu}"]`).count() === 1 &&
+      await page.locator(`[data-agenda-checkin="${setup.slotKini}"]`).count() === 0);
+    ok('dua slot berurutan tidak dirender sebagai check-in terpisah',
+      await page.locator(`[data-agenda-slot="${setup.slotLalu}"]`).count() === 1 &&
+      await page.locator(`[data-agenda-slot="${setup.slotKini}"]`).count() === 0);
     const teksBesok = await page.locator(`[data-agenda-slot="${setup.slotBesok}"]`).innerText().catch(() => '');
     if (teksBesok) {
       ok('jadwal hari esok tampil & terkunci', /Nonaktif|Hari-H/i.test(teksBesok), teksBesok.replace(/\n/g, ' | '));
@@ -146,6 +146,12 @@ const ok = (name, cond, extra) => {
       return { status: r.status, body: await r.json().catch(() => ({})) };
     }, { jadwal: setup.slotKini, tgl: TODAY });
     ok('check-in sesi berlangsung tersimpan (data uji hapus)', chk.status === 200, JSON.stringify(chk.body).slice(0, 120));
+    const rentangTersimpan = await page.evaluate(async ({ tgl, awal, akhir }) => {
+      const r = await (await fetch(`/api/absensi-guru?tanggal=${tgl}`)).json();
+      const rows = r.jadwal || [];
+      return [awal, akhir].every(id => rows.some(j => Number(j.id) === Number(id) && j.absensi?.status === 'hadir'));
+    }, { tgl: TODAY, awal: setup.slotLalu, akhir: setup.slotKini });
+    ok('satu check-in mengisi semua slot dalam rentang', rentangTersimpan);
 
     /* ---------------- B. HAPUS RIWAYAT ABSENSI SISWA ---------------- */
     console.log('\n== B. HAPUS RIWAYAT ABSENSI SISWA ==');
