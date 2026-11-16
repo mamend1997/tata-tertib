@@ -234,15 +234,7 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     await page.fill('input[type="password"]', 'guru123');
     await page.click('button[type="submit"]');
     await page.waitForSelector('aside, nav', { timeout: 15000 });
-    /* guru membuat sesi presensi & check-in lewat UI */
-    await page.goto(BASE + '/#/absensi_siswa');
-    await page.waitForTimeout(1500);
-    const buat = page.locator('[data-buat-sesi], [data-buka-presensi]').first();
-    if (await buat.count()) { await buat.click(); await page.waitForTimeout(1600); }
-    await page.locator('[data-mass="H"]').click().catch(() => {});
-    await page.locator('[data-pencatat]').fill('Petugas Uji').catch(() => {});
-    await page.locator('[data-simpan-presensi]').click().catch(() => {});
-    await page.waitForTimeout(1500);
+    /* guru check-in, lalu mengisi presensi di modal yang sama */
     await page.goto(BASE + '/#/absensi_guru');
     await page.waitForSelector('[data-page="absensi-guru"]', { timeout: 15000 });
     await page.waitForTimeout(1200);
@@ -253,8 +245,22 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     const teksAlur = await page.locator('[data-alur-absensi]').innerText();
     ok('alur menampilkan 3 langkah (absensi siswa, jurnal, foto)',
       /Absensi Siswa/i.test(teksAlur) && /Jurnal/i.test(teksAlur) && /Foto/i.test(teksAlur), teksAlur.slice(0, 160));
-    ok('status absensi siswa sudah lengkap setelah diisi',
-      /tercatat/i.test(teksAlur) || /Isi Absensi Siswa/.test(teksAlur), teksAlur.slice(0, 160));
+    const urlSebelumPresensi = page.url();
+    const jumlahTabSebelumPresensi = page.context().pages().length;
+    await page.locator('[data-buka-absensi-siswa]').click();
+    await page.waitForSelector('[data-presensi-siswa-inline] [data-absensi-kelas]', { timeout: 10000 });
+    const jumlahNamaSiswa = await page.locator('[data-presensi-siswa-inline] [data-siswa]').count();
+    ok('klik Isi Absensi Siswa menampilkan daftar nama dalam modal yang sama',
+      jumlahNamaSiswa > 0 && page.url() === urlSebelumPresensi && page.context().pages().length === jumlahTabSebelumPresensi,
+      `nama=${jumlahNamaSiswa}, tab=${page.context().pages().length}`);
+    await page.locator('[data-presensi-siswa-inline] [data-mass="H"]').click();
+    await page.locator('[data-presensi-siswa-inline] [data-simpan-presensi]').click();
+    await page.waitForSelector('[data-presensi-siswa-inline] [data-ok]', { timeout: 10000 });
+    await page.locator('[data-kembali-jurnal]').click();
+    await page.waitForTimeout(800);
+    ok('presensi tersimpan dan kembali ke alur jurnal tanpa berpindah halaman',
+      page.url() === urlSebelumPresensi && await page.locator('[data-alur-absensi]').count() === 1,
+      (await page.locator('[data-alur-absensi]').innerText()).slice(0, 160));
 
     /* ================= 7. PORTAL PUBLIK ================= */
     console.log('\n== 7. PORTAL PUBLIK JADWAL ==');

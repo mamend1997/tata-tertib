@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarClock, CalendarDays, Camera, CheckCircle2, Circle, Clock, Loader2, Lock, RefreshCw, Repeat,
-  Send, ShieldCheck, Stethoscope, Timer, UserCheck, UserRoundX, XCircle
+  AlertTriangle, ArrowLeft, CalendarClock, CalendarDays, Camera, CheckCircle2, Circle, Clock, Loader2, Lock, RefreshCw, Repeat,
+  Send, ShieldCheck, Stethoscope, Timer, UserCheck, UserRoundX, Users, XCircle
 } from 'lucide-react';
 import { api, compressImage, hariIni } from '../api';
 import { Alert, Card, Empty, Field, Modal, Spinner, Stat, cx, useToast } from '../ui';
+import AbsensiKelas from '../components/AbsensiKelas';
 
 const STATUS_TONE = {
   hadir: 'badge-aman', izin: 'badge-pantau', sakit: 'badge-perhatian', alpha: 'badge-siaga', belum: 'badge-netral'
@@ -489,7 +490,7 @@ export default function AbsensiGuru({ ctx }) {
         </Card>
       ) : null}
 
-      <ModalJurnal open={!!jurnal} slot={jurnal?.slot} cfg={data?.config} tanggal={tanggal}
+      <ModalJurnal open={!!jurnal} slot={jurnal?.slot} cfg={data?.config} tanggal={tanggal} user={data?.saya}
         onClose={() => setJurnal(null)} onSaved={() => { setJurnal(null); load(); }} />
 
       {/* alasan sakit / izin */}
@@ -674,7 +675,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 }
 
 /* ---------------- modal jurnal mengajar & foto (setelah check-in) ---------------- */
-function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
+function ModalJurnal({ open, slot, cfg, tanggal, user, onClose, onSaved }) {
   const toast = useToast();
   const [materi, setMateri] = useState('');
   const [catatan, setCatatan] = useState('');
@@ -683,6 +684,10 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
   const [uploading, setUploading] = useState(false);
   const [alur, setAlur] = useState(null);      // status alur: absensi siswa → jurnal → foto
   const [alurBusy, setAlurBusy] = useState(false);
+  const [presensiMode, setPresensiMode] = useState(false);
+  const [presensiDetail, setPresensiDetail] = useState(null);
+  const [presensiBusy, setPresensiBusy] = useState(false);
+  const [presensiError, setPresensiError] = useState('');
 
   const muatAlur = useCallback(() => {
     if (!slot?.id) return;
@@ -697,6 +702,9 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
     setMateri(a?.materi || '');
     setCatatan(a?.catatan || '');
     setFoto(a?.foto_url ? { url: a.foto_url, base64: '', nama: '', size: 0 } : null);
+    setPresensiMode(false);
+    setPresensiDetail(null);
+    setPresensiError('');
     muatAlur();
   }, [open, slot, muatAlur]);
 
@@ -704,6 +712,37 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
   const langkahJurnal = alur?.jurnal || { lengkap: false, min: 0 };
   const langkahFoto = alur?.foto || { wajib: false, ada: false };
   const butuhAbsensi = (slot?.absensi?.status || 'hadir') === 'hadir' && !langkahAbsensi.lengkap;
+
+  async function bukaAbsensiSiswa() {
+    if (!slot?.id) return;
+    setPresensiMode(true);
+    setPresensiBusy(true);
+    setPresensiError('');
+    try {
+      const detail = await api('/api/absensi-siswa/sesi', {
+        method: 'POST', body: { jadwal_id: slot.id, tanggal }
+      });
+      setPresensiDetail(detail);
+    } catch (e) {
+      setPresensiError(e.message);
+    } finally { setPresensiBusy(false); }
+  }
+
+  async function simpanAbsensiSiswa({ items }) {
+    if (!presensiDetail?.sesi?.id) throw new Error('Sesi absensi siswa belum tersedia.');
+    const result = await api('/api/absensi-siswa/simpan', {
+      method: 'POST', body: { sesi_id: presensiDetail.sesi.id, items }
+    });
+    setPresensiDetail(detail => detail ? {
+      ...detail,
+      siswa: detail.siswa.map(s => {
+        const item = items.find(x => Number(x.siswa_id) === Number(s.id));
+        return item ? { ...s, status: item.status, keterangan: item.keterangan, terisi: true } : s;
+      })
+    } : detail);
+    muatAlur();
+    return result;
+  }
 
   async function pilihFoto(file) {
     if (!file) return;
@@ -741,15 +780,34 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
 
   const status = slot?.absensi?.status || 'hadir';
   return (
-    <Modal open={open} onClose={onClose} title="Jurnal Mengajar & Bukti Kegiatan" size="lg"
+    <Modal open={open} onClose={onClose}
+      title={presensiMode ? 'Absensi Siswa' : 'Jurnal Mengajar & Bukti Kegiatan'} size="lg"
       subtitle={slot ? `${slot.mapel_nama} · ${slot.kelas_nama} · ${slot.jam}` : ''}
       footer={<>
-        <button className="btn-ghost" onClick={onClose}>Tutup</button>
-        <button className="btn-primary" disabled={busy || uploading} onClick={simpan} data-simpan-jurnal>
-          {busy ? <Loader2 size={15} className="animate-spin" /> : null} Simpan Jurnal
-        </button>
+        {presensiMode ? (
+          <button className="btn-ghost" onClick={() => setPresensiMode(false)} data-kembali-jurnal>
+            <ArrowLeft size={14} /> Kembali ke Jurnal
+          </button>
+        ) : (
+          <>
+            <button className="btn-ghost" onClick={onClose}>Tutup</button>
+            <button className="btn-primary" disabled={busy || uploading} onClick={simpan} data-simpan-jurnal>
+              {busy ? <Loader2 size={15} className="animate-spin" /> : null} Simpan Jurnal
+            </button>
+          </>
+        )}
       </>}>
       {slot ? (
+        presensiMode ? (
+          <div className="space-y-3" data-presensi-siswa-inline>
+            {presensiBusy ? <Spinner label="Memuat daftar nama siswa…" /> : null}
+            {presensiError ? <Alert tone="danger" title="Absensi siswa belum dapat dibuka">{presensiError}</Alert> : null}
+            {presensiDetail ? (
+              <AbsensiKelas detail={presensiDetail} simpan={simpanAbsensiSiswa}
+                user={user} mode="guru" readOnly={presensiDetail.window?.terbuka === false} />
+            ) : null}
+          </div>
+        ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className={cx('badge', STATUS_TONE[status] || 'badge-netral')}>{STATUS_LABEL[status] || status}</span>
@@ -769,9 +827,10 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
                   ? `${langkahAbsensi.terisi}/${langkahAbsensi.total} siswa tercatat`
                   : 'Sesi presensi belum dibuat'}
                 aksi={!langkahAbsensi.lengkap ? (
-                  <a className="btn-soft btn-sm" href={(window.__BASE__ || '') + '/#/absensi_siswa'} target="_blank" rel="noreferrer" data-buka-absensi-siswa>
-                    Isi Absensi Siswa
-                  </a>
+                  <button type="button" className="btn-soft btn-sm" onClick={bukaAbsensiSiswa} disabled={presensiBusy}
+                    data-buka-absensi-siswa>
+                    <Users size={13} /> Isi Absensi Siswa
+                  </button>
                 ) : null} />
               <LangkahAlur no={2} selesai={langkahJurnal.lengkap} judul="Jurnal Kegiatan / Mengajar"
                 ket={langkahJurnal.lengkap ? 'Jurnal terisi' : `Minimal ${langkahJurnal.min || 0} karakter (isi di bawah)`} />
@@ -825,6 +884,7 @@ function ModalJurnal({ open, slot, cfg, tanggal, onClose, onSaved }) {
             Status kehadiran dan cap waktu check-in tersimpan permanen. Jurnal &amp; foto dapat dilengkapi selama jam pelajaran berlangsung.
           </p>
         </div>
+        )
       ) : null}
     </Modal>
   );
