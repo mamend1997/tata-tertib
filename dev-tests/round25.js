@@ -125,6 +125,7 @@ function startWa() {
     const mA = await mapel('Mapel A', 'MPA', gA);
     const mB = await mapel('Mapel B', 'MPB', gB);
     const mC = await mapel('Mapel C', 'MPC', gA);
+    const mD = await mapel('Mapel D', 'MPD', gA);
 
     /* slot guru A: sesi 1 (sudah berakhir), sesi 2 (berlangsung), sesi 3 (belum) */
     r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 1, mapel_id: mA, guru_id: gA, kelas_ids: [kelas1], abaikan: 1 } });
@@ -132,16 +133,29 @@ function startWa() {
     r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 2, mapel_id: mC, guru_id: gA, kelas_ids: [kelas1], abaikan: 1 } });
     const slotKini = r.body.id; ok('slot sesi 2 (berlangsung) dibuat', r.status === 200, r.body?.error);
     /* sesi 3 masih TERBUKA (dipakai untuk izin guru & pengganti) */
-    r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 3, mapel_id: mA, guru_id: gA, kelas_ids: [kelas2], abaikan: 1 } });
+    r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 3, mapel_id: mD, guru_id: gA, kelas_ids: [kelas2], abaikan: 1 } });
     const slotNanti = r.body.id; ok('slot sesi 3 (berlangsung) dibuat', r.status === 200, r.body?.error);
     /* sesi 4 BELUM WAKTUNYA (untuk uji hitung mundur) */
-    r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 4, mapel_id: mA, guru_id: gA, kelas_ids: [kelas2], abaikan: 1 } });
+    r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 4, mapel_id: mD, guru_id: gA, kelas_ids: [kelas2], abaikan: 1 } });
     const slotBelum = r.body.id; ok('slot sesi 4 (belum waktunya) dibuat', r.status === 200, r.body?.error);
     /* slot BESOK untuk guru A (hari berikutnya) */
     const HARI_BESOK = (HARI + 1) % 7;
     r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI_BESOK, sesi: 2, mapel_id: mC, guru_id: gA, kelas_ids: [kelas1], abaikan: 1 } });
     const slotBesok = r.body.id;
     ok('slot untuk hari esok dibuat', r.status === 200, r.body?.error);
+
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gA}`);
+    const guruRekapAwal = (r.body.guru || []).find(g => Number(g.guru_id) === Number(gA));
+    const barisLampau = (r.body.rows || []).find(x => (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(slotLalu)));
+    const barisBelum = (r.body.rows || []).find(x => (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(slotBelum)));
+    ok('jadwal hari ini yang sudah terlewat tanpa check-in dihitung Alpha',
+      barisLampau?.status === 'alpha', JSON.stringify(barisLampau && { status: barisLampau.status, jam: barisLampau.jam }));
+    ok('jadwal hari ini yang belum waktunya tetap Belum Dicatat',
+      barisBelum?.status === 'belum' && barisBelum.status_label === 'Belum Dicatat',
+      JSON.stringify(barisBelum && { status: barisBelum.status, label: barisBelum.status_label, jam: barisBelum.jam }));
+    ok('ringkasan per guru memisahkan Alpha dan Belum Dicatat',
+      Number(guruRekapAwal?.A) === 1 && Number(guruRekapAwal?.belum) === 2,
+      JSON.stringify(guruRekapAwal && { A: guruRekapAwal.A, belum: guruRekapAwal.belum, total: guruRekapAwal.total }));
 
     /* ================= 1. JADWAL MENGAJAR GURU ================= */
     console.log('\n== 1. DAFTAR JADWAL MENGAJAR (HARI INI & BERIKUTNYA) ==');
@@ -273,7 +287,7 @@ function startWa() {
       (r.body.slots || []).some(s => Number(s.jadwal_id) === Number(slotNanti)),
       JSON.stringify((r.body.slots || []).map(s => s.jadwal_id)));
     const filterRiwayat = `riwayat_periode=custom&riwayat_dari=${TODAY}&riwayat_sampai=${TODAY}`
-      + `&riwayat_kelas=${kelas2}&riwayat_guru=${gA}&riwayat_mapel=${mA}`
+      + `&riwayat_kelas=${kelas2}&riwayat_guru=${gA}&riwayat_mapel=${mD}`
       + `&riwayat_q=${encodeURIComponent('Guru Pengganti B')}`;
     r = await req(`/api/guru-pengganti?tanggal=${TODAY}&${filterRiwayat}`);
     ok('riwayat pengganti dapat difilter kelas, guru, tanggal, mapel, dan nama',
@@ -290,9 +304,41 @@ function startWa() {
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     const slotB = (r.body.jadwal || []).find(j => Number(j.id) === Number(slotNanti));
     ok('sesi pengganti masuk ke akun guru B', !!slotB && Number(slotB.guru_efektif_id) === Number(gB), JSON.stringify((r.body.jadwal || []).map(j => j.id)));
+    ok('penugasan guru pengganti tidak meminta check-in manual', !!slotB && slotB.bisa_checkin === false,
+      JSON.stringify(slotB && { bisa_checkin: slotB.bisa_checkin, jenis: slotB.tukar?.jenis }));
     r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY, status: 'hadir' } });
-    ok('guru pengganti dapat check-in (tidak terblokir rekam izin)', r.status === 200, r.body?.error);
-
+    ok('check-in manual guru pengganti ditolak', r.status === 409, r.body?.error);
+    r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY } });
+    ok('guru pengganti dapat membuka sesi absensi siswa', r.status === 200, r.body?.error);
+    const sesiPenggantiId = r.body?.sesi?.id;
+    r = await req('/api/absensi-siswa/simpan', {
+      method: 'POST', body: {
+        sesi_id: sesiPenggantiId,
+        items: (r.body?.siswa || []).map(s => ({ siswa_id: s.id, status: 'H' }))
+      }
+    });
+    ok('presensi siswa pengganti tersimpan', r.status === 200, r.body?.error);
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gB}`);
+    const hadirPengganti = (r.body.rows || []).find(x =>
+      Number(x.guru_id) === Number(gB) && (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(slotNanti)));
+    ok('kehadiran pengganti otomatis tercatat setelah absensi siswa lengkap',
+      !!hadirPengganti && hadirPengganti.status === 'hadir' && hadirPengganti.penugasan_pengganti === true
+        && hadirPengganti.mapel_nama === '' && !hadirPengganti.materi,
+      JSON.stringify(hadirPengganti && {
+        status: hadirPengganti.status, mapel: hadirPengganti.mapel_nama,
+        penugasan: hadirPengganti.penugasan_pengganti, jurnal: hadirPengganti.materi
+      }));
+    r = await req('/api/absensi-guru/jurnal', {
+      method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY, materi: 'Materi pengganti tercatat dalam jurnal' }
+    });
+    ok('guru pengganti mengisi jurnal tanpa check-in manual', r.status === 200, r.body?.error);
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gB}`);
+    const jurnalPengganti = (r.body.rows || []).find(x =>
+      Number(x.guru_id) === Number(gB) && (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(slotNanti)));
+    ok('rekap menampilkan jurnal pengganti dengan mata pelajaran kosong',
+      !!jurnalPengganti && jurnalPengganti.mapel_nama === ''
+        && /Materi pengganti/.test(jurnalPengganti.materi || ''),
+      JSON.stringify(jurnalPengganti && { mapel: jurnalPengganti.mapel_nama, jurnal: jurnalPengganti.materi }));
     /* guru asli kehilangan sesi yang sudah berpindah ke guru pengganti */
     await login('gurua', 'guru123');
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
@@ -307,10 +353,19 @@ function startWa() {
     const rekapIzin = (r.body.rows || []).filter(x => Number(x.jadwal_id) === Number(slotNanti));
     ok('rekap memuat baris izin guru asli + baris guru pengganti', rekapIzin.length >= 2,
       JSON.stringify(rekapIzin.map(x => ({ g: x.guru_nama, s: x.status }))));
-    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gA}&mapel=${mA}`);
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gA}&mapel=${mD}`);
     ok('filter nama guru tetap menampilkan baris izin guru asli',
       (r.body.rows || []).some(x => Number(x.guru_id) === Number(gA) && x.dari_izin),
       JSON.stringify((r.body.rows || []).map(x => ({ guru: x.guru_id, izin: x.dari_izin, status: x.status }))));
+    r = await req(`/api/guru-pengganti/riwayat/detail?id=${idTunjuk}`);
+    const detailSlot = (r.body?.slots || []).find(x => Number(x.jadwal_id) === Number(slotNanti));
+    ok('detail riwayat memuat absensi siswa dan jurnal guru pengganti',
+      r.status === 200 && !!detailSlot?.presensi_siswa?.total && /Materi pengganti/.test(detailSlot?.jurnal?.materi || ''),
+      JSON.stringify(detailSlot && { siswa: detailSlot.presensi_siswa?.total, jurnal: detailSlot.jurnal?.materi }));
+    ok('detail riwayat menampilkan status absensi siswa',
+      !!detailSlot && detailSlot.presensi_siswa.hitung.H === detailSlot.presensi_siswa.total
+        && detailSlot.presensi_siswa.tercatat === detailSlot.presensi_siswa.total,
+      JSON.stringify(detailSlot?.presensi_siswa?.hitung));
 
     /* pengambilalihan tidak dapat dibatalkan setelah pengganti mulai mengisi */
     r = await req('/api/guru-pengganti/batal', { method: 'POST', body: { id: idTunjuk } });

@@ -87,14 +87,19 @@ const BULAN = TODAY.slice(0, 7);
     const users = (await req('/api/users')).body.rows || [];
     const gA = users.find(u => u.username === 'guru');
     const gB = users.find(u => u.username === 'guruumum');
+    r = await req('/api/users/save', {
+      method: 'POST', body: { nama: 'Guru Monitor C', username: 'gurumonitorc', password: 'guru123', role: 'guru_umum', roles: ['guru'] }
+    });
+    const gC = r.body?.id;
     const kelas = (await req('/api/jadwal')).body.kelas || [];
-    ok('2 guru & 2 kelas tersedia', !!gA && !!gB && kelas.length >= 2);
+    ok('3 guru & 2 kelas tersedia', !!gA && !!gB && !!gC && kelas.length >= 2);
 
     const mapelId = async (nama, kode, guruId) => (await req('/api/mapel/save', {
       method: 'POST', body: { nama, kode, guru_ids: [guruId] }
     })).body.id;
     const m1 = await mapelId('Matematika Monitor', 'MTKM', gA.id);
     const m2 = await mapelId('Bahasa Monitor', 'BINM', gB.id);
+    const m3 = await mapelId('IPA Monitor', 'IPAM', gC);
     const slotBaru = async (sesi, mapel, guru, kelasId) => (await req('/api/jadwal/slot', {
       method: 'POST', body: { hari: HARI, sesi, mapel_id: mapel, guru_id: guru, kelas_ids: [kelasId], abaikan: 1, ruang: 'R-1' }
     })).body.id;
@@ -131,12 +136,33 @@ const BULAN = TODAY.slice(0, 7);
     /* hapus hasil duplikat agar data uji bersih */
     await req(`/api/jadwal/slot/${idDup}`, { method: 'DELETE' });
 
+    /* ganti sC dengan tiga jam berurutan pada mapel/kelas/guru yang sama */
+    r = await req(`/api/jadwal/slot/${sC}`, { method: 'DELETE' });
+    ok('slot awal kelas kedua dihapus untuk fixture rentang mapel', r.status === 200, r.body?.error);
+    const groupSlots = [];
+    const groupResults = [];
+    for (const sesi of [1, 2, 3]) {
+      const result = await req('/api/jadwal/slot', {
+        method: 'POST', body: { hari: HARI, sesi, mapel_id: m3, guru_id: gC, kelas_ids: [kelas[1].id], abaikan: 1, ruang: 'R-MONITOR-GROUP' }
+      });
+      groupSlots.push(result.body?.id);
+      groupResults.push({ status: result.status, error: result.body?.error });
+    }
+    ok('tiga slot mapel berurutan dibuat', groupSlots.every(Boolean), JSON.stringify(groupResults));
+    const fixtureDb = new (require('better-sqlite3'))(DB);
+    const taGroup = fixtureDb.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(groupSlots[0]).ta_id;
+    const markAbsent = fixtureDb.prepare(`INSERT INTO absensi_guru
+      (jadwal_id,tanggal,guru_id,ta_id,status,catatan,waktu_submit)
+      VALUES(?,?,?,?,'izin','izin uji rentang','2025-01-01 08:00:00')`);
+    for (const id of groupSlots) markAbsent.run(id, TODAY, gC, taGroup);
+    fixtureDb.close();
+
     /* ============ 2. MONITORING KBM ============ */
     console.log('\n== 2. MONITORING KBM REAL-TIME ==');
     r = await req('/api/monitor-kbm?tanggal=' + TODAY);
     ok('endpoint monitoring tersedia', r.status === 200 && !!r.body.stats, r.body?.error);
     ok('tanggal & jam server dikirim', r.body.tanggal === TODAY && !!r.body.jam_sekarang, JSON.stringify({ t: r.body.tanggal, j: r.body.jam_sekarang }));
-    ok('3 slot hari ini dihitung', Number(r.body.stats.slot) === 3, JSON.stringify(r.body.stats));
+    ok('5 slot hari ini dihitung', Number(r.body.stats.slot) === 5, JSON.stringify(r.body.stats));
     ok('sesi yang sedang berjalan terdeteksi', (r.body.sedang_belajar || []).length >= 1,
       JSON.stringify((r.body.sedang_belajar || []).map(x => x.label_sesi)));
     const aktif = (r.body.sedang_belajar || [])[0] || {};
@@ -145,10 +171,21 @@ const BULAN = TODAY.slice(0, 7);
       JSON.stringify(aktif).slice(0, 200));
     ok('status guru "belum check-in" terdeteksi', Number(r.body.stats.belum_checkin) >= 1, JSON.stringify(r.body.stats));
     ok('persentase jurnal 0% saat belum ada jurnal', Number(r.body.stats.persen_jurnal) === 0, String(r.body.stats.persen_jurnal));
-    ok('daftar jurnal belum diisi = seluruh slot',
-      (r.body.jurnal?.belum || []).length === 3, JSON.stringify((r.body.jurnal?.belum || []).length));
+    ok('rekap jurnal menggabungkan tiga jam mapel berurutan',
+      (r.body.jurnal?.belum || []).some(x => (x.jadwal_ids || []).length === 3
+        && x.label_sesi === 'Jam ke-1–3' && !!x.jam),
+      JSON.stringify((r.body.jurnal?.belum || []).map(x => ({ ids: x.jadwal_ids, sesi: x.label_sesi, jam: x.jam }))));
+    ok('rekap guru berhalangan menggabungkan jam mapel berurutan',
+      (r.body.berhalangan_rekap || []).some(x => (x.jadwal_ids || []).length === 3
+        && x.label_sesi === 'Jam ke-1–3'),
+      JSON.stringify((r.body.berhalangan_rekap || []).map(x => ({ ids: x.jadwal_ids, sesi: x.label_sesi }))));
     ok('rekap per kelas tersedia', (r.body.per_kelas || []).length === 2,
       JSON.stringify((r.body.per_kelas || []).map(k => k.kelas_nama)));
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gC}&mapel=${m3}`);
+    const rentangRekap = (r.body.rows || []).find(x => (x.jadwal_ids || []).length === 3);
+    ok('rekap absensi guru menggabungkan satu mapel pada tiga jam berurutan',
+      !!rentangRekap && rentangRekap.label_sesi === 'Jam ke-1–3' && !!rentangRekap.jam,
+      JSON.stringify(rentangRekap && { sesi: rentangRekap.label_sesi, jam: rentangRekap.jam }));
 
     /* guru A check-in pada sesi 1 + isi jurnal */
     await login('guru', 'guru123');
@@ -172,7 +209,7 @@ const BULAN = TODAY.slice(0, 7);
     r = await req('/api/monitor-kbm?tanggal=' + TODAY);
     const s1row = (r.body.jurnal?.sudah || []).find(x => Number(x.jadwal_id) === Number(sA));
     ok('jurnal yang sudah diisi masuk daftar "sudah"', !!s1row && s1row.jurnal_isi === true, JSON.stringify(r.body.jurnal?.sudah));
-    ok('persentase jurnal naik (33%)', Number(r.body.stats.persen_jurnal) === 33, String(r.body.stats.persen_jurnal));
+    ok('persentase jurnal naik (20%)', Number(r.body.stats.persen_jurnal) === 20, String(r.body.stats.persen_jurnal));
     ok('guru yang check-in tercatat hadir', Number(r.body.stats.hadir) >= 1, JSON.stringify(r.body.stats.hadir));
 
     /* guru berhalangan + pengganti */

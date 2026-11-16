@@ -59,6 +59,7 @@ export default function MonitorKBM({ ctx }) {
   const stats = d?.stats || {};
   const perKelas = d?.per_kelas || [];
   const berlangsung = d?.sedang_belajar || [];
+  const berhalanganRekap = d?.berhalangan_rekap || d?.berhalangan || [];
   const jadwalMonitor = d?.monitor_jadwal || [];
   const kelasMonitor = d?.kelas || [];
   const guruMonitor = d?.guru || [];
@@ -290,9 +291,9 @@ export default function MonitorKBM({ ctx }) {
       </Card>
 
       {/* berhalangan / digantikan */}
-      <Card title={`Guru Berhalangan & Pengganti (${(d?.berhalangan || []).length})`}
-        subtitle="Izin / sakit / alpha pada hari ini — termasuk yang sudah ditunjuk guru piket">
-        {!(d?.berhalangan || []).length ? (
+      <Card title={`Guru Berhalangan & Pengganti (${berhalanganRekap.length})`}
+        subtitle="Izin / sakit / alpha pada hari ini — jam mapel berurutan digabung dalam satu baris">
+        {!berhalanganRekap.length ? (
           <Empty icon={UserCheck} title="Semua guru pengampu hadir" desc="Tidak ada sesi dengan guru berhalangan pada tanggal ini." />
         ) : (
           <div className="tbl-wrap max-h-[46vh]">
@@ -302,8 +303,10 @@ export default function MonitorKBM({ ctx }) {
                 <th>Guru Pengampu</th><th className="c">Status</th><th>Pengganti</th>
               </tr></thead>
               <tbody>
-                {(d.berhalangan || []).map((x, i) => (
-                  <tr key={x.jadwal_id} data-berhalangan-slot={x.jadwal_id} className={x.pengganti ? 'bg-violet-50/40' : 'bg-rose-50/40'}>
+                {berhalanganRekap.map((x, i) => (
+                  <tr key={(x.jadwal_ids || [x.jadwal_id]).join(',')} data-berhalangan-slot={x.jadwal_id}
+                    data-berhalangan-jadwal-ids={(x.jadwal_ids || [x.jadwal_id]).join(',')}
+                    className={x.pengganti ? 'bg-violet-50/40' : 'bg-rose-50/40'}>
                     <td className="c">{i + 1}</td>
                     <td className="whitespace-nowrap">{x.label_sesi}<span className="block text-[10.5px] text-slate-500">{x.jam}</span></td>
                     <td className="font-semibold">{x.kelas_nama || '-'}</td>
@@ -391,7 +394,8 @@ function DaftarJurnal({ rows, status }) {
         <thead><tr><th>Jam</th><th>Kelas</th><th>Mapel</th><th>Guru</th></tr></thead>
         <tbody>
           {rows.map(x => (
-            <tr key={x.jadwal_id} data-jurnal-slot={x.jadwal_id}>
+            <tr key={(x.jadwal_ids || [x.jadwal_id]).join(',')} data-jurnal-slot={x.jadwal_id}
+              data-jurnal-jadwal-ids={(x.jadwal_ids || [x.jadwal_id]).join(',')}>
               <td className="whitespace-nowrap">{x.label_sesi}<span className="block text-[10.5px] text-slate-500">{x.jam}</span></td>
               <td className="font-semibold">{x.kelas_nama || '-'}</td>
               <td>{x.mapel_kode ? <b className="mr-1 text-teal-700">{x.mapel_kode}</b> : null}{x.mapel_nama || '-'}</td>

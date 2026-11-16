@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Loader2, RefreshCw,
-  Repeat, Search, Trash2, UserPlus, Users, XCircle
+  AlertTriangle, BookOpenCheck, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye,
+  FileText, Loader2, RefreshCw, Repeat, Search, Trash2, UserPlus, Users, XCircle
 } from 'lucide-react';
+import { ModalJurnal } from './AbsensiGuru';
 import { api, hariIni } from '../api';
 import { Alert, Card, Empty, Field, Modal, Spinner, Stat, cx, useToast } from '../ui';
 
@@ -11,7 +12,7 @@ import { Alert, Card, Empty, Field, Modal, Spinner, Stat, cx, useToast } from '.
    Kepala Sekolah / Wakasek Kurikulum menunjuk guru pengganti pada slot jam
    pelajaran tertentu TANPA mengubah master jadwal — berlaku hanya pada
    tanggal tersebut. Sesi otomatis berpindah ke akun guru pengganti
-   (check-in, presensi siswa, jurnal, dan alfa otomatis).
+   (presensi siswa, jurnal, kehadiran otomatis, dan alfa otomatis).
    ===================================================================== */
 const geserTanggal = (iso, n) => {
   const d = new Date(String(iso) + 'T12:00:00');
@@ -36,6 +37,12 @@ export default function GuruPengganti({ ctx }) {
   const [busy, setBusy] = useState(0);
   const [riwayatDipilih, setRiwayatDipilih] = useState([]);
   const [hapusRiwayatBusy, setHapusRiwayatBusy] = useState(false);
+  const [detailRiwayat, setDetailRiwayat] = useState(null);
+  const [detailRiwayatOpen, setDetailRiwayatOpen] = useState(false);
+  const [detailRiwayatLoading, setDetailRiwayatLoading] = useState(false);
+  const [detailRiwayatError, setDetailRiwayatError] = useState('');
+  const [workflowSlot, setWorkflowSlot] = useState(null);
+  const [workflowMode, setWorkflowMode] = useState('jurnal');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -89,6 +96,30 @@ export default function GuruPengganti({ ctx }) {
       load();
     } catch (e) { toast.err(e.message); }
     finally { setHapusRiwayatBusy(false); }
+  }
+
+  async function lihatDetailRiwayat(row) {
+    setDetailRiwayatOpen(true);
+    setDetailRiwayat(null);
+    setDetailRiwayatError('');
+    setDetailRiwayatLoading(true);
+    try {
+      const result = await api(`/api/guru-pengganti/riwayat/detail?id=${encodeURIComponent(row.id)}`);
+      setDetailRiwayat(result);
+    } catch (e) {
+      setDetailRiwayatError(e.message);
+    } finally {
+      setDetailRiwayatLoading(false);
+    }
+  }
+
+  function bukaAlurPengganti(slot, mode) {
+    setWorkflowMode(mode);
+    setWorkflowSlot({
+      ...slot, id: slot.jadwal_id, group_ids: slot.group_ids || [slot.jadwal_id],
+      absensi: slot.absensi ? { ...slot.absensi, waktu_submit: slot.absensi.waktu || '' } : null,
+      window: { ...slot.window, terbuka: !!slot.window?.aktif, aktif: !!slot.window?.aktif }
+    });
   }
 
   async function batal(p) {
@@ -249,6 +280,23 @@ export default function GuruPengganti({ ctx }) {
                               {busy === p.id ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={13} />} Batal
                             </button>
                           ) : null}
+                          {p?.jenis === 'penugasan'
+                            && (Number(ctx.boot?.user?.id) === Number(p.ke_guru) || bolehUbah) ? (
+                            <>
+                              <button type="button" className="btn-sm btn-soft"
+                                disabled={!s.window?.aktif}
+                                onClick={() => bukaAlurPengganti(s, 'absensi')}
+                                data-absensi-pengganti={s.jadwal_id}>
+                                <Users size={13} /> Absensi Siswa
+                              </button>
+                              <button type="button" className="btn-sm btn-soft"
+                                disabled={!s.window?.aktif || s.absensi?.status !== 'hadir'}
+                                onClick={() => bukaAlurPengganti(s, 'jurnal')}
+                                data-jurnal-pengganti={s.jadwal_id}>
+                                <FileText size={13} /> {s.absensi?.materi ? 'Edit Jurnal' : 'Isi Jurnal'}
+                              </button>
+                            </>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -356,7 +404,7 @@ export default function GuruPengganti({ ctx }) {
             </p>
             <div className="tbl-wrap max-h-[42vh]">
               <table className="tbl" data-tbl="riwayat-guru-pengganti">
-                <thead><tr><th className="w-10 c">Pilih</th><th>Jam</th><th>Kelas</th><th>Mapel</th><th>Guru Utama</th><th>Pengganti</th><th>Status</th><th>Catatan</th></tr></thead>
+                <thead><tr><th className="w-10 c">Pilih</th><th>Jam</th><th>Kelas</th><th>Mapel</th><th>Guru Utama</th><th>Pengganti</th><th>Status</th><th>Catatan</th><th className="c">Detail</th></tr></thead>
                 <tbody>
                   {riwayat.map(r => {
                     const dapatDihapus = ['batal', 'ditolak'].includes(String(r.status));
@@ -377,6 +425,12 @@ export default function GuruPengganti({ ctx }) {
                           {r.status === 'diterima' ? 'Aktif' : r.status === 'batal' ? 'Dibatalkan' : r.status}
                         </span>{r.jumlah_slot > 1 ? ` · ${r.jumlah_slot} jam` : ''}</td>
                         <td className="text-[11px]">{r.alasan || r.catatan_putus || '-'}</td>
+                        <td className="c">
+                          <button type="button" className="btn-soft btn-sm" onClick={() => lihatDetailRiwayat(r)}
+                            data-riwayat-detail-btn={r.id}>
+                            <Eye size={13} /> Detail
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -386,6 +440,110 @@ export default function GuruPengganti({ ctx }) {
           </>
         )}
       </Card>
+
+      <Modal open={detailRiwayatOpen} onClose={() => setDetailRiwayatOpen(false)}
+        title="Detail Riwayat Guru Pengganti" size="xl"
+        subtitle={detailRiwayat?.riwayat
+          ? `${detailRiwayat.riwayat.tanggal} · ${detailRiwayat.riwayat.kelas_nama || '-'} · ${detailRiwayat.riwayat.label_sesi || '-'}`
+          : 'Absensi guru, jurnal mengajar, dan presensi siswa'}
+        footer={<button type="button" className="btn-ghost" onClick={() => setDetailRiwayatOpen(false)}>Tutup</button>}>
+        {detailRiwayatLoading ? <Spinner label="Memuat detail riwayat…" /> : detailRiwayatError ? (
+          <Alert tone="danger" title="Detail riwayat gagal dimuat">{detailRiwayatError}</Alert>
+        ) : detailRiwayat ? (
+          <div className="space-y-3" data-riwayat-detail>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[12px]">
+              <p><b>Mata pelajaran:</b> {detailRiwayat.riwayat.mapel_nama || '-'}
+                {detailRiwayat.riwayat.jam ? ` · ${detailRiwayat.riwayat.jam}` : ''}</p>
+              <p className="mt-1"><b>Guru utama:</b> {detailRiwayat.riwayat.dari_nama || '-'}
+                {' · '}<b>Guru pengganti:</b> {detailRiwayat.riwayat.ke_nama || '-'}</p>
+              <p className="mt-1"><b>Alasan:</b> {detailRiwayat.riwayat.alasan || '-'}</p>
+            </div>
+            {!detailRiwayat.slots?.length ? (
+              <Alert tone="info">Slot jadwal untuk riwayat ini sudah tidak tersedia.</Alert>
+            ) : detailRiwayat.slots.map(slot => (
+              <section key={slot.jadwal_id} className="rounded-xl border border-slate-200 p-3"
+                data-riwayat-detail-slot={slot.jadwal_id}>
+                <h4 className="text-[13px] font-bold text-slate-800">
+                  {slot.label_sesi} · {slot.jam || '-'} · {slot.mapel_nama || '-'} · {slot.kelas_nama || '-'}
+                </h4>
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-3">
+                    <div className="rounded-lg bg-slate-50 p-2.5" data-detail-absensi-guru>
+                      <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase text-slate-600">
+                        <Users size={13} /> Absensi Guru
+                      </p>
+                      {slot.guru_izin ? (
+                        <p className="mt-1 text-[11.5px]">
+                          Guru utama: <b>{slot.guru_izin.guru_nama}</b> · {slot.guru_izin.status_label}
+                          {slot.guru_izin.catatan ? ` · ${slot.guru_izin.catatan}` : ''}
+                        </p>
+                      ) : null}
+                      <p className="mt-1 text-[11.5px]">
+                        Guru efektif: {slot.guru_absensi
+                          ? <><b>{slot.guru_absensi.guru_nama || '-'}</b> · {slot.guru_absensi.status_label}
+                            {slot.guru_absensi.waktu_submit ? ` · ${slot.guru_absensi.waktu_submit}` : ''}</>
+                          : 'Belum check-in'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-100 p-2.5" data-detail-jurnal>
+                      <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase text-slate-600">
+                        <FileText size={13} /> Jurnal Mengajar
+                      </p>
+                      {slot.jurnal?.materi ? (
+                        <p className="mt-1 whitespace-pre-wrap text-[11.5px]"><b>Materi:</b> {slot.jurnal.materi}</p>
+                      ) : <p className="mt-1 text-[11.5px] text-slate-500">Materi belum dicatat.</p>}
+                      {slot.jurnal?.catatan ? (
+                        <p className="mt-1 whitespace-pre-wrap text-[11.5px]"><b>Catatan:</b> {slot.jurnal.catatan}</p>
+                      ) : null}
+                      {slot.jurnal?.foto_url ? (
+                        <img src={slot.jurnal.foto_url} alt="Bukti jurnal mengajar"
+                          className="mt-2 max-h-44 max-w-full rounded-lg border border-slate-200 object-contain" />
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-100 p-2.5" data-detail-absensi-siswa>
+                    <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase text-slate-600">
+                      <BookOpenCheck size={13} /> Absensi Siswa
+                    </p>
+                    {slot.presensi_siswa ? (
+                      <>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {['H', 'S', 'I', 'A', 'B', 'belum'].map(k => (
+                            <span key={k} className="chip !py-0.5 text-[10px]">
+                              {k === 'belum' ? 'Belum' : k}: {slot.presensi_siswa.hitung?.[k] || 0}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="mt-1 text-[10.5px] text-slate-500">
+                          {slot.presensi_siswa.tercatat} dari {slot.presensi_siswa.total} siswa tercatat
+                          {slot.presensi_siswa.pencatat ? ` · Pencatat: ${slot.presensi_siswa.pencatat}` : ''}
+                        </p>
+                        <div className="tbl-wrap mt-2 max-h-56">
+                          <table className="tbl">
+                            <thead><tr><th>Nama Siswa</th><th>Kelas</th><th>Status</th><th>Keterangan</th></tr></thead>
+                            <tbody>{slot.presensi_siswa.siswa.map(s => (
+                              <tr key={s.siswa_id}>
+                                <td>{s.nama}</td><td>{s.kelas_nama || '-'}</td>
+                                <td>{s.status || 'Belum dicatat'}</td><td>{s.keterangan || '-'}</td>
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                        </div>
+                      </>
+                    ) : <p className="mt-1 text-[11.5px] text-slate-500">Sesi absensi siswa belum dibuat.</p>}
+                  </div>
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : null}
+      </Modal>
+
+      <ModalJurnal open={!!workflowSlot} slot={workflowSlot} cfg={data?.config}
+        tanggal={tanggal} user={ctx.boot?.user} startAbsensi={workflowMode === 'absensi'}
+        onClose={() => setWorkflowSlot(null)}
+        onPresensiSaved={load}
+        onSaved={() => { setWorkflowSlot(null); load(); }} />
 
       <ModalTunjuk open={!!pilihSlot} slot={pilihSlot} tanggal={tanggal}
         onClose={() => setPilihSlot(null)} onSaved={() => { setPilihSlot(null); load(); }} />

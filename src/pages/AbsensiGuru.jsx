@@ -264,11 +264,14 @@ export default function AbsensiGuru({ ctx }) {
                         ) : (
                           <button className="btn-sm cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
                             disabled
-                            title={!sl.bisa_checkin && !sl.status_absensi && aktif && bukanMilik && !agenda?.target_guru
+                            title={sl.tukar?.jenis === 'penugasan'
+                              ? 'Isi absensi siswa pada menu Guru Piket & Pengganti; kehadiran tercatat otomatis setelah presensi lengkap.'
+                              : !sl.bisa_checkin && !sl.status_absensi && aktif && bukanMilik && !agenda?.target_guru
                               ? 'Hanya guru pemilik sesi atau admin yang dapat check-in.'
                               : sl.alasan_singkat}
                             data-agenda-terkunci={sl.jadwal_id}>
-                            <Lock size={12} /> {!sl.bisa_checkin && !sl.status_absensi && aktif && bukanMilik && !agenda?.target_guru ? 'Sesi guru lain' : 'Nonaktif'}
+                            <Lock size={12} /> {sl.tukar?.jenis === 'penugasan' ? 'Guru Pengganti'
+                              : !sl.bisa_checkin && !sl.status_absensi && aktif && bukanMilik && !agenda?.target_guru ? 'Sesi guru lain' : 'Nonaktif'}
                           </button>
                         )}
                         <span className={cx('w-full text-[10.5px] sm:w-auto sm:pl-1',
@@ -297,6 +300,7 @@ export default function AbsensiGuru({ ctx }) {
               const a = j.absensi;
               const tone = a ? STATUS_TONE[a.status] : 'badge-netral';
               const bisa = !!j.bisa_checkin;
+              const penugasan = j.tukar?.jenis === 'penugasan';
               return (
                 <div key={j.id} className={cx('flex flex-col rounded-xl border p-3 transition',
                   a ? 'border-emerald-200 bg-emerald-50/40' : j.window.aktif ? 'border-orange-200 bg-orange-50/40' : 'border-slate-200')}
@@ -333,48 +337,56 @@ export default function AbsensiGuru({ ctx }) {
                     </div>
                   ) : null}
 
-                  <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
-                    <button type="button" disabled={!bisa || busyId === j.id}
-                      onClick={() => checkin(j, 'hadir')}
-                      className={cx('btn btn-sm justify-center', bisa ? 'bg-emerald-600 text-white hover:brightness-95' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
-                      data-checkin={j.id} data-tour-id={index === 0 ? 'btn-checkin-guru' : undefined}>
-                      {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <UserCheck size={13} />} Check-in Hadir
-                    </button>
-                    <button type="button" disabled={!bisa || busyId === j.id}
-                      onClick={() => setAlasan({ slot: j, status: 'sakit' })}
-                      className={cx('btn btn-sm justify-center', bisa ? 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
-                      data-sakit={j.id}>
-                      <Stethoscope size={13} /> Sakit
-                    </button>
-                    <button type="button" disabled={!bisa || busyId === j.id}
-                      onClick={() => setAlasan({ slot: j, status: 'izin' })}
-                      className={cx('btn btn-sm justify-center', bisa ? 'border border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
-                      data-izin={j.id}>
-                      <UserRoundX size={13} /> Izin
-                    </button>
-                  </div>
-                  {a ? (
-                    <button className={cx('btn-sm mt-1.5 justify-center',
-                      !j.bisa_jurnal ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400'
-                        : j.alur && j.alur.selesai ? 'btn-ghost' : 'btn-soft')}
-                        disabled={!j.bisa_jurnal}
-                        title={!j.bisa_jurnal ? 'Hanya guru pemilik sesi atau admin yang dapat melengkapi jurnal.' : undefined}
-                        onClick={() => setJurnal({ slot: j })} data-jurnal={j.id}>
-                      {j.alur && j.alur.selesai ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
-                      {j.alur && j.alur.selesai ? 'Laporan lengkap' : 'Lanjutkan: Absensi → Jurnal → Foto'}
-                    </button>
-                  ) : !j.window.aktif ? (
-                    <p className="mt-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold text-slate-400">
-                      <Lock size={11} /> Tombol terkunci{autoAktif ? ' · akan tercatat ALFA otomatis' : ''}
+                  {penugasan ? (
+                    <p className="mt-2 rounded-lg border border-violet-100 bg-violet-50 px-2.5 py-2 text-[11px] font-medium text-violet-800">
+                      Isi absensi siswa dan jurnal pada menu Guru Piket & Pengganti. Kehadiran tercatat otomatis setelah presensi lengkap.
                     </p>
-                  ) : null}
+                  ) : (
+                    <>
+                      <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+                        <button type="button" disabled={!bisa || busyId === j.id}
+                          onClick={() => checkin(j, 'hadir')}
+                          className={cx('btn btn-sm justify-center', bisa ? 'bg-emerald-600 text-white hover:brightness-95' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
+                          data-checkin={j.id} data-tour-id={index === 0 ? 'btn-checkin-guru' : undefined}>
+                          {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <UserCheck size={13} />} Check-in Hadir
+                        </button>
+                        <button type="button" disabled={!bisa || busyId === j.id}
+                          onClick={() => setAlasan({ slot: j, status: 'sakit' })}
+                          className={cx('btn btn-sm justify-center', bisa ? 'border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
+                          data-sakit={j.id}>
+                          <Stethoscope size={13} /> Sakit
+                        </button>
+                        <button type="button" disabled={!bisa || busyId === j.id}
+                          onClick={() => setAlasan({ slot: j, status: 'izin' })}
+                          className={cx('btn btn-sm justify-center', bisa ? 'border border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100' : 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400')}
+                          data-izin={j.id}>
+                          <UserRoundX size={13} /> Izin
+                        </button>
+                      </div>
+                      {a ? (
+                        <button className={cx('btn-sm mt-1.5 justify-center',
+                          !j.bisa_jurnal ? 'cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400'
+                            : j.alur && j.alur.selesai ? 'btn-ghost' : 'btn-soft')}
+                            disabled={!j.bisa_jurnal}
+                            title={!j.bisa_jurnal ? 'Hanya guru pemilik sesi atau admin yang dapat melengkapi jurnal.' : undefined}
+                            onClick={() => setJurnal({ slot: j })} data-jurnal={j.id}>
+                          {j.alur && j.alur.selesai ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                          {j.alur && j.alur.selesai ? 'Laporan lengkap' : 'Lanjutkan: Absensi → Jurnal → Foto'}
+                        </button>
+                      ) : !j.window.aktif ? (
+                        <p className="mt-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold text-slate-400">
+                          <Lock size={11} /> Tombol terkunci{autoAktif ? ' · akan tercatat ALFA otomatis' : ''}
+                        </p>
+                      ) : null}
+                    </>
+                  )}
 
                   {/* Tukar posisi mapel dan jadwal dengan guru lain pada pekan ini. */}
                   {j.tukar ? (
                     <p className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-violet-50 px-2 py-1.5 text-[11px] font-semibold text-violet-800" data-tukar-aktif={j.id}>
                       <Repeat size={12} />
                       {j.tukar.jenis === 'penugasan'
-                        ? <>Slot ditugaskan kepada <b>{j.tukar.ke_nama}</b>. Check-in guru utama dinonaktifkan.</>
+                        ? <>Slot ditugaskan kepada <b>{j.tukar.ke_nama}</b>. Absensi siswa dan jurnal diisi melalui menu Guru Piket & Pengganti.</>
                         : Number(j.tukar.ke_guru) === Number(data?.saya?.id)
                         ? <>Sesi pengganti dari <b>{j.tukar.dari_nama}</b> (tukar jadwal pekan ini)</>
                         : <>Ditukar ke <b>{j.tukar.ke_nama}</b> untuk pekan ini</>}
@@ -675,7 +687,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 }
 
 /* ---------------- modal jurnal mengajar & foto (setelah check-in) ---------------- */
-function ModalJurnal({ open, slot, cfg, tanggal, user, onClose, onSaved }) {
+export function ModalJurnal({ open, slot, cfg, tanggal, user, startAbsensi = false, onClose, onSaved, onPresensiSaved }) {
   const toast = useToast();
   const [materi, setMateri] = useState('');
   const [catatan, setCatatan] = useState('');
@@ -702,11 +714,12 @@ function ModalJurnal({ open, slot, cfg, tanggal, user, onClose, onSaved }) {
     setMateri(a?.materi || '');
     setCatatan(a?.catatan || '');
     setFoto(a?.foto_url ? { url: a.foto_url, base64: '', nama: '', size: 0 } : null);
-    setPresensiMode(false);
+    setPresensiMode(!!startAbsensi);
     setPresensiDetail(null);
     setPresensiError('');
     muatAlur();
-  }, [open, slot, muatAlur]);
+    if (startAbsensi) bukaAbsensiSiswa();
+  }, [open, slot, muatAlur, startAbsensi]);
 
   const langkahAbsensi = alur?.absensi_siswa || { total: 0, terisi: 0, lengkap: false };
   const langkahJurnal = alur?.jurnal || { lengkap: false, min: 0 };
@@ -741,6 +754,7 @@ function ModalJurnal({ open, slot, cfg, tanggal, user, onClose, onSaved }) {
       })
     } : detail);
     muatAlur();
+    onPresensiSaved?.();
     return result;
   }
 

@@ -53,8 +53,6 @@ export default function RekapAbsensiGuru({ ctx }) {
   const hitung = data?.hitung || {};
   const rows = data?.rows || [];
   const guru = data?.guru || [];
-  const alphaTotal = (hitung.A || 0) + (hitung.belum || 0);
-
   const detail = useMemo(() => rows, [rows]);
 
   return (
@@ -120,12 +118,13 @@ export default function RekapAbsensiGuru({ ctx }) {
         </div>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <Stat label="Total Mapel / Hari" value={hitung.total || 0} sub={data?.label} icon={CalendarRange} tone="sky" />
         <Stat label="Hadir" value={hitung.H || 0} sub="absensi tercatat" icon={UserCheck} tone="emerald" />
         <Stat label="Izin" value={hitung.I || 0} sub="dengan keterangan" icon={Users} tone="violet" />
         <Stat label="Sakit" value={hitung.S || 0} sub="dengan keterangan" icon={Users} tone="orange" />
-        <Stat label="Alpha / Belum Absen" value={alphaTotal} sub="perlu tindak lanjut" icon={Users} tone="rose" />
+        <Stat label="Alpha" value={hitung.A || 0} sub="jadwal terlewat tanpa absensi" icon={Users} tone="rose" />
+        <Stat label="Belum Dicatat" value={hitung.belum || 0} sub="jadwal belum selesai" icon={Users} tone="sky" />
       </div>
 
       <div className="tabs">
@@ -151,7 +150,7 @@ export default function RekapAbsensiGuru({ ctx }) {
                   <tr>
                     <th>No</th><th>Nama Guru</th><th>Mata Pelajaran</th>
                     <th className="c">Hadir</th><th className="c">Izin</th><th className="c">Sakit</th>
-                    <th className="c">Alpha</th><th className="c">Total Mapel/Hari</th><th className="c">% Hadir</th><th className="c">Jurnal</th>
+                    <th className="c">Alpha</th><th className="c">Belum Dicatat</th><th className="c">Total Mapel/Hari</th><th className="c">% Hadir</th><th className="c">Jurnal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -159,12 +158,12 @@ export default function RekapAbsensiGuru({ ctx }) {
                     <tr key={g.guru_id}>
                       <td className="c">{i + 1}</td>
                       <td className="font-semibold text-slate-700">{g.guru_nama}</td>
-                      <td className="text-[11.5px] text-slate-500">{g.mapel.join(', ') || '-'}</td>
+                      <td className="text-[11.5px] text-slate-500">{g.mapel_kosong ? '' : (g.mapel.join(', ') || '-')}</td>
                       <td className="c text-emerald-700 font-bold">{g.H}</td>
                       <td className="c">{g.I}</td>
                       <td className="c">{g.S}</td>
-                      <td className="c text-rose-700 font-bold">{g.A_total}</td>
-                      <td className="c">{g.total}</td>
+                      <td className="c text-rose-700 font-bold">{g.A}</td>
+                      <td className="c">{g.belum}</td><td className="c">{g.total}</td>
                       <td className="c">{g.persen}%</td>
                       <td className="c">{g.materi}</td>
                     </tr>
@@ -174,7 +173,8 @@ export default function RekapAbsensiGuru({ ctx }) {
                   <tr>
                     <td colSpan={3}>JUMLAH</td>
                     <td className="c">{hitung.H}</td><td className="c">{hitung.I}</td><td className="c">{hitung.S}</td>
-                    <td className="c">{alphaTotal}</td><td className="c">{hitung.total}</td><td className="c" colSpan={2}></td>
+                    <td className="c">{hitung.A}</td><td className="c">{hitung.belum}</td><td className="c">{hitung.total}</td>
+                    <td className="c"></td><td className="c"></td>
                   </tr>
                 </tfoot>
               </table>
@@ -200,7 +200,9 @@ export default function RekapAbsensiGuru({ ctx }) {
                       <td>{r.hari_label}</td>
                       <td className="font-semibold text-slate-700">{r.guru_nama}</td>
                       <td>{r.mapel_nama}</td>
-                      <td className="whitespace-nowrap text-[11.5px]">{r.jam}</td>
+                      <td className="whitespace-nowrap text-[11.5px]">
+                        {r.label_sesi ? <b className="mr-1">{r.label_sesi}</b> : null}{r.jam}
+                      </td>
                       <td className="text-[11.5px]">{r.kelas_nama}</td>
                       <td>
                         <span className={cx('badge',
@@ -221,7 +223,8 @@ export default function RekapAbsensiGuru({ ctx }) {
 
       <Alert tone="info" title="Cara membaca rekap">
         Status <b>Hadir</b>/<b>Izin</b>/<b>Sakit</b>/<b>Alpha</b> dihitung satu kali per mapel per hari, termasuk mapel yang
-        berlangsung dalam beberapa jam berurutan. Mapel yang belum memiliki absensi dihitung sebagai <b>Alpha / Belum Absen</b>.
+        berlangsung dalam beberapa jam berurutan. Jadwal yang belum melewati jam pelajaran dihitung sebagai <b>Belum Dicatat</b>;
+        jadwal tanpa check-in setelah jam pelajaran berakhir dihitung sebagai <b>Alpha</b>.
         Gunakan tombol
         <b> Excel</b> atau <b>PDF/Cetak</b> untuk laporan resmi.
       </Alert>

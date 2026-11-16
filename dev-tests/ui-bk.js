@@ -72,7 +72,7 @@ const ok = (name, cond, extra) => {
         siswa_id: s.id, status: ['A', 'B', 'S', 'I', 'H'][i], keterangan: i < 4 ? 'catatan' : ''
       }));
       await post('/api/absensi-siswa/simpan', { sesi_id: sesi.sesi.id, items });
-      return { kelasId, jumlah: rows.length, sesi: sesi.sesi.id,
+      return { kelasId, jumlah: rows.length, sesi: sesi.sesi.id, jadwalId: slot.id, guruId: guru.id,
         siswa: rows.slice(0, 4).map(x => ({ nama: x.nama, nisn: x.nisn || x.nis, kelas_id: x.kelas_id, tanggal_lahir: x.tanggal_lahir })) };
     }, { today: TODAY, hari: HARI, mulai, selesai });
     ok('data absensi uji siap', !!setup.kelasId && !!setup.sesi, JSON.stringify(setup));
@@ -87,6 +87,16 @@ const ok = (name, cond, extra) => {
     ok('filter guru & mapel tersedia',
       await page.locator('[data-filter-guru]').count() > 0 && await page.locator('[data-filter-mapel]').count() > 0);
     ok('tombol ekspor Excel & cetak PDF', await page.locator('[data-export-guru]').count() > 0 && await page.locator('[data-cetak-guru]').count() > 0);
+    const rekapHariIni = await page.evaluate(async () =>
+      (await fetch('/api/rekap/absensi-guru?periode=harian').then(r => r.json())));
+    const barisBelum = (rekapHariIni.rows || []).find(r => Number(r.jadwal_id) === Number(setup.jadwalId));
+    const ringkasanGuru = (rekapHariIni.guru || []).find(g => Number(g.guru_id) === Number(setup.guruId));
+    ok('jadwal hari ini yang belum selesai tercatat sebagai Belum Dicatat, bukan Alpha',
+      barisBelum?.status === 'belum' && Number(ringkasanGuru?.A) === 0 && Number(ringkasanGuru?.belum) === 1,
+      JSON.stringify({ status: barisBelum?.status, A: ringkasanGuru?.A, belum: ringkasanGuru?.belum }));
+    const headerRekap = await page.locator('[data-tbl="rekap-guru"] thead').innerText();
+    ok('ringkasan memisahkan kolom Alpha dan Belum Dicatat',
+      /Alpha/i.test(headerRekap) && /Belum Dicatat/i.test(headerRekap), headerRekap);
     await page.selectOption('[data-periode]', 'tahun');
     await page.waitForTimeout(800);
     ok('ganti periode memuat ulang tanpa error', errors.length === 0, errors.join(' | '));

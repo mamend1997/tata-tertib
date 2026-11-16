@@ -26,7 +26,7 @@ const parseISO = (s) => new Date(String(s) + 'T00:00:00');
 const addDays = (iso, n) => { const d = parseISO(iso); d.setDate(d.getDate() + n); return isoOf(d); };
 const cap = (s, n = 5000) => s.slice(0, n);
 
-const GURU_STATUS_LABEL = { hadir: 'Hadir', izin: 'Izin', sakit: 'Sakit', alpha: 'Alpha', belum: 'Belum Absen' };
+const GURU_STATUS_LABEL = { hadir: 'Hadir', izin: 'Izin', sakit: 'Sakit', alpha: 'Alpha', belum: 'Belum Dicatat' };
 const SISWA_LABEL = { H: 'Hadir', S: 'Sakit', I: 'Izin', A: 'Alpha', B: 'Bolos' };
 
 module.exports = function mount(api) {
@@ -115,7 +115,6 @@ module.exports = function mount(api) {
       const hari = dbm.hariOf(d);
       const slotsHari = slots.filter(s => Number(s.hari) === hari);
       const tukar = dbm.tukarMap(d);
-      const sesiHari = dbm.sesiOfHari(cfg, hari);
       for (const mapelHari of dbm.absensiMapelHari(slotsHari, tukar)) {
         const group = mapelHari.rows;
         const s = group[0];
@@ -126,16 +125,26 @@ module.exports = function mount(api) {
         const effectiveMapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(effectiveMapelId) || {};
         const records = ids.map(id => absMap.get(`${id}|${d}`)).filter(Boolean);
         const absences = ids.map(id => izinMap.get(`${id}|${d}`)).filter(Boolean);
-        const jam = group.map(slot => {
-          const sesi = sesiHari.find(x => Number(x.idx) === Number(slot.sesi));
-          return sesi ? `${sesi.mulai}–${sesi.selesai}` : '';
-        }).filter(Boolean).join(', ');
-        const status = records.length
-          ? (['alpha', 'izin', 'sakit', 'hadir'].find(x => records.some(a => a.status === x)) || 'hadir')
-          : 'belum';
+        if (!records.length && !absences.length && dbm.kalenderNonaktif(d)) continue;
+        const waktu = dbm.absensiRentangSesi(group, cfg);
+        let status;
+        if (records.length) {
+          status = ['alpha', 'izin', 'sakit', 'hadir'].find(x => records.some(a => a.status === x)) || 'hadir';
+        } else if (d < batas) {
+          status = 'alpha';
+        } else {
+          const window = dbm.absensiWindowKelompok(group, d, cfg);
+          const tutup = dbm.jamMenit(window.tutup);
+          status = tutup !== null && dbm.nowMenit() > tutup ? 'alpha' : 'belum';
+        }
         const attendance = records[0] || null;
         const actualGuruId = attendance && Number(attendance.guru_id) || effectiveGuruId;
         const actualGuru = db.prepare('SELECT nama FROM users WHERE id=?').get(actualGuruId) || {};
+        const penugasanPengganti = group.some(slot => {
+          const assignment = tukar.get(Number(slot.id));
+          return assignment && String(assignment.jenis || '') === 'penugasan'
+            && Number(assignment.ke_guru) === actualGuruId;
+        });
         const journalText = field => [...new Set(records.map(a => String(a[field] || '').trim()).filter(Boolean))].join(' · ');
         const firstFoto = records.find(a => a.foto_url);
         const cocokFilter = (!mapelId || effectiveMapelId === mapelId)
@@ -146,14 +155,15 @@ module.exports = function mount(api) {
           guru_id: actualGuruId, guru_nama: actualGuru.nama || s.guru_nama || '',
           guru_asli: s.guru_nama, jadwal_id: Number(group[0].id), jadwal_ids: ids,
           absensi_id: attendance ? attendance.id : null, absensi_ids: records.map(a => a.id),
-          mapel_id: effectiveMapelId, mapel_nama: effectiveMapel.nama || s.mapel_nama || '',
-          sesi: group[0].sesi, jam, kelas_nama: s.kelas_nama || '',
+          mapel_id: effectiveMapelId, mapel_nama: penugasanPengganti ? '' : (effectiveMapel.nama || s.mapel_nama || ''),
+          penugasan_pengganti: penugasanPengganti,
+          sesi: group[0].sesi, label_sesi: waktu.label_sesi, jam: waktu.jam, kelas_nama: s.kelas_nama || '',
           status, status_label: GURU_STATUS_LABEL[status] || status,
           materi: journalText('materi'),
           catatan: journalText('catatan'),
           waktu_submit: attendance ? (attendance.waktu_submit || '') : '',
           foto_url: firstFoto ? firstFoto.foto_url : '',
-          alpha: status === 'belum' || status === 'alpha' ? 1 : 0,
+          alpha: status === 'alpha' ? 1 : 0,
           ada_izin: absences.length > 0
         };
         rows.push(baseRow);
@@ -165,6 +175,7 @@ module.exports = function mount(api) {
               ...baseRow, guru_id: Number(iz.guru_id), guru_nama: guruAsli.nama || s.guru_nama,
               absensi_id: iz.id, absensi_ids: absences.map(a => a.id), dari_izin: true,
               status: iz.status, status_label: GURU_STATUS_LABEL[iz.status] || iz.status,
+              mapel_nama: effectiveMapel.nama || s.mapel_nama || '', penugasan_pengganti: false,
               materi: iz.materi || '', catatan: iz.catatan || '', waktu_submit: iz.waktu_submit || '',
               foto_url: iz.foto_url || '', alpha: 0, catatan_pengganti: 'digantikan guru lain'
             });
@@ -179,7 +190,7 @@ module.exports = function mount(api) {
     const perGuru = new Map();
     for (const row of rows) {
       const o = perGuru.get(row.guru_id) || {
-        guru_id: row.guru_id, guru_nama: row.guru_nama,
+        guru_id: row.guru_id, guru_nama: row.guru_nama, mapel_kosong: true,
         H: 0, I: 0, S: 0, A: 0, belum: 0, total: 0, mapel: new Set(), materi: 0
       };
       if (row.status === 'hadir') o.H++;
@@ -189,12 +200,13 @@ module.exports = function mount(api) {
       else o.belum++;
       if (row.status === 'hadir' && String(row.materi).trim().length >= 4) o.materi++;
       if (row.mapel_nama) o.mapel.add(row.mapel_nama);
+      if (!row.penugasan_pengganti) o.mapel_kosong = false;
       o.total++;
       perGuru.set(row.guru_id, o);
     }
     const guru = [...perGuru.values()].map(o => ({
-      ...o, mapel: [...o.mapel], A_total: o.A + o.belum,
-      persen: o.total ? Math.round((o.H / o.total) * 1000) / 10 : 0
+      ...o, mapel: [...o.mapel], mapel_kosong: o.mapel_kosong && !o.mapel.size,
+      persen: o.total > o.belum ? Math.round((o.H / (o.total - o.belum)) * 1000) / 10 : 0
     })).sort((a, b) => String(a.guru_nama).localeCompare(String(b.guru_nama)));
     const hitung = { H: 0, I: 0, S: 0, A: 0, belum: 0, total: 0 };
     for (const g of guru) {
@@ -226,7 +238,7 @@ module.exports = function mount(api) {
     ];
     const body = data.rows.map((r, i) => [
       i + 1, lib.tglID(r.tanggal), r.hari_label, r.guru_nama, r.mapel_nama,
-      r.jam, r.kelas_nama, r.status_label, r.materi, r.catatan
+      [r.label_sesi, r.jam].filter(Boolean).join(' · '), r.kelas_nama, r.status_label, r.materi, r.catatan
     ]);
     return lib.xlsxBuffer('Rekap Absensi Guru', [...head, ...body], [5, 13, 9, 26, 24, 13, 20, 14, 42, 32]);
   }
@@ -235,25 +247,25 @@ module.exports = function mount(api) {
     const st = dbm.allSettings();
     const rows = data.rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td><td class="c">${e(lib.tglID(r.tanggal))}</td><td class="c">${e(r.hari_label)}</td>
-      <td>${e(r.guru_nama)}</td><td>${e(r.mapel_nama)}</td><td class="c">${e(r.jam)}</td>
+      <td>${e(r.guru_nama)}</td><td>${e(r.mapel_nama)}</td><td class="c">${e([r.label_sesi, r.jam].filter(Boolean).join(' · '))}</td>
       <td>${e(r.kelas_nama)}</td><td class="c">${e(r.status_label)}</td>
       <td>${e(r.materi || '-')}</td><td>${e(r.catatan || '')}</td></tr>`).join('')
       || '<tr><td colspan="10" class="c muted">Belum ada data pada periode ini.</td></tr>';
     const ringkas = data.guru.map(g => `<tr><td>${e(g.guru_nama)}</td><td>${e(g.mapel.join(', '))}</td>
-      <td class="c">${g.H}</td><td class="c">${g.I}</td><td class="c">${g.S}</td><td class="c">${g.A_total}</td>
-      <td class="c">${g.total}</td><td class="c">${g.persen}%</td></tr>`).join('');
+      <td class="c">${g.H}</td><td class="c">${g.I}</td><td class="c">${g.S}</td><td class="c">${g.A}</td>
+      <td class="c">${g.belum}</td><td class="c">${g.total}</td><td class="c">${g.persen}%</td></tr>`).join('');
     const body = `
       <div class="meta">
         <span>Periode: <b>${e(data.label)}</b></span>
         <span>Tahun Pelajaran: <b>${e((data.ta || {}).nama || '-')}</b></span>
         <span>Total mapel/hari: <b>${data.hitung.total}</b></span>
         <span>Hadir: <b>${data.hitung.H}</b> · Izin: <b>${data.hitung.I}</b> · Sakit: <b>${data.hitung.S}</b> ·
-          Alpha/Belum: <b>${data.hitung.A + data.hitung.belum}</b></span>
+          Alpha: <b>${data.hitung.A}</b> · Belum Dicatat: <b>${data.hitung.belum}</b></span>
       </div>
       <h3 class="sec">Ringkasan per Guru</h3>
       <table><thead><tr><th>Nama Guru</th><th>Mata Pelajaran</th><th>Hadir</th><th>Izin</th><th>Sakit</th>
-        <th>Alpha</th><th>Total Mapel/Hari</th><th>% Hadir</th></tr></thead>
-        <tbody>${ringkas || '<tr><td colspan="8" class="c muted">-</td></tr>'}</tbody></table>
+        <th>Alpha</th><th>Belum Dicatat</th><th>Total Mapel/Hari</th><th>% Hadir</th></tr></thead>
+        <tbody>${ringkas || '<tr><td colspan="9" class="c muted">-</td></tr>'}</tbody></table>
       <h3 class="sec">Rincian Absensi & Jurnal Mengajar</h3>
       <table><thead><tr><th>No</th><th>Tanggal</th><th>Hari</th><th>Nama Guru</th><th>Mata Pelajaran</th>
         <th>Jam</th><th>Kelas</th><th>Status</th><th>Jurnal Materi</th><th>Catatan</th></tr></thead>

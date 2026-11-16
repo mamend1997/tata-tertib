@@ -256,11 +256,22 @@ const ok = (name, cond, extra) => {
     ok('tombol Batal muncul untuk penugasan', await page.locator('[data-batal]').count() >= 1);
     ok('kolom guru efektif berubah menjadi pengganti',
       /Pengganti/i.test(await page.locator('[data-tbl="guru-pengganti"]').innerText()));
+    ok('penugasan menampilkan aksi absensi siswa dan jurnal di menu pengganti',
+      await page.locator('[data-absensi-pengganti]').count() >= 1
+        && await page.locator('[data-jurnal-pengganti]').count() >= 1);
     ok('kontrol Pilih Semua tersedia pada riwayat', await page.locator('[data-riwayat-all]').count() === 1);
     ok('riwayat aktif tidak dapat dipilih untuk dihapus',
       await page.locator('[data-riwayat-item]').count() >= 1
         && await page.locator('[data-riwayat-item]').first().isDisabled()
         && await page.locator('[data-riwayat-hapus]').isDisabled());
+    await page.locator('[data-riwayat-detail-btn]').first().click();
+    await page.waitForSelector('[data-riwayat-detail]', { timeout: 15000 });
+    ok('tombol Detail membuka modal riwayat pengganti',
+      await page.locator('[data-modal-title="Detail Riwayat Guru Pengganti"]').count() === 1);
+    ok('modal riwayat menyediakan detail absensi siswa dan jurnal',
+      await page.locator('[data-detail-absensi-siswa]').count() >= 1
+        && await page.locator('[data-detail-jurnal]').count() >= 1);
+    await page.locator('[data-modal-title="Detail Riwayat Guru Pengganti"] button[aria-label="Tutup"]').click();
     page.on('dialog', dialog => dialog.accept());
     await page.locator('[data-batal]').first().click();
     await page.waitForTimeout(1200);

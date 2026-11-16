@@ -4368,6 +4368,36 @@ function absensiWindowKelompok(items, tanggal, cfg) {
     sesi_akhir: sesiAkhir
   };
 }
+/** Gabungkan jam pelajaran berurutan menjadi rentang untuk tampilan rekap. */
+function absensiRentangSesi(items, cfg) {
+  if (!Array.isArray(items) || !items.length) return { label_sesi: '', jam: '' };
+  const c = cfg || jadwalConfig();
+  const daftar = sesiOfHari(c, items[0].hari);
+  const terurut = [...items].sort((a, b) => Number(a.sesi) - Number(b.sesi));
+  const rentang = [];
+  for (const row of terurut) {
+    const sesi = daftar.find(x => Number(x.idx) === Number(row.sesi));
+    if (!sesi || sesi.istirahat) continue;
+    const no = Number(sesi.no) || 0;
+    const terakhir = rentang[rentang.length - 1];
+    const jarak = terakhir
+      ? jamMenit(sesi.mulai) - jamMenit(terakhir.akhir.selesai)
+      : null;
+    if (terakhir && no > 0 && terakhir.noAkhir > 0 && no === terakhir.noAkhir + 1
+      && jarak !== null && jarak <= 30) {
+      terakhir.akhir = sesi;
+      terakhir.noAkhir = no;
+    } else {
+      rentang.push({ awal: sesi, akhir: sesi, noAwal: no, noAkhir: no });
+    }
+  }
+  return {
+    label_sesi: rentang.map(x => x.noAwal && x.noAkhir
+      ? (x.noAwal === x.noAkhir ? `Jam ke-${x.noAwal}` : `Jam ke-${x.noAwal}–${x.noAkhir}`)
+      : x.awal.label).join(', '),
+    jam: rentang.map(x => `${x.awal.mulai}–${x.akhir.selesai}`).join(', ')
+  };
+}
 /* ---------- pencatat presensi (audit trail halaman publik) ---------- */
 /** pencatat terakhir sebuah sesi presensi (nama & kelas) */
 function pencatatOf(sesiId) {
@@ -4548,6 +4578,11 @@ function absensiGuruRekap(tanggal, taId) {
     const ids = group.map(x => Number(x.id));
     const t = tukar.get(Number(s.id));
     const gid = mapelHari.guru_id;
+    const penugasanPengganti = group.some(slot => {
+      const assignment = tukar.get(Number(slot.id));
+      return assignment && String(assignment.jenis || '') === 'penugasan'
+        && Number(assignment.ke_guru) === Number(gid);
+    });
     if (!gid) continue;
     const key = gid;
     const guruNama = t ? t.ke_nama : (s.guru_nama || ('Guru #' + gid));
@@ -4568,16 +4603,13 @@ function absensiGuruRekap(tanggal, taId) {
     else status = 'belum';
     const mapelId = mapelHari.mapel_id;
     const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(mapelId) || {};
-    const sesiList = sesiOfHari(cfg, hari);
-    const jam = group.map(slot => {
-      const sesi = sesiList.find(x => Number(x.idx) === Number(slot.sesi));
-      return sesi ? `${sesi.mulai}–${sesi.selesai}` : '';
-    }).filter(Boolean).join(', ');
+    const waktu = absensiRentangSesi(group, cfg);
     entry[status] = (entry[status] || 0) + 1;
     entry.slots.push({
-      jadwal_id: s.id, jadwal_ids: ids, mapel_id: mapelId, mapel: mapel.nama || s.mapel_nama,
+      jadwal_id: s.id, jadwal_ids: ids, mapel_id: mapelId,
+      mapel: penugasanPengganti ? '' : (mapel.nama || s.mapel_nama), penugasan_pengganti: penugasanPengganti,
       kelas: s.kelas_nama, sesi: group[0].sesi,
-      jam,
+      label_sesi: waktu.label_sesi, jam: waktu.jam,
       status, absensi_id: a ? a.id : null, waktu_submit: a ? a.waktu_submit : '',
       guru_asli: t ? (s.guru_nama || '') : '', tukar: !!t
     });
@@ -4713,7 +4745,7 @@ module.exports = {
   userRoleList, roleLabelOf, permsFor, seedPermissions,
   HARI_LABEL, DEFAULT_HARI, DEFAULT_SESI, ABSENSI_SISWA_STATUS, ABSENSI_GURU_STATUS,
   jamMenit, menitJam, nowMenit, hariOf, tanggalPanjang, jadwalConfig, jadwalDesain, jadwalTampil, normSesi, sesiBernomor, sesiHariMap, sesiOfHari, mapelList,
-  jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiKelompok, absensiMapelHari, absensiWindowKelompok,
+  jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiKelompok, absensiMapelHari, absensiWindowKelompok, absensiRentangSesi,
   absensiGuruOf, absensiGuruRekap, autoAlfaGuru, absensiAlur,
   targetJamConfig, kelasTargetJam, bebanKelas, targetKelasRows,
   guruTargetMap, guruTargetRows, guruTargetSave, hariEfektifBulan,
