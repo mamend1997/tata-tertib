@@ -1670,6 +1670,15 @@ ${isi}
      ================================================================= */
   const kelompokJadwal = (row, rows, cfg) => dbm.absensiKelompok(row, rows, cfg);
   const jendelaKelompok = (items, tanggal, cfg) => dbm.absensiWindowKelompok(items, tanggal, cfg);
+  const sesiSudahLewat = (items, tanggal, cfg) => {
+    const tgl = String(tanggal || '').slice(0, 10);
+    const hariIni = dbm.today();
+    if (tgl < hariIni) return true;
+    if (tgl > hariIni) return false;
+    const window = jendelaKelompok(items, tgl, cfg);
+    const selesai = dbm.jamMenit((window.sesi_akhir || window.sesi || {}).selesai);
+    return selesai !== null && dbm.nowMenit() > selesai + (Number(cfg?.toleransiTutup) || 0);
+  };
   const mapelEfektif = (row, tukar) => {
     const id = tukar && Number(tukar.mapel_id) ? Number(tukar.mapel_id) : Number(row.mapel_id) || 0;
     if (id === Number(row.mapel_id)) return {};
@@ -2668,7 +2677,10 @@ ${isi}
           dibuat_nama: t.dibuat_nama || '', dibuat_at: t.created_at || ''
         } : null,
         perlu_pengganti: !!(iz && ['izin', 'sakit', 'alpha'].includes(String(iz.status).toLowerCase())),
-        window: { aktif: !!w.aktif, alasan: w.alasan || '', selesai: w.selesai || '' }
+        window: {
+          aktif: !!w.aktif, alasan: w.alasan || '', selesai: w.selesai || '',
+          lewat: sesiSudahLewat(group, tanggal, cfg)
+        }
       };
     }).filter(x => !x.istirahat);
     /* guru tidak hadir hari itu — gabungan rekam izin & absensi_guru (izin/sakit/alpha).
@@ -2989,7 +3001,11 @@ ${isi}
       return fail(res, 400, `Slot ini untuk hari ${dbm.HARI_LABEL[Number(row.hari)] || '-'}, bukan ${dbm.HARI_LABEL[dbm.hariOf(tanggal)] || tanggal}.`);
     }
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(b)).filter(r => Number(r.hari) === Number(row.hari));
-    const group = kelompokJadwal(row, semua, dbm.jadwalConfig());
+    const cfg = dbm.jadwalConfig();
+    const group = kelompokJadwal(row, semua, cfg);
+    if (sesiSudahLewat(group, tanggal, cfg)) {
+      return fail(res, 403, 'Jam pelajaran sudah berakhir. Guru pengganti tidak dapat ditunjuk atau diganti setelah sesi terlewat.', { lewat: true });
+    }
     const keId = Number(b.ke_guru) || 0;
     if (!keId) return fail(res, 400, 'Pilih guru pengganti terlebih dahulu.');
     const ke = db.prepare('SELECT * FROM users WHERE id=?').get(keId);

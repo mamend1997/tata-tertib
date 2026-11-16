@@ -145,6 +145,17 @@ function startWa() {
     const slotBesok = r.body.id;
     ok('slot untuk hari esok dibuat', r.status === 200, r.body?.error);
 
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}`);
+    const slotLewat = (r.body.slots || []).find(s => Number(s.jadwal_id) === Number(slotLalu));
+    ok('slot yang jamnya terlewat ditandai pada daftar pengganti', slotLewat?.window?.lewat === true,
+      JSON.stringify(slotLewat?.window));
+    r = await req('/api/guru-pengganti/tunjuk', {
+      method: 'POST',
+      body: { jadwal_id: slotLalu, tanggal: TODAY, ke_guru: gB, alasan: 'uji sesi yang sudah lewat' }
+    });
+    ok('server menolak penunjukan atau pergantian pada sesi terlewat',
+      r.status === 403 && r.body?.lewat === true, `${r.status} ${r.body?.error || ''}`);
+
     r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gA}`);
     const guruRekapAwal = (r.body.guru || []).find(g => Number(g.guru_id) === Number(gA));
     const barisLampau = (r.body.rows || []).find(x => (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(slotLalu)));

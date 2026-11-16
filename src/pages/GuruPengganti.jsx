@@ -240,8 +240,10 @@ export default function GuruPengganti({ ctx }) {
                 {slots.map(s => {
                   const izin = s.izin ? s.izin.status : '';
                   const p = s.pengganti;
+                  const lewat = Boolean(s.window?.lewat);
                   return (
                     <tr key={s.jadwal_id} data-slot-pengganti={s.jadwal_id}
+                      data-slot-pengganti-lewat={lewat ? '1' : '0'}
                       className={cx(izin && !p && 'bg-rose-50/50')}>
                       <td className="c font-bold">{s.label_sesi}</td>
                       <td className="whitespace-nowrap text-[11.5px]">{s.jam}</td>
@@ -268,9 +270,11 @@ export default function GuruPengganti({ ctx }) {
                       </td>
                       <td className="c">
                         <div className="flex items-center justify-center gap-1">
-                          <button className={cx('btn-sm', p ? 'btn-ghost' : 'btn-soft')} disabled={!bolehUbah}
+                          <button className={cx('btn-sm', p ? 'btn-ghost' : 'btn-soft')}
+                            disabled={!bolehUbah || lewat}
                             onClick={() => setPilihSlot(s)} data-tunjuk={s.jadwal_id}
-                            title={p ? 'Ganti guru pengganti' : 'Tunjuk guru pengganti'}>
+                            title={lewat ? 'Jam pelajaran sudah lewat. Guru pengganti tidak dapat ditunjuk atau diganti.'
+                              : p ? 'Ganti guru pengganti' : 'Tunjuk guru pengganti'}>
                             <UserPlus size={13} /> {p ? 'Ganti' : 'Tunjuk'}
                           </button>
                           {p && p.jenis === 'penugasan' ? (

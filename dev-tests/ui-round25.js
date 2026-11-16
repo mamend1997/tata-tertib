@@ -88,11 +88,15 @@ const ok = (name, cond, extra) => {
       });
       const siswa = (await get('/api/siswa?limit=12')).rows || [];
       const kelas = siswa[0].kelas_id;
+      const kelasLain = ((await get('/api/jadwal')).kelas || []).find(k => Number(k.id) !== Number(kelas));
       const m = (await post('/api/mapel/save', { nama: 'Informatika', kode: 'INF', guru_ids: [gA] })).id;
       const m2 = (await post('/api/mapel/save', { nama: 'Matematika', kode: 'MTK', guru_ids: [gB] })).id;
       const slotLalu = (await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: m, guru_id: gA, kelas_ids: [kelas], abaikan: 1 })).id;
       const slotKini = (await post('/api/jadwal/slot', { hari, sesi: 2, mapel_id: m, guru_id: gA, kelas_ids: [kelas], abaikan: 1 })).id;
       const slotNanti = (await post('/api/jadwal/slot', { hari, sesi: 3, mapel_id: m2, guru_id: gB, kelas_ids: [kelas], abaikan: 1 })).id;
+      const slotLewat = (await post('/api/jadwal/slot', {
+        hari, sesi: 1, mapel_id: m2, guru_id: gB, kelas_ids: [Number(kelasLain?.id) || Number(kelas)], abaikan: 1
+      })).id;
       const slotBesok = (await post('/api/jadwal/slot', { hari: (hari + 1) % 7, sesi: 2, mapel_id: m, guru_id: gA, kelas_ids: [kelas], abaikan: 1 })).id;
       /* presensi untuk diuji hapus */
       const sesiRow = await post('/api/absensi-siswa/sesi', { jadwal_id: slotKini, tanggal: '' });
@@ -100,7 +104,7 @@ const ok = (name, cond, extra) => {
       if (sesiRow.sesi) {
         await post('/api/absensi-siswa/simpan', { sesi_id: sesiRow.sesi.id, items: [{ siswa_id: s1.id, status: 'A' }] });
       }
-      return { gA, gB, kelas, slotLalu, slotKini, slotNanti, slotBesok, siswa: s1.nama };
+      return { gA, gB, kelas, slotLalu, slotKini, slotNanti, slotLewat, slotBesok, siswa: s1.nama };
     }, {
       hari: HARI,
       sesi: [
@@ -243,6 +247,10 @@ const ok = (name, cond, extra) => {
     await page.waitForTimeout(1000);
     ok('halaman guru piket & pengganti terbuka', await page.locator('[data-tbl="guru-pengganti"]').count() === 1);
     ok('daftar guru tidak hadir tampil', await page.locator('[data-tidak-hadir]').count() >= 1);
+    ok('slot terlewat ditandai oleh server',
+      await page.locator(`[data-slot-pengganti="${setup.slotLewat}"]`).getAttribute('data-slot-pengganti-lewat') === '1');
+    ok('tombol Tunjuk/Ganti pada slot terlewat dinonaktifkan',
+      await page.locator(`[data-tunjuk="${setup.slotLewat}"]`).isDisabled());
     await page.click(`[data-tunjuk="${setup.slotNanti}"]`);
     await page.waitForSelector('[data-modal-pengganti]', { timeout: 15000 });
     ok('modal penunjukan + daftar kandidat tampil', await page.locator('[data-kandidat]').count() >= 1);
