@@ -344,7 +344,8 @@ function AdminApp({ daftarAwal = false }) {
 
   const navItems = useMemo(() => {
     const nav = boot?.settings?.nav || [];
-    return nav.filter(n => !n.hidden && can(n.key, 'view'));
+    return nav.filter(n => !n.hidden && can(n.key, 'view')
+      && (!['absensi_guru', 'absensi_siswa'].includes(n.key) || boot?.absensi_menu_visible));
   }, [boot, can]);
 
   useEffect(() => {
@@ -352,6 +353,10 @@ function AdminApp({ daftarAwal = false }) {
     if (page === 'profil') return;
     if (page === 'audit-data') {
       if (boot.user.role !== 'admin') setPage('dashboard');
+      return;
+    }
+    if (['absensi_guru', 'absensi_siswa'].includes(page) && !boot.absensi_menu_visible) {
+      setPage(navItems[0]?.key || 'dashboard');
       return;
     }
     if (!can(page, 'view')) {
@@ -429,8 +434,8 @@ function AdminApp({ daftarAwal = false }) {
      dengan fallback 3 menu pertama bila data belum tersedia */
   const bottomNav = (() => {
     const dariServer = Array.isArray(boot.bottom_nav) ? boot.bottom_nav : [];
-    if (dariServer.length) return dariServer;
-    return navItems.slice(0, 3).map(n => ({ key: n.key, label: n.label, icon: n.icon }));
+    const tersedia = dariServer.length ? dariServer : navItems.map(n => ({ key: n.key, label: n.label, icon: n.icon }));
+    return tersedia.filter(n => !['absensi_guru', 'absensi_siswa'].includes(n.key) || boot.absensi_menu_visible);
   })();
 
   const ctx = {

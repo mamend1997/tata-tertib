@@ -1,11 +1,10 @@
 'use strict';
 /* =====================================================================
-   UI — CAKUPAN MENU ABSENSI UNTUK WAKASEK KESISWAAN (Playwright)
+   UI — MENU ABSENSI HANYA UNTUK GURU BERPENJADWAL / ADMIN (Playwright)
 
    Memastikan di antarmuka:
-   · Agenda "Jadwal Mengajar" menampilkan SELURUH guru (judul berubah)
-   · Tombol check-in slot guru lain NONAKTIF untuk Wakasek Kesiswaan
-   · Absensi Siswa per Mapel menampilkan semua sesi + tombol presensi aktif
+   · Wakasek Kesiswaan tidak melihat menu Absensi Guru Mapel / Absensi Siswa per Mapel
+   · Navigasi langsung ke halaman tersebut dialihkan
    · Tanpa error JS & tanpa overflow di 390px
 
    Jalankan: node dev-tests/ui-absensi-role.js
@@ -108,29 +107,18 @@ async function req(p, opt = {}) {
     await page.click('button[type="submit"]');
     await page.waitForTimeout(2200);
 
-    /* ---------- Absensi Guru Mapel ---------- */
+    /* ---------- menu absensi tersembunyi untuk Wakasek Kesiswaan ---------- */
+    const navText = await page.locator('aside nav').innerText();
+    ok('menu Absensi Guru Mapel tidak tampil', !/Absensi Guru Mapel/i.test(navText), navText);
+    ok('menu Absensi Siswa per Mapel tidak tampil', !/Absensi Siswa per Mapel/i.test(navText), navText);
     await page.goto(BASE + '/#/absensi_guru', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
-    const judulAgenda = await page.locator('[data-agenda-jadwal]').count() ? await page.locator('text=/Jadwal Mengajar/').first().innerText() : '';
-    ok('agenda menampilkan judul "Seluruh Guru" untuk Wakasek Kesiswaan', /Seluruh Guru/i.test(judulAgenda), judulAgenda);
-    const jumlahAgenda = await page.locator('[data-agenda-slot]').count();
-    ok('agenda memuat slot kedua guru (>= 2)', jumlahAgenda >= 2, String(jumlahAgenda));
-    const judulKartu = await page.locator('[data-slot-absensi]').count();
-    ok('daftar slot harian memuat seluruh guru (>= 2)', judulKartu >= 2, String(judulKartu));
-    const nonaktif = await page.locator('[data-agenda-terkunci]').count();
-    ok('slot guru lain menampilkan tombol nonaktif', nonaktif >= 1, String(nonaktif));
-    const adaTeksSesiLain = await page.locator('text=Sesi guru lain').count();
-    ok('tombol menjelaskan "Sesi guru lain"', adaTeksSesiLain >= 1, String(adaTeksSesiLain));
-
-    /* ---------- Absensi Siswa per Mapel ---------- */
+    ok('akses langsung Absensi Guru dialihkan', await page.locator('[data-agenda-jadwal]').count() === 0,
+      await page.locator('h2').first().innerText().catch(() => ''));
     await page.goto(BASE + '/#/absensi_siswa', { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2000);
-    const kartuSesi = await page.locator('[data-sesi-jadwal]').count();
-    ok('Absensi Siswa menampilkan semua sesi mapel (>= 2)', kartuSesi >= 2, String(kartuSesi));
-    const btnBuat = page.locator('[data-buat-sesi]').first();
-    ok('tombol "Buat Sesi & QR" tersedia & aktif', (await btnBuat.count()) > 0 && !(await btnBuat.isDisabled()));
-    const teksAll = await page.locator('text=/Seluruh jadwal hari ini/').count();
-    ok('keterangan "Seluruh jadwal hari ini" tampil', teksAll >= 1, String(teksAll));
+    await page.waitForTimeout(1800);
+    ok('akses langsung Absensi Siswa dialihkan', await page.locator('[data-sesi-jadwal]').count() === 0,
+      await page.locator('h2').first().innerText().catch(() => ''));
 
     /* ---------- mobile 390px ---------- */
     await page.close();

@@ -21,20 +21,35 @@ const geserTanggal = (iso, n) => {
 };
 
 export default function GuruPengganti({ ctx }) {
-  const { toast, can } = ctx;
+  const { toast, can, filters } = ctx;
   const bolehUbah = can('guru_pengganti', 'write');
   const [tanggal, setTanggal] = useState(() => hariIni());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cari, setCari] = useState('');
+  const [filterSlot, setFilterSlot] = useState({ kelas: '', guru: '' });
+  const [filterRiwayat, setFilterRiwayat] = useState({
+    periode: 'bulanan', tanggal: hariIni(), dari: '', sampai: '', kelas: '', guru: '', mapel: '', q: ''
+  });
   const [pilihSlot, setPilihSlot] = useState(null);   // slot untuk modal penunjukan
   const [busy, setBusy] = useState(0);
 
   const load = useCallback(() => {
     setLoading(true);
-    api('/api/guru-pengganti?tanggal=' + tanggal)
+    const q = new URLSearchParams({ tanggal, riwayat_periode: filterRiwayat.periode,
+      riwayat_tanggal: filterRiwayat.tanggal || tanggal });
+    if (filters?.ta) q.set('ta', filters.ta);
+    if (filterSlot.kelas) q.set('kelas', filterSlot.kelas);
+    if (filterSlot.guru) q.set('guru', filterSlot.guru);
+    if (filterRiwayat.dari) q.set('riwayat_dari', filterRiwayat.dari);
+    if (filterRiwayat.sampai) q.set('riwayat_sampai', filterRiwayat.sampai);
+    if (filterRiwayat.kelas) q.set('riwayat_kelas', filterRiwayat.kelas);
+    if (filterRiwayat.guru) q.set('riwayat_guru', filterRiwayat.guru);
+    if (filterRiwayat.mapel) q.set('riwayat_mapel', filterRiwayat.mapel);
+    if (filterRiwayat.q) q.set('riwayat_q', filterRiwayat.q);
+    api('/api/guru-pengganti?' + q.toString())
       .then(r => setData(r)).catch(e => toast.err(e.message)).finally(() => setLoading(false));
-  }, [tanggal]);
+  }, [tanggal, filterSlot, filterRiwayat, filters?.ta]);
   useEffect(load, [load]);
 
   async function batal(p) {
@@ -59,8 +74,9 @@ export default function GuruPengganti({ ctx }) {
       seen.add(key);
       return !kw || (s.mapel_nama + ' ' + s.kelas_nama + ' ' + s.guru_nama + ' ' + (s.guru_efektif_nama || ''))
         .toLowerCase().includes(kw);
-    });
-  }, [data, cari]);
+    }).filter(s => (!filterSlot.kelas || (s.kelas_ids || []).map(Number).includes(Number(filterSlot.kelas)))
+      && (!filterSlot.guru || [Number(s.guru_id), Number(s.guru_efektif_id)].includes(Number(filterSlot.guru))));
+  }, [data, cari, filterSlot]);
 
   if (loading && !data) return <Spinner label="Memuat data guru piket…" />;
 
@@ -118,7 +134,21 @@ export default function GuruPengganti({ ctx }) {
 
       <Card title={`Slot Jam Pelajaran — ${data?.tanggal_label || ''}`}
         subtitle="Klik Tunjuk Pengganti pada slot yang gurunya tidak hadir."
-        right={<div className="flex items-center gap-2">
+        right={<div className="flex flex-wrap items-center gap-2">
+          {(data?.kelas || []).length ? (
+            <select className="input !w-[150px] !py-1.5 text-[12px]" value={filterSlot.kelas}
+              onChange={e => setFilterSlot(v => ({ ...v, kelas: e.target.value }))} data-filter-slot-kelas>
+              <option value="">Semua kelas</option>
+              {data.kelas.map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
+            </select>
+          ) : null}
+          {(data?.guru || []).length ? (
+            <select className="input !w-[170px] !py-1.5 text-[12px]" value={filterSlot.guru}
+              onChange={e => setFilterSlot(v => ({ ...v, guru: e.target.value }))} data-filter-slot-guru>
+              <option value="">Semua guru</option>
+              {data.guru.map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
+            </select>
+          ) : null}
           <div className="relative">
             <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input className="input !w-[190px] !py-1.5 !pl-8 text-[12px]" value={cari}
@@ -197,7 +227,70 @@ export default function GuruPengganti({ ctx }) {
       </Card>
 
       <Card title="Riwayat Guru Piket / Pengganti"
-        subtitle="Penugasan pada tanggal terpilih, termasuk yang sudah selesai atau dibatalkan.">
+        subtitle="Cari seluruh riwayat berdasarkan kelas, guru, mapel, dan rentang periode.">
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-filter-riwayat-pengganti>
+          <Field label="Cari nama guru / kelas">
+            <input className="input" value={filterRiwayat.q}
+              onChange={e => setFilterRiwayat(v => ({ ...v, q: e.target.value }))}
+              placeholder="Nama guru, kelas, atau mapel…" data-riwayat-cari />
+          </Field>
+          <Field label="Kelas">
+            <select className="input" value={filterRiwayat.kelas}
+              onChange={e => setFilterRiwayat(v => ({ ...v, kelas: e.target.value }))} data-riwayat-kelas>
+              <option value="">Semua kelas</option>
+              {(data?.kelas || []).map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
+            </select>
+          </Field>
+          <Field label="Nama Guru">
+            <select className="input" value={filterRiwayat.guru}
+              onChange={e => setFilterRiwayat(v => ({ ...v, guru: e.target.value }))} data-riwayat-guru>
+              <option value="">Semua guru</option>
+              {(data?.guru || []).map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
+            </select>
+          </Field>
+          <Field label="Mata Pelajaran">
+            <select className="input" value={filterRiwayat.mapel}
+              onChange={e => setFilterRiwayat(v => ({ ...v, mapel: e.target.value }))} data-riwayat-mapel>
+              <option value="">Semua mapel</option>
+              {(data?.mapel || []).map(m => <option key={m.id} value={m.id}>{m.nama}</option>)}
+            </select>
+          </Field>
+          <Field label="Periode">
+            <select className="input" value={filterRiwayat.periode}
+              onChange={e => setFilterRiwayat(v => ({ ...v, periode: e.target.value }))} data-riwayat-periode>
+              <option value="mingguan">Mingguan</option>
+              <option value="bulanan">Bulanan</option>
+              <option value="tahun">Tahun Pelajaran</option>
+              <option value="custom">Rentang Tanggal</option>
+              <option value="semua">Semua Periode</option>
+            </select>
+          </Field>
+          {filterRiwayat.periode === 'custom' ? (
+            <>
+              <Field label="Dari Tanggal">
+                <input type="date" className="input" value={filterRiwayat.dari}
+                  onChange={e => setFilterRiwayat(v => ({ ...v, dari: e.target.value }))} data-riwayat-dari />
+              </Field>
+              <Field label="Sampai Tanggal">
+                <input type="date" className="input" value={filterRiwayat.sampai}
+                  onChange={e => setFilterRiwayat(v => ({ ...v, sampai: e.target.value }))} data-riwayat-sampai />
+              </Field>
+            </>
+          ) : filterRiwayat.periode !== 'semua' ? (
+            <Field label="Tanggal Acuan">
+              <input type="date" className="input" value={filterRiwayat.tanggal}
+                onChange={e => setFilterRiwayat(v => ({ ...v, tanggal: e.target.value }))} data-riwayat-tanggal />
+            </Field>
+          ) : null}
+          <div className="flex items-end gap-2">
+            <button type="button" className="btn-primary btn-sm" onClick={load} data-riwayat-terapkan>
+              <Search size={13} /> Terapkan Filter
+            </button>
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setFilterRiwayat({
+              periode: 'bulanan', tanggal: hariIni(), dari: '', sampai: '', kelas: '', guru: '', mapel: '', q: ''
+            })}>Reset</button>
+          </div>
+        </div>
         {!(data?.riwayat || []).length ? (
           <Empty icon={Repeat} title="Belum ada riwayat penugasan"
             desc="Penunjukan guru piket/pengganti akan tercatat di sini setelah disimpan." />
@@ -208,7 +301,7 @@ export default function GuruPengganti({ ctx }) {
               <tbody>
                 {data.riwayat.map(r => (
                   <tr key={r.id} data-riwayat-pengganti={r.id}>
-                    <td>{r.sesi ? `Jam ${r.sesi}` : '-'} · {r.tanggal}</td>
+                    <td>{r.sesi ? `Jam ${r.sesi}${r.pasangan_sesi ? ` ↔ ${r.pasangan_sesi}` : ''}` : '-'} · {r.tanggal}</td>
                     <td>{r.kelas_nama || '-'}</td>
                     <td>{r.mapel_nama || '-'}</td>
                     <td>{r.dari_nama || '-'}</td>

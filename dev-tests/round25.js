@@ -268,6 +268,23 @@ function startWa() {
       JSON.stringify(r.body.tidak_hadir));
     ok('slot kini tercatat punya pengganti', (r.body.slots || []).some(s => Number(s.jadwal_id) === Number(slotNanti) && s.pengganti && Number(s.pengganti.ke_guru) === Number(gB)));
 
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}&kelas=${kelas2}&guru=${gB}`);
+    ok('slot guru piket dapat difilter menurut kelas dan guru efektif',
+      (r.body.slots || []).some(s => Number(s.jadwal_id) === Number(slotNanti)),
+      JSON.stringify((r.body.slots || []).map(s => s.jadwal_id)));
+    const filterRiwayat = `riwayat_periode=custom&riwayat_dari=${TODAY}&riwayat_sampai=${TODAY}`
+      + `&riwayat_kelas=${kelas2}&riwayat_guru=${gA}&riwayat_mapel=${mA}`
+      + `&riwayat_q=${encodeURIComponent('Guru Pengganti B')}`;
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}&${filterRiwayat}`);
+    ok('riwayat pengganti dapat difilter kelas, guru, tanggal, mapel, dan nama',
+      (r.body.riwayat || []).some(x => Number(x.id) === Number(idTunjuk)),
+      JSON.stringify(r.body.riwayat || []));
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}&riwayat_periode=mingguan&riwayat_tanggal=${TODAY}`);
+    ok('filter riwayat mingguan menghasilkan rentang tujuh hari',
+      r.body.filter_riwayat?.sampai === new Date(new Date(TODAY + 'T12:00:00').getTime() + 6 * 86400000)
+        .toISOString().slice(0, 10),
+      JSON.stringify(r.body.filter_riwayat));
+
     /* sesi berpindah ke guru B */
     await login('gurub', 'guru123');
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
@@ -276,12 +293,12 @@ function startWa() {
     r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY, status: 'hadir' } });
     ok('guru pengganti dapat check-in (tidak terblokir rekam izin)', r.status === 200, r.body?.error);
 
-    /* guru asli tetap melihat slot sebagai read-only; sesi terkunci setelah diambil alih */
+    /* guru asli kehilangan sesi yang sudah berpindah ke guru pengganti */
     await login('gurua', 'guru123');
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     const slotAsli = (r.body.jadwal || []).find(j => Number(j.id) === Number(slotNanti));
-    ok('slot guru utama tetap tampil nonaktif setelah check-in pengganti',
-      !!slotAsli && slotAsli.bisa_checkin === false && Number(slotAsli.guru_efektif_id) === Number(gB),
+    ok('slot guru utama berpindah dan tidak lagi tampil pada akunnya',
+      !slotAsli,
       JSON.stringify(slotAsli && { bisa: slotAsli.bisa_checkin, efektif: slotAsli.guru_efektif_id }));
 
     /* rekap tetap menghitung izin guru asli */
@@ -290,6 +307,10 @@ function startWa() {
     const rekapIzin = (r.body.rows || []).filter(x => Number(x.jadwal_id) === Number(slotNanti));
     ok('rekap memuat baris izin guru asli + baris guru pengganti', rekapIzin.length >= 2,
       JSON.stringify(rekapIzin.map(x => ({ g: x.guru_nama, s: x.status }))));
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gA}&mapel=${mA}`);
+    ok('filter nama guru tetap menampilkan baris izin guru asli',
+      (r.body.rows || []).some(x => Number(x.guru_id) === Number(gA) && x.dari_izin),
+      JSON.stringify((r.body.rows || []).map(x => ({ guru: x.guru_id, izin: x.dari_izin, status: x.status }))));
 
     /* pengambilalihan tidak dapat dibatalkan setelah pengganti mulai mengisi */
     r = await req('/api/guru-pengganti/batal', { method: 'POST', body: { id: idTunjuk } });

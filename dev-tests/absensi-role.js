@@ -83,8 +83,9 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     };
     await mk('Guru Pemilik A', 'guruA', 'guru');
     await mk('Guru Pemilik B', 'guruB', 'guru');
+    await mk('Guru Tanpa Jadwal', 'guruC', 'guru');
     await mk('Wakasek Kesiswaan Uji', 'wakesis', 'kesiswaan');
-    ok('akun uji dibuat (2 guru + wakasek kesiswaan)', true);
+    ok('akun uji dibuat (3 guru + wakasek kesiswaan)', true);
 
     const users = (await req('/api/users')).body.rows;
     const guruA = users.find(u => u.username === 'guruA');
@@ -136,6 +137,9 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     /* ---------- 1. GURU BIASA: hanya jadwal sendiri ---------- */
     console.log('\n== 1. GURU BIASA (tetap terbatas) ==');
     await login('guruA', 'guruA123');
+    r = await req('/api/bootstrap');
+    ok('guru dengan jadwal mendapat menu absensi', r.body.absensi_menu_visible === true,
+      JSON.stringify(r.body.absensi_menu_visible));
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     ok('guru A: lihat_semua = false', r.body.lihat_semua === false, JSON.stringify(r.body.lihat_semua));
     ok('guru A: hanya 1 slot (miliknya)', (r.body.jadwal || []).length === 1,
@@ -146,6 +150,10 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     r = await req(`/api/absensi-guru/jadwal-mengajar?hari=7`);
     ok('guru A: agenda hanya slot miliknya', (r.body.hari || []).flatMap(h => h.slots).every(s => Number(s.guru_efektif_id) === Number(guruA.id)),
       JSON.stringify((r.body.hari || []).flatMap(h => h.slots).map(s => s.guru_efektif_id)));
+    await login('guruC', 'guruC123');
+    r = await req('/api/bootstrap');
+    ok('guru tanpa jadwal tidak mendapat menu absensi', r.body.absensi_menu_visible === false,
+      JSON.stringify(r.body.absensi_menu_visible));
 
     /* ---------- 2. WAKASEK KESISWAAN: seluruh jadwal ---------- */
     console.log('\n== 2. WAKASEK KESISWAAN MELIHAT SELURUH JADWAL ==');
@@ -153,6 +161,8 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     ok('login wakasek kesiswaan', r.status === 200, JSON.stringify(r.body));
     r = await req('/api/bootstrap');
     ok('peran kesiswaan aktif', (r.body.user.roles || []).includes('kesiswaan'), JSON.stringify(r.body.user.roles));
+    ok('Wakasek Kesiswaan tidak mendapat menu absensi', r.body.absensi_menu_visible === false,
+      JSON.stringify(r.body.absensi_menu_visible));
 
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     ok('absensi guru: lihat_semua = true untuk Wakasek Kesiswaan', r.body.lihat_semua === true, JSON.stringify(r.body.lihat_semua));
@@ -192,6 +202,9 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     /* ---------- 3. ADMIN / KURIKULUM tetap bisa bertindak atas nama guru ---------- */
     console.log('\n== 3. ADMIN TETAP BISA CHECK-IN ATAS NAMA GURU ==');
     await login('admin', 'admin123');
+    r = await req('/api/bootstrap');
+    ok('admin mendapat menu absensi', r.body.absensi_menu_visible === true,
+      JSON.stringify(r.body.absensi_menu_visible));
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     const slotAdmin = (r.body.jadwal || []).find(x => Number(x.id) === Number(slotB)) || {};
     ok('admin: slot guru lain bisa di-check-in (bisa_checkin = true)', slotAdmin.bisa_checkin === true,
@@ -204,6 +217,9 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     await req('/api/users/save', { method: 'POST', body: { nama: 'Kepsek Uji', username: 'kepseku', password: 'kepseku123', role: 'kepala_sekolah' } });
     r = await login('kepseku', 'kepseku123');
     ok('login kepala sekolah', r.status === 200, JSON.stringify(r.body));
+    r = await req('/api/bootstrap');
+    ok('Kepala Sekolah tidak mendapat menu absensi', r.body.absensi_menu_visible === false,
+      JSON.stringify(r.body.absensi_menu_visible));
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     ok('kepala sekolah melihat semua slot', r.body.lihat_semua === true && (r.body.jadwal || []).length >= 2,
       JSON.stringify({ l: r.body.lihat_semua, n: (r.body.jadwal || []).length }));

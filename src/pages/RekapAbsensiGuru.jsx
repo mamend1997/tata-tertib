@@ -121,7 +121,7 @@ export default function RekapAbsensiGuru({ ctx }) {
       </Card>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Stat label="Total Jam Mengajar" value={hitung.total || 0} sub={data?.label} icon={CalendarRange} tone="sky" />
+        <Stat label="Total Mapel / Hari" value={hitung.total || 0} sub={data?.label} icon={CalendarRange} tone="sky" />
         <Stat label="Hadir" value={hitung.H || 0} sub="absensi tercatat" icon={UserCheck} tone="emerald" />
         <Stat label="Izin" value={hitung.I || 0} sub="dengan keterangan" icon={Users} tone="violet" />
         <Stat label="Sakit" value={hitung.S || 0} sub="dengan keterangan" icon={Users} tone="orange" />
@@ -151,7 +151,7 @@ export default function RekapAbsensiGuru({ ctx }) {
                   <tr>
                     <th>No</th><th>Nama Guru</th><th>Mata Pelajaran</th>
                     <th className="c">Hadir</th><th className="c">Izin</th><th className="c">Sakit</th>
-                    <th className="c">Alpha</th><th className="c">Total Jam</th><th className="c">% Hadir</th><th className="c">Jurnal</th>
+                    <th className="c">Alpha</th><th className="c">Total Mapel/Hari</th><th className="c">% Hadir</th><th className="c">Jurnal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -183,7 +183,7 @@ export default function RekapAbsensiGuru({ ctx }) {
         </Card>
       ) : (
         <Card title="Rincian Absensi & Jurnal Mengajar" subtitle={`${detail.length} baris · periode ${data?.label || '-'}`}>
-          {!detail.length ? <Empty icon={CalendarRange} title="Belum ada data" desc="Tidak ada jam mengajar pada periode ini." /> : (
+          {!detail.length ? <Empty icon={CalendarRange} title="Belum ada data" desc="Tidak ada mapel mengajar pada periode ini." /> : (
             <div className="tbl-wrap" style={{ maxHeight: '68vh' }}>
               <table className="tbl" data-tbl="detail-guru">
                 <thead>
@@ -220,8 +220,9 @@ export default function RekapAbsensiGuru({ ctx }) {
       )}
 
       <Alert tone="info" title="Cara membaca rekap">
-        Status <b>Hadir</b>/<b>Izin</b>/<b>Sakit</b>/<b>Alpha</b> berasal dari absensi yang diisi guru. Jam mengajar yang belum
-        memiliki absensi dihitung sebagai <b>Alpha / Belum Absen</b> agar terlihat pada laporan. Gunakan tombol
+        Status <b>Hadir</b>/<b>Izin</b>/<b>Sakit</b>/<b>Alpha</b> dihitung satu kali per mapel per hari, termasuk mapel yang
+        berlangsung dalam beberapa jam berurutan. Mapel yang belum memiliki absensi dihitung sebagai <b>Alpha / Belum Absen</b>.
+        Gunakan tombol
         <b> Excel</b> atau <b>PDF/Cetak</b> untuk laporan resmi.
       </Alert>
     </div>
@@ -241,7 +242,7 @@ function HapusRiwayatGuru({ data, rows, guruList, pilih, setPilih, fHapus, setFH
   const [busy, setBusy] = useState(false);
   /* baris yang dapat dihapus: hanya yang sudah memiliki absensi tercatat */
   const bisa = rows.filter(r => r.absensi_id);
-  const keyOf = (r) => `${r.jadwal_id}|${r.tanggal}`;
+  const keyOf = (r) => `${(r.jadwal_ids || [r.jadwal_id]).join(',')}|${r.tanggal}`;
   const semuaKey = bisa.map(keyOf);
   const semuaTerpilih = semuaKey.length > 0 && semuaKey.every(k => pilih.includes(k));
   const toggle = (k) => setPilih(list => list.includes(k) ? list.filter(x => x !== k) : [...list, k]);
@@ -255,9 +256,9 @@ function HapusRiwayatGuru({ data, rows, guruList, pilih, setPilih, fHapus, setFH
           method: 'POST',
           body: {
             pin,
-            items: pilih.map(k => {
-              const [jadwal_id, tanggal] = k.split('|');
-              return { jadwal_id: Number(jadwal_id), tanggal };
+            items: pilih.flatMap(k => {
+              const [ids, tanggal] = k.split('|');
+              return ids.split(',').map(jadwal_id => ({ jadwal_id: Number(jadwal_id), tanggal }));
             })
           }
         })

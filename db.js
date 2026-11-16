@@ -197,7 +197,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_asesmen_hasil ON asesmen_hasil(kode, siswa_
 CREATE INDEX IF NOT EXISTS idx_asesmen_hasil_kelas ON asesmen_hasil(kode, kelas_id);
 `;
 
-/* PERMINTAAN TUKAR JADWAL MENGAJAR (temporer: satu tanggal saja).
+/* PERMINTAAN TUKAR JADWAL MENGAJAR (temporer: tanggal kejadian pada pekan berjalan).
    status: pending → diterima | ditolak | batal.
    Bila satu permintaan 'diterima' untuk (jadwal_id, tanggal), maka guru
    pengganti (ke_guru) menjadi guru EFEKTIF pada sesi tersebut hari itu.
@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS jadwal_tukar (
      diterima, master jadwal TIDAK diubah — hanya berlaku pada tanggal itu). */
   jenis TEXT DEFAULT 'tukar',
   dibuat_oleh INTEGER, dibuat_nama TEXT,
+  permintaan_id INTEGER,
   catatan_putus TEXT, diputus_at TEXT, diputus_oleh INTEGER, diputus_nama TEXT,
   created_at TEXT, updated_at TEXT
 );
@@ -689,6 +690,7 @@ function runMigrations() {
     ensureColumn('jadwal_tukar', 'jenis', "TEXT DEFAULT 'tukar'");
     ensureColumn('jadwal_tukar', 'dibuat_oleh', 'INTEGER');
     ensureColumn('jadwal_tukar', 'dibuat_nama', 'TEXT');
+    ensureColumn('jadwal_tukar', 'permintaan_id', 'INTEGER');
     /* log undangan/pesan otomatis (alfa siswa, izin guru) — penanda dedupe */
     ensureColumn('wa_log', 'ref', 'TEXT');
     ensureColumn('wa_log', 'modul', 'TEXT');
@@ -4099,10 +4101,9 @@ function jadwalRows(taId) {
 }
 /**
  * ============ TUKAR JADWAL MENGAJAR ANTAR GURU (temporer) ============
- * Satu permintaan hanya berlaku untuk SATU TANGGAL (hari itu saja). Bila guru
- * tujuan menerima, ia menjadi guru EFEKTIF slot tersebut pada tanggal itu:
- * sesi check-in & absensi siswa pindah ke akunnya. Jadwal pekan berikutnya
- * tidak berubah karena tabel `jadwal` tidak pernah ditulis ulang.
+ * Satu permintaan memasangkan dua slot mapel pada tanggal tersebut. Bila guru
+ * tujuan menerima, guru dan mapel efektif kedua slot saling bertukar; tanggal
+ * berikutnya (termasuk pekan berikutnya) tetap memakai jadwal induk.
  */
 const TUKAR_SELECT = `SELECT t.*, d.nama AS dari_nama, d.nip AS dari_nip, k.nama AS ke_nama, k.nip AS ke_nip,
     m.nama AS mapel_nama, m.kode AS mapel_kode, j.hari, j.sesi, j.kelas_ids, j.ta_id AS jadwal_ta
@@ -4148,12 +4149,15 @@ function dekorTukar(r) {
 /** permintaan tukar MASUK (menunggu jawaban) untuk seorang guru tujuan */
 function tukarMasuk(guruId, { status } = {}) {
   const st = status ? String(status) : 'pending';
-  return db.prepare(`${TUKAR_SELECT} WHERE t.ke_guru=? AND t.status=? ORDER BY t.tanggal DESC, t.id DESC`)
+  return db.prepare(`${TUKAR_SELECT} WHERE t.ke_guru=? AND t.status=?
+    AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id) ORDER BY t.tanggal DESC, t.id DESC`)
     .all(Number(guruId) || 0, st).map(dekorTukar);
 }
 /** riwayat permintaan yang DIAJUKAN seorang guru (semua status) */
 function tukarKeluar(guruId, limit = 30) {
-  return db.prepare(`${TUKAR_SELECT} WHERE t.dari_guru=? ORDER BY t.tanggal DESC, t.id DESC LIMIT ?`)
+  return db.prepare(`${TUKAR_SELECT} WHERE t.dari_guru=?
+    AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id)
+    ORDER BY t.tanggal DESC, t.id DESC LIMIT ?`)
     .all(Number(guruId) || 0, Math.max(1, Number(limit) || 30)).map(dekorTukar);
 }
 
@@ -4512,8 +4516,13 @@ function absensiGuruRekap(tanggal, taId) {
   const absMap = new Map(abs.map(a => [Number(a.jadwal_id), a]));
   const tukar = tukarMap(tgl);
   const guru = new Map();
+  const sudahDihitung = new Set();
   for (const s of slots) {
-    /* slot yang ditukar untuk tanggal ini dihitung milik guru pengganti */
+    const group = absensiKelompok(s, slots, cfg);
+    const ids = group.map(x => Number(x.id));
+    const groupKey = [...ids].sort((a, b) => a - b).join(',');
+    if (sudahDihitung.has(groupKey)) continue;
+    sudahDihitung.add(groupKey);
     const t = tukar.get(Number(s.id));
     const gid = t ? Number(t.ke_guru) : Number(s.guru_id) || 0;
     if (!gid) continue;
@@ -4525,19 +4534,26 @@ function absensiGuruRekap(tanggal, taId) {
       jadwal: 0, hadir: 0, izin: 0, sakit: 0, alpha: 0, belum: 0, slots: []
     };
     entry.jadwal++;
-    const a = absMap.get(Number(s.id));
-    const w = absensiWindow(s, tgl, cfg);
+    const absGroup = ids.map(id => absMap.get(id)).filter(Boolean);
+    const a = absGroup[0] || null;
+    const w = absensiWindowKelompok(group, tgl, cfg);
     let status = '';
-    if (a) {
-      status = ['hadir', 'izin', 'sakit', 'alpha'].includes(a.status) ? a.status : 'hadir';
+    if (absGroup.length) {
+      status = ['alpha', 'izin', 'sakit', 'hadir'].find(x => absGroup.some(row => row.status === x)) || 'hadir';
     } else if (w.aktif) status = 'belum';
-    else if (nowMenit() > jamMenit(w.sesi ? w.sesi.selesai : '23:59')) status = 'alpha';
+    else if (w.tutup && nowMenit() > jamMenit(w.tutup)) status = 'alpha';
     else status = 'belum';
+    const mapelId = t ? Number(t.mapel_id) || Number(s.mapel_id) : Number(s.mapel_id);
+    const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(mapelId) || {};
+    const sesiList = sesiOfHari(cfg, hari);
+    const sesiAwal = sesiList.find(x => Number(x.idx) === Number(group[0].sesi));
+    const sesiAkhir = sesiList.find(x => Number(x.idx) === Number(group[group.length - 1].sesi));
     entry[status] = (entry[status] || 0) + 1;
     entry.slots.push({
-      jadwal_id: s.id, mapel: s.mapel_nama, kelas: s.kelas_nama, sesi: s.sesi,
-      jam: w.sesi ? `${w.sesi.mulai}–${w.sesi.selesai}` : '', status,
-      absensi_id: a ? a.id : null, waktu_submit: a ? a.waktu_submit : '',
+      jadwal_id: s.id, jadwal_ids: ids, mapel_id: mapelId, mapel: mapel.nama || s.mapel_nama,
+      kelas: s.kelas_nama, sesi: group[0].sesi,
+      jam: sesiAwal && sesiAkhir ? `${sesiAwal.mulai}–${sesiAkhir.selesai}` : '',
+      status, absensi_id: a ? a.id : null, waktu_submit: a ? a.waktu_submit : '',
       guru_asli: t ? (s.guru_nama || '') : '', tukar: !!t
     });
     guru.set(key, entry);
@@ -4575,13 +4591,13 @@ function absensiWaText(rekap, opts = {}) {
   lines.push(st.sekolah_nama || '');
   lines.push(rekap.tanggal_label || tanggalPanjang(rekap.tanggal));
   lines.push('');
-  lines.push(`Total guru mengajar: ${rekap.guru} orang · ${rekap.jadwal} jam pelajaran`);
+  lines.push(`Total guru mengajar: ${rekap.guru} orang · ${rekap.jadwal} mapel/hari`);
   lines.push(`Hadir: ${rekap.hitung.hadir} · Izin: ${rekap.hitung.izin} · Sakit: ${rekap.hitung.sakit} · Alpha/Belum Absen: ${rekap.hitung.alpha + rekap.hitung.belum + rekap.hitung.sebagian}`);
   lines.push('');
   if (rekap.rows.length) {
     lines.push('Daftar guru:');
     rekap.rows.forEach((g, i) => {
-      lines.push(`${i + 1}. ${g.nama} — ${g.ringkas} (${g.hadir}/${g.jadwal} jam)`);
+      lines.push(`${i + 1}. ${g.nama} — ${g.ringkas} (${g.hadir}/${g.jadwal} mapel/hari)`);
     });
   } else {
     lines.push('Tidak ada jadwal mengajar pada hari ini.');
