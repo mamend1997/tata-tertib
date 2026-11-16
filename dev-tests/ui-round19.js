@@ -38,6 +38,18 @@ const ok = (name, cond, extra) => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   let errors = [];
   page.on('pageerror', e => errors.push(e.message));
+  const loginAs = async (username, password) => {
+    await page.context().clearCookies();
+    await page.goto(BASE + '/');
+    await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+    await page.goto(BASE + '/');
+    await page.fill('input[placeholder*="kode sekolah" i]', KODE);
+    await page.fill('input[autocomplete="username"]', username);
+    await page.fill('input[type="password"]', password);
+    await page.click('button[type="submit"]');
+    await page.waitForSelector('aside, nav', { timeout: 15000 });
+    await page.waitForTimeout(500);
+  };
 
   try {
     await page.goto(BASE + '/');
@@ -107,6 +119,12 @@ const ok = (name, cond, extra) => {
 
     /* ---------------- 1. ABSENSI GURU: CHECK-IN ---------------- */
     console.log('\n== 1. ABSENSI GURU (CHECK-IN / SAKIT / IZIN) ==');
+    await loginAs('guru', 'guru123');
+    await page.goto(BASE + '/#/absensi_siswa');
+    await page.waitForSelector(`[data-buka-presensi="${setup.slotId}"], [data-buat-sesi="${setup.slotId}"]`, { timeout: 12000 });
+    const tombolAwal = page.locator(`[data-buka-presensi="${setup.slotId}"], [data-buat-sesi="${setup.slotId}"]`).first();
+    ok('presensi siswa terkunci sebelum check-in Hadir',
+      await tombolAwal.isDisabled() && await page.locator(`[data-presensi-checkin="${setup.slotId}"]`).count() === 1);
     await page.goto(BASE + '/#/absensi_guru');
     await page.waitForSelector('[data-page="absensi-guru"]', { timeout: 12000 });
     await page.waitForTimeout(1500);
@@ -136,6 +154,8 @@ const ok = (name, cond, extra) => {
     await page.goto(BASE + '/#/absensi_siswa');
     await page.waitForSelector('text=Absensi Siswa per Mata Pelajaran', { timeout: 12000 });
     await page.waitForTimeout(1200);
+    ok('presensi terbuka setelah check-in Hadir',
+      await page.locator(`[data-buka-presensi="${setup.slotId}"], [data-buat-sesi="${setup.slotId}"]`).first().isEnabled());
     await page.click(`[data-buka-presensi="${setup.slotId}"]`).catch(async () => {
       await page.click(`[data-buat-sesi="${setup.slotId}"]`);
     });
@@ -156,6 +176,7 @@ const ok = (name, cond, extra) => {
 
     /* ---------------- 3. ASESMEN: QR TIDAK MENUMPUK & TIDAK BLANK ---------------- */
     console.log('\n== 3. ASESMEN BK (QR & TIDAK BLANK) ==');
+    await loginAs('admin', 'admin123');
     await page.goto(BASE + '/#/asesmen');
     await page.waitForSelector('[data-page="asesmen-bk"]', { timeout: 12000 });
     await page.waitForTimeout(1400);
@@ -325,7 +346,7 @@ const ok = (name, cond, extra) => {
     await page.waitForTimeout(1100);
     const angkaSlot = await page.evaluate(() => {
       const rows = [...document.querySelectorAll('.tbl tbody tr')];
-      return rows.map(tr => tr.children[5] && tr.children[5].textContent.trim()).filter(Boolean);
+      return rows.map(tr => tr.children[6] && tr.children[6].textContent.trim()).filter(Boolean);
     });
     ok('kolom Slot mata pelajaran terisi angka (bukan 0 semua)',
       angkaSlot.some(v => Number(v) > 0), JSON.stringify(angkaSlot.slice(0, 8)));

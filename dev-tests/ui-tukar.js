@@ -67,7 +67,7 @@ const ok = (name, cond, extra) => {
     const mulai = hhmm(past(10)), selesai = hhmm(new Date(past(-25)));
 
     /* ---------------- setup data lewat API ---------------- */
-    const setup = await page.evaluate(async ({ hari, mulai, selesai }) => {
+    const setup = await page.evaluate(async ({ hari, mulai, selesai, mulai2, selesai2, mulai3, selesai3 }) => {
       const post = async (p, b) => (await fetch(p, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
       const get = async (p) => (await fetch(p, { credentials: 'same-origin' })).json();
       const mk = async (nama, username) => (await post('/api/users/save', { nama, username, password: 'guru123', role: 'guru_umum', roles: ['guru'] })).id;
@@ -76,7 +76,11 @@ const ok = (name, cond, extra) => {
       const gC = await mk('Guru Kelas Lain C', 'guruc');
       await post('/api/jadwal/pengaturan', {
         hari: [hari], max_jam: 8,
-        sesi: [{ label: 'Jam 1', mulai, selesai, istirahat: 0 }, { label: 'Jam 2', mulai: selesai, selesai: '23:59', istirahat: 0 }],
+        sesi: [
+          { label: 'Jam 1', mulai, selesai, istirahat: 0 },
+          { label: 'Jam 2', mulai: mulai2, selesai: selesai2, istirahat: 0 },
+          { label: 'Jam 3', mulai: mulai3, selesai: selesai3, istirahat: 0 }
+        ],
         max_mapel_jam: 2, max_guru_jam: 8,
         absensi: { buka_menit: 30, tutup_menit: 60, jurnal_min: 10, foto_wajib: 0, foto_hari: 30, siswa_aktif: 1, siswa_tutup_menit: 180 },
         wa: { aktif: 0, jam: '15:00' }
@@ -85,12 +89,28 @@ const ok = (name, cond, extra) => {
       const mA = (await post('/api/mapel/save', { nama: 'Mapel A', kode: 'MPA', guru_ids: [gA] })).id;
       const mB = (await post('/api/mapel/save', { nama: 'Mapel B', kode: 'MPB', guru_ids: [gB] })).id;
       const mC = (await post('/api/mapel/save', { nama: 'Mapel C', kode: 'MPC', guru_ids: [gC] })).id;
-      const slotA = (await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: mA, guru_id: gA, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
-      await post('/api/jadwal/slot', { hari, sesi: 2, mapel_id: mB, guru_id: gB, kelas_ids: [kelas[0].id], abaikan: 1 });
-      await post('/api/jadwal/slot', { hari, sesi: 2, mapel_id: mC, guru_id: gC, kelas_ids: [kelas[1].id], abaikan: 1 });
-      return { gA, gB, gC, slotA, kelas1: kelas[0].nama };
-    }, { hari: HARI, mulai, selesai });
+      const slotA = (await post('/api/jadwal/slot', { hari, sesi: 2, mapel_id: mA, guru_id: gA, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
+      await post('/api/jadwal/slot', { hari, sesi: 3, mapel_id: mB, guru_id: gB, kelas_ids: [kelas[0].id], abaikan: 1 });
+      await post('/api/jadwal/slot', { hari, sesi: 3, mapel_id: mC, guru_id: gC, kelas_ids: [kelas[1].id], abaikan: 1 });
+      const slotHadir = (await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: mB, guru_id: gB, kelas_ids: [kelas[1].id], abaikan: 1 })).id;
+      return { gA, gB, gC, slotA, slotHadir, kelas1: kelas[0].nama };
+    }, {
+      hari: HARI, mulai, selesai,
+      mulai2: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 40 * 60000)),
+      selesai2: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 65 * 60000)),
+      mulai3: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 80 * 60000)),
+      selesai3: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 105 * 60000))
+    });
     ok('data uji siap (2 guru satu kelas + 1 guru kelas lain)', !!setup.slotA && !!setup.gB);
+    const Database = require('better-sqlite3');
+    const fixture = new Database(DB);
+    const fixtureTa = fixture.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(setup.slotHadir).ta_id;
+    fixture.prepare(`INSERT INTO absensi_guru
+      (jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,waktu_submit,ip,validasi,created_at,updated_at)
+      VALUES(?,?,?,?,'hadir','','Fixture hadir sebelumnya',?,'test','{}',?,?)`)
+      .run(setup.slotHadir, TODAY, setup.gB, fixtureTa, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`);
+    fixture.close();
+    ok('guru tujuan sudah berstatus Hadir pada slot lain hari ini', true);
 
     /* ---------------- 1. guru A melihat tombol Tukar Jadwal ---------------- */
     await login('gurua', 'guru123');

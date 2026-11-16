@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS jadwal_tukar (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   jadwal_id INTEGER NOT NULL, tanggal TEXT NOT NULL, ta_id INTEGER,
   dari_guru INTEGER NOT NULL, ke_guru INTEGER NOT NULL, mapel_id INTEGER,
-  alasan TEXT,
+  alasan TEXT, alasan_jenis TEXT DEFAULT 'lainnya',
   status TEXT NOT NULL DEFAULT 'pending',
   /* jenis: 'tukar' = pengajuan guru antar rekan · 'penugasan' = penunjukan
      guru pengganti/piket oleh Kepala Sekolah / Wakasek Kurikulum (langsung
@@ -702,6 +702,7 @@ function runMigrations() {
     ensureColumn('jadwal_tukar', 'dibuat_oleh', 'INTEGER');
     ensureColumn('jadwal_tukar', 'dibuat_nama', 'TEXT');
     ensureColumn('jadwal_tukar', 'permintaan_id', 'INTEGER');
+    ensureColumn('jadwal_tukar', 'alasan_jenis', "TEXT DEFAULT 'lainnya'");
     /* log undangan/pesan otomatis (alfa siswa, izin guru) — penanda dedupe */
     ensureColumn('wa_log', 'ref', 'TEXT');
     ensureColumn('wa_log', 'modul', 'TEXT');
@@ -4098,8 +4099,11 @@ function mapelList({ aktifOnly } = {}) {
 }
 /** kelas yang ikut pada satu slot jadwal (fitur merge = lebih dari satu) */
 function jadwalKelasIds(row) {
+  if (Array.isArray(row && row.kelas_ids)) {
+    return row.kelas_ids.map(Number).filter(Boolean);
+  }
   try {
-    const a = JSON.parse(row.kelas_ids || '[]');
+    const a = JSON.parse((row && row.kelas_ids) || '[]');
     return Array.isArray(a) ? a.map(Number).filter(Boolean) : [];
   } catch (e) { return []; }
 }
@@ -4346,7 +4350,9 @@ function absensiMapelHari(rows, tukar = new Map()) {
       ? Number(perubahan.mapel_id) : Number(row.mapel_id) || 0;
     const kelasIds = jadwalKelasIds(row).sort((a, b) => a - b);
     const key = `${guruId}|${mapelId}|${kelasIds.join(',')}`;
-    if (!groups.has(key)) groups.set(key, { guru_id: guruId, mapel_id: mapelId, kelas_ids: kelasIds, rows: [] });
+    if (!groups.has(key)) groups.set(key, {
+      guru_id: guruId, mapel_id: mapelId, kelas_ids: kelasIds, rows: []
+    });
     groups.get(key).rows.push(row);
   }
   return [...groups.values()].map(group => ({

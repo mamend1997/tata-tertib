@@ -144,17 +144,28 @@ export default function AbsensiSiswa({ ctx }) {
                         {j.sesi_id ? (
                           <button className="btn-primary btn-sm flex-1" onClick={() => bukaSesiAda(j)}
                             disabled={!bolehKelola || !j.bisa || busyId === j.id} data-buka-presensi={j.id}
-                            title={!bolehKelola || !j.bisa ? 'Hanya guru pemilik sesi, wali kelas yang berwenang, atau admin yang berhak mengelola presensi ini.' : undefined}>
+                            title={j.butuh_checkin
+                              ? 'Lakukan Check-in Hadir pada menu Absensi Guru sebelum membuka presensi.'
+                              : !bolehKelola || !j.bisa
+                                ? 'Hanya guru pemilik sesi, wali kelas yang berwenang, atau admin yang berhak mengelola presensi ini.' : undefined}>
                             {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <Users size={13} />} Buka Presensi
                           </button>
                         ) : (
                           <button className="btn-primary btn-sm flex-1" onClick={() => bukaSesi(j)}
                             disabled={!bolehKelola || !j.bisa || busyId === j.id} data-buat-sesi={j.id}
-                            title={!bolehKelola || !j.bisa ? 'Hanya guru pemilik sesi, wali kelas yang berwenang, atau admin yang berhak membuka presensi ini.' : undefined}>
+                            title={j.butuh_checkin
+                              ? 'Lakukan Check-in Hadir pada menu Absensi Guru sebelum membuka presensi.'
+                              : !bolehKelola || !j.bisa
+                                ? 'Hanya guru pemilik sesi, wali kelas yang berwenang, atau admin yang berhak membuka presensi ini.' : undefined}>
                             {busyId === j.id ? <Loader2 size={13} className="animate-spin" /> : <QrCode size={13} />} Buat Sesi &amp; QR
                           </button>
                         )}
                       </div>
+                      {j.butuh_checkin ? (
+                        <p className="mt-1 text-[10.5px] font-semibold text-amber-700" data-presensi-checkin={j.id}>
+                          Presensi terkunci — guru wajib Check-in Hadir terlebih dahulu di menu Absensi Guru.
+                        </p>
+                      ) : null}
                       {!j.bisa ? (
                         <p className="mt-1 text-[10.5px] text-slate-500" data-sesi-hanya-lihat={j.id}>
                           Hanya dapat dilihat — pengelolaan hanya untuk guru pemilik sesi, wali kelas yang berwenang, atau admin.

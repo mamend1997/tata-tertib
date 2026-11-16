@@ -1964,6 +1964,8 @@ ${isi}
             })
             && (guruEfektif === Number(user.id) || isAdmin(user)),
           bisa_tukar: !!w.aktif && !groupAbs.length && !tukar && guruEfektif === Number(user.id),
+          bisa_rencana_tukar: !hariIni && tanggalTukarMendatang(tanggal)
+            && guruEfektif === Number(user.id) && !tukar && !groupAbs.length,
           bisa_jurnal: !!a && !!w.aktif && dbm.can(user, 'absensi_guru', 'write')
             && (guruEfektif === Number(user.id) || isAdmin(user))
         };
@@ -2348,6 +2350,18 @@ ${isi}
      jadwal pekan berikutnya tidak berubah (tabel `jadwal` tidak disentuh).
      ================================================================= */
   const TUKAR_TGL = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : dbm.today());
+  const mingguTukar = (tanggal) => {
+    const d = new Date(`${String(tanggal).slice(0, 10)}T00:00:00Z`);
+    const offset = (d.getUTCDay() + 6) % 7;
+    d.setUTCDate(d.getUTCDate() - offset);
+    const awal = d.toISOString().slice(0, 10);
+    d.setUTCDate(d.getUTCDate() + 6);
+    return { awal, akhir: d.toISOString().slice(0, 10) };
+  };
+  const tanggalTukarMendatang = (tanggal) => {
+    const m = mingguTukar(dbm.today());
+    return String(tanggal) > dbm.today() && String(tanggal) <= m.akhir;
+  };
 
   /** guru pemilik sesi pada tanggal tertentu (mempertimbangkan tukar diterima) */
   const guruPemilik = (row, tanggal) => {
@@ -2373,6 +2387,9 @@ ${isi}
     const guruIds = [...new Set(semua.filter(r => Number(r.guru_id) !== pemilik && kelasKey(r) === keyKelas)
       .map(r => Number(r.guru_id)).filter(Boolean))];
     return guruIds.map(guruId => {
+      const sudahHadir = db.prepare(`SELECT 1 FROM absensi_guru
+        WHERE tanggal=? AND guru_id=? AND status='hadir' LIMIT 1`).get(tanggal, guruId);
+      if (!sudahHadir) return null;
       const jadwalTujuan = semua.filter(r => Number(r.guru_id) === guruId && kelasKey(r) === keyKelas);
       const grupSeen = new Set();
       const groups = [];
@@ -2381,6 +2398,11 @@ ${isi}
         const ids = group.map(x => Number(x.id));
         const key = ids.slice().sort((a, b) => a - b).join(',');
         if (grupSeen.has(key) || ids.some(id => asalIds.has(id)) || group.length !== groupAsal.length) continue;
+        const ph = ids.map(() => '?').join(',');
+        if (db.prepare(`SELECT 1 FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`)
+          .get(tanggal, ...ids)
+          || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`)
+            .get(tanggal, ...ids)) continue;
         grupSeen.add(key);
         const jam = sesiIds(group);
         const bentrokAsal = semua.find(x => Number(x.guru_id) === pemilik && asalJam.has(Number(x.sesi)) === false
@@ -2410,8 +2432,75 @@ ${isi}
         mapel, bentrok: !mapel.length,
         bentrok_info: mapel.length ? '' : 'tidak ada slot mapel pasangan yang dapat ditukar'
       };
-    }).filter(k => k.mapel.length)
+    }).filter(k => k && k.mapel.length)
       .sort((a, b) => String(a.nama).localeCompare(String(b.nama)));
+  }
+
+  /** Pasangan lintas hari: hanya tanggal mendatang pada minggu berjalan, kelas dan durasi harus sama. */
+  function kandidatLintasTukar(row, tanggal) {
+    if (!tanggalTukarMendatang(tanggal)) return [];
+    const taId = Number(row.ta_id) || taOf({});
+    const keyKelas = kelasKey(row);
+    const semua = dbm.jadwalRows(taId);
+    const groupAsal = dbm.absensiKelompok(row, semua.filter(x => Number(x.hari) === Number(row.hari)), dbm.jadwalConfig());
+    const asalIds = new Set(groupAsal.map(x => Number(x.id)));
+    const pemilik = guruPemilik(row, tanggal);
+    const hasil = new Map();
+    const minggu = mingguTukar(tanggal);
+    const awal = new Date(`${minggu.awal}T00:00:00Z`);
+    const akhir = new Date(`${minggu.akhir}T00:00:00Z`);
+    for (let d = new Date(awal); d <= akhir; d.setUTCDate(d.getUTCDate() + 1)) {
+      const tanggalTarget = d.toISOString().slice(0, 10);
+      const hariTarget = d.getUTCDay();
+      if (tanggalTarget <= dbm.today() || tanggalTarget === tanggal || tanggalTarget > minggu.akhir) continue;
+      const slotsTarget = semua.filter(x => Number(x.hari) === hariTarget);
+      const guruIds = [...new Set(slotsTarget.filter(x => Number(x.guru_id) !== pemilik && kelasKey(x) === keyKelas)
+        .map(x => Number(x.guru_id)).filter(Boolean))];
+      for (const guruId of guruIds) {
+        const groupSeen = new Set();
+        const slotsGuru = slotsTarget.filter(x => Number(x.guru_id) === guruId && kelasKey(x) === keyKelas);
+        for (const target of slotsGuru) {
+          const groupTujuan = dbm.absensiKelompok(target, slotsTarget, dbm.jadwalConfig());
+          const ids = groupTujuan.map(x => Number(x.id));
+          const groupKey = ids.slice().sort((a, b) => a - b).join(',');
+          if (groupSeen.has(groupKey) || ids.length !== groupAsal.length) continue;
+          groupSeen.add(groupKey);
+          const ph = ids.map(() => '?').join(',');
+          if (db.prepare(`SELECT 1 FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`)
+            .get(tanggalTarget, ...ids)
+            || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`)
+              .get(tanggalTarget, ...ids)) continue;
+          const sourceSessions = new Set(groupAsal.map(x => Number(x.sesi)));
+          const targetSessions = new Set(groupTujuan.map(x => Number(x.sesi)));
+          const bentrokTujuan = semua.some(x => Number(x.hari) === Number(row.hari)
+            && Number(x.guru_id) === guruId && sourceSessions.has(Number(x.sesi))
+            && !asalIds.has(Number(x.id)));
+          const bentrokAsal = slotsTarget.some(x => Number(x.guru_id) === pemilik
+            && targetSessions.has(Number(x.sesi)) && !ids.includes(Number(x.id)));
+          if (bentrokTujuan || bentrokAsal) continue;
+          const mapel = groupTujuan[0];
+          const sesiHari = dbm.sesiOfHari(dbm.jadwalConfig(), hariTarget);
+          const pertama = sesiHari.find(x => Number(x.idx) === Number(groupTujuan[0].sesi));
+          const terakhir = sesiHari.find(x => Number(x.idx) === Number(groupTujuan[groupTujuan.length - 1].sesi));
+          const slot = {
+            id: Number(mapel.mapel_id) || 0, nama: mapel.mapel_nama || '', kode: mapel.mapel_kode || '',
+            jadwal_id: Number(mapel.id), group_ids: ids, sesi: Number(mapel.sesi), tanggal: tanggalTarget,
+            jam: pertama && terakhir ? `${pertama.mulai}–${terakhir.selesai}` : ''
+          };
+          if (!hasil.has(guruId)) hasil.set(guruId, { id: guruId, nama: '', nip: '', mapel: [] });
+          const entry = hasil.get(guruId);
+          entry.mapel.push(slot);
+        }
+      }
+    }
+    return [...hasil.values()].map(k => {
+      const user = db.prepare('SELECT nama,nip FROM users WHERE id=?').get(k.id) || {};
+      k.nama = user.nama || `Guru #${k.id}`;
+      k.nip = user.nip || '';
+      k.mapel.sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.sesi - b.sesi);
+      k.bentrok = !k.mapel.length;
+      return k;
+    }).filter(k => k.mapel.length).sort((a, b) => String(a.nama).localeCompare(String(b.nama)));
   }
 
   /** validasi bersama untuk pengajuan tukar jadwal */
@@ -2419,12 +2508,19 @@ ${isi}
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(body.jadwal_id) || 0);
     if (!row) return { error: 'Slot jadwal tidak ditemukan.', status: 404 };
     const tanggal = TUKAR_TGL(body.tanggal);
+    const alasanJenis = String(body.alasan_jenis || 'lainnya').toLowerCase();
+    if (!['lainnya', 'izin', 'sakit'].includes(alasanJenis)) {
+      return { error: 'Pilih alasan tukar yang valid.', status: 400 };
+    }
     const pemilik = guruPemilik(row, tanggal);
     if (pemilik !== Number(user.id)) {
       return { error: 'Hanya guru pemilik sesi ini yang dapat mengajukan tukar jadwal.', status: 403 };
     }
-    if (tanggal !== dbm.today()) {
-      return { error: 'Tukar jadwal hanya dapat diajukan pada hari sesi yang dipilih (hari ini).', status: 403 };
+    if (alasanJenis === 'lainnya' && tanggal !== dbm.today()) {
+      return { error: 'Tukar jadwal biasa hanya dapat diajukan untuk sesi hari ini.', status: 403 };
+    }
+    if (alasanJenis !== 'lainnya' && !tanggalTukarMendatang(tanggal)) {
+      return { error: 'Tukar karena sakit/izin hanya dapat diajukan untuk tanggal mendatang dalam minggu berjalan.', status: 403 };
     }
     if (Number(row.hari) !== dbm.hariOf(tanggal)) {
       return { error: `Slot ini untuk hari ${dbm.HARI_LABEL[Number(row.hari)] || '-'}, bukan hari ini.`, status: 403 };
@@ -2441,15 +2537,17 @@ ${isi}
     }
     const absensi = db.prepare('SELECT id FROM absensi_guru WHERE jadwal_id=? AND tanggal=?').get(Number(row.id), tanggal);
     if (absensi) return { error: 'Absensi sesi ini sudah tercatat — tukar jadwal tidak dapat diajukan lagi.', status: 409 };
-    /* TIME-LOCKING: permintaan tukar jadwal ditutup begitu jam pelajaran berakhir. */
-    const wTukar = dbm.absensiWindow(row, tanggal, dbm.jadwalConfig());
-    if (!wTukar.sesi || dbm.nowMenit() > dbm.jamMenit(wTukar.tutup)) {
-      return {
-        error: `Sesi ini sudah berakhir (${wTukar.sesi ? wTukar.sesi.mulai + '–' + wTukar.sesi.selesai : '-'}) — tukar jadwal tidak dapat diajukan lagi untuk sesi yang sudah lewat.`,
-        status: 403, terkunci: true
-      };
+    if (alasanJenis === 'lainnya') {
+      /* Pertukaran hari yang sama ditutup begitu jam pelajaran berakhir. */
+      const wTukar = dbm.absensiWindow(row, tanggal, dbm.jadwalConfig());
+      if (!wTukar.sesi || dbm.nowMenit() > dbm.jamMenit(wTukar.tutup)) {
+        return {
+          error: `Sesi ini sudah berakhir (${wTukar.sesi ? wTukar.sesi.mulai + '–' + wTukar.sesi.selesai : '-'}) — tukar jadwal tidak dapat diajukan lagi untuk sesi yang sudah lewat.`,
+          status: 403, terkunci: true
+        };
+      }
     }
-    return { row, tanggal, pemilik };
+    return { row, tanggal, pemilik, alasanJenis };
   }
 
   /* daftar kandidat guru pengganti + mata pelajaran tujuan */
@@ -2469,8 +2567,13 @@ ${isi}
       return db.prepare(`SELECT id,nama FROM kelas WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids);
     })();
     const w = dbm.absensiWindow(row, tanggal, dbm.jadwalConfig());
+    const alasanJenis = String(q.alasan_jenis || 'lainnya').toLowerCase();
+    const kandidat = alasanJenis === 'lainnya'
+      ? kandidatTukar(row, tanggal)
+      : (['izin', 'sakit'].includes(alasanJenis) ? kandidatLintasTukar(row, tanggal) : []);
     json(res, 200, {
       ok: true, tanggal, hari: Number(row.hari),
+      alasan_jenis: alasanJenis,
       slot: {
         jadwal_id: Number(row.id), mapel_id: Number(row.mapel_id) || 0, mapel_nama: mapelSlot.nama || '',
         mapel_kode: mapelSlot.kode || '', sesi: Number(row.sesi),
@@ -2479,7 +2582,7 @@ ${isi}
         guru_id: pemilik,
         guru_nama: (db.prepare('SELECT nama FROM users WHERE id=?').get(pemilik) || {}).nama || ''
       },
-      kandidat: kandidatTukar(row, tanggal),
+      kandidat,
       riwayat: dbm.tukarOf(row.id, tanggal)
     });
   });
@@ -2490,60 +2593,87 @@ ${isi}
     const b = await readBody(req);
     const siap = siapkanTukar(user, b);
     if (siap.error) return fail(res, siap.status || 400, siap.error);
-    const { row, tanggal, pemilik } = siap;
+    const { row, tanggal, pemilik, alasanJenis } = siap;
     const keId = Number(b.ke_guru) || 0;
     if (!keId) return fail(res, 400, 'Pilih guru tujuan terlebih dahulu.');
     if (keId === pemilik) return fail(res, 400, 'Guru tujuan tidak boleh diri sendiri.');
     const ke = db.prepare('SELECT id,nama,nip,aktif FROM users WHERE id=?').get(keId);
     if (!ke || Number(ke.aktif) !== 1) return fail(res, 404, 'Guru tujuan tidak ditemukan / tidak aktif.');
-    const kandidat = kandidatTukar(row, tanggal).find(k => Number(k.id) === keId);
+    const kandidat = (alasanJenis === 'lainnya'
+      ? kandidatTukar(row, tanggal)
+      : kandidatLintasTukar(row, tanggal)).find(k => Number(k.id) === keId);
     if (!kandidat) {
       const kelas = db.prepare(`SELECT nama FROM kelas WHERE id IN (${dbm.jadwalKelasIds(row).map(() => '?').join(',') || 'NULL'})`)
         .all(...dbm.jadwalKelasIds(row)).map(k => k.nama).join(', ');
       return fail(res, 409, `${ke.nama} tidak memiliki slot mapel pasangan pada kelas ${kelas || 'ini'} di pekan ini.`);
     }
-    const mapelTujuan = kandidat.mapel.find(m => Number(m.id) === (Number(b.mapel_id) || 0)) || kandidat.mapel[0];
+    const targetJadwalId = Number(b.pasangan_jadwal_id) || 0;
+    const targetTanggal = TUKAR_TGL(b.pasangan_tanggal || tanggal);
+    const mapelTujuan = alasanJenis === 'lainnya'
+      ? (kandidat.mapel.find(m => Number(m.id) === (Number(b.mapel_id) || 0)) || kandidat.mapel[0])
+      : kandidat.mapel.find(m => Number(m.jadwal_id) === targetJadwalId && m.tanggal === targetTanggal);
     if (!mapelTujuan) return fail(res, 409, `${ke.nama} tidak memiliki slot mapel yang dapat dipasangkan pekan ini.`);
-    const semua = dbm.jadwalRows(Number(row.ta_id) || taOf({})).filter(r => Number(r.hari) === Number(row.hari));
+    const allTa = dbm.jadwalRows(Number(row.ta_id) || taOf({}));
+    const semua = allTa.filter(r => Number(r.hari) === Number(row.hari));
     const groupAsal = dbm.absensiKelompok(row, semua, dbm.jadwalConfig());
-    const rowTujuan = semua.find(r => Number(r.id) === Number(mapelTujuan.jadwal_id));
+    const rowsTujuan = allTa.filter(r => Number(r.hari) === dbm.hariOf(targetTanggal));
+    const rowTujuan = rowsTujuan.find(r => Number(r.id) === Number(mapelTujuan.jadwal_id));
     if (!rowTujuan) return fail(res, 409, 'Slot mapel tujuan tidak lagi tersedia.');
-    const groupTujuan = dbm.absensiKelompok(rowTujuan, semua, dbm.jadwalConfig());
+    const groupTujuan = dbm.absensiKelompok(rowTujuan, rowsTujuan, dbm.jadwalConfig());
     if (groupAsal.length !== groupTujuan.length || kelasKey(row) !== kelasKey(rowTujuan)) {
       return fail(res, 409, 'Slot pasangan harus memiliki kelas dan jumlah jam mapel yang sama.');
     }
+    if (alasanJenis === 'lainnya' && targetTanggal !== tanggal) {
+      return fail(res, 400, 'Tukar pada hari yang sama hanya dapat memasangkan sesi pada tanggal yang sama.');
+    }
+    if (alasanJenis !== 'lainnya'
+      && (targetTanggal === tanggal || !tanggalTukarMendatang(targetTanggal) || !tanggalTukarMendatang(tanggal))) {
+      return fail(res, 403, 'Tukar sakit/izin harus memasangkan dua tanggal mendatang yang berbeda dalam minggu berjalan.');
+    }
     const sourceIds = groupAsal.map(x => Number(x.id));
     const targetIds = groupTujuan.map(x => Number(x.id));
-    const allIds = [...new Set([...sourceIds, ...targetIds])];
-    const placeholders = allIds.map(() => '?').join(',');
-    const existing = db.prepare(`SELECT jadwal_id,status FROM jadwal_tukar
-      WHERE tanggal=? AND jadwal_id IN (${placeholders}) AND status IN ('pending','diterima')`)
-      .all(tanggal, ...allIds);
-    if (existing.length) return fail(res, 409, 'Salah satu slot sudah memiliki permintaan atau pertukaran aktif.');
-    const absExists = db.prepare(`SELECT jadwal_id FROM absensi_guru
-      WHERE tanggal=? AND jadwal_id IN (${placeholders})`).all(tanggal, ...allIds);
-    if (absExists.length) return fail(res, 409, 'Salah satu slot sudah diabsen dan tidak dapat ditukar.');
-    const sesiExists = db.prepare(`SELECT jadwal_id FROM absensi_sesi
-      WHERE tanggal=? AND jadwal_id IN (${placeholders})`).all(tanggal, ...allIds);
-    if (sesiExists.length) return fail(res, 409, 'Salah satu slot sudah memiliki sesi presensi yang dibuka dan tidak dapat ditukar.');
+    const slotDates = [
+      ...sourceIds.map(id => ({ id, tanggal })),
+      ...targetIds.map(id => ({ id, tanggal: targetTanggal }))
+    ];
+    const existing = slotDates.some(s => db.prepare(`SELECT 1 FROM jadwal_tukar
+      WHERE tanggal=? AND jadwal_id=? AND status IN ('pending','diterima') LIMIT 1`).get(s.tanggal, s.id));
+    if (existing) return fail(res, 409, 'Salah satu slot sudah memiliki permintaan atau pertukaran aktif.');
+    for (const slot of slotDates) {
+      if (db.prepare('SELECT 1 FROM absensi_guru WHERE tanggal=? AND jadwal_id=?').get(slot.tanggal, slot.id)) {
+        return fail(res, 409, 'Salah satu slot sudah diabsen dan tidak dapat ditukar.');
+      }
+      if (db.prepare('SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id=?').get(slot.tanggal, slot.id)) {
+        return fail(res, 409, 'Salah satu slot sudah memiliki sesi presensi yang dibuka dan tidak dapat ditukar.');
+      }
+    }
     const cfgTukar = dbm.jadwalConfig();
-    for (const group of [groupAsal, groupTujuan]) {
-      const w = jendelaKelompok(group, tanggal, cfgTukar);
-      if (!w.sesi || dbm.nowMenit() > dbm.jamMenit(w.tutup)) {
-        return fail(res, 403, 'Kedua slot harus belum melewati jam pelajaran agar dapat ditukar.');
+    for (const [group, groupTanggal] of [[groupAsal, tanggal], [groupTujuan, targetTanggal]]) {
+      const w = jendelaKelompok(group, groupTanggal, cfgTukar);
+      if (!w.sesi || w.nonaktif || !w.hariOk
+        || (groupTanggal === dbm.today() && dbm.nowMenit() > dbm.jamMenit(w.tutup))) {
+        return fail(res, 403, 'Kedua slot harus memiliki jam pelajaran yang berlaku dan belum terlewat.');
       }
     }
     const alasan = String(b.alasan || '').trim().slice(0, 240);
+    if (alasanJenis === 'lainnya' && (!alasan || /\b(?:izin|sakit)\b/i.test(alasan))) {
+      return fail(res, 400, 'Alasan tukar hari yang sama wajib diisi dan tidak boleh berupa Izin atau Sakit.');
+    }
+    if (alasanJenis !== 'lainnya' && !['izin', 'sakit'].includes(alasanJenis)) {
+      return fail(res, 400, 'Tukar lintas hari hanya dapat beralasan Sakit atau Izin.');
+    }
+    const alasanTersimpan = alasanJenis === 'lainnya' ? alasan : alasanJenis[0].toUpperCase() + alasanJenis.slice(1);
     const createdAt = dbm.now();
     let requestId = 0;
     const createdIds = [];
     db.transaction(() => {
       const simpan = (slot, dari, keGuru, mapelId) => {
         const ins = db.prepare(`INSERT INTO jadwal_tukar
-          (jadwal_id,tanggal,ta_id,dari_guru,ke_guru,mapel_id,alasan,status,jenis,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,'pending','tukar',?,?)`)
-          .run(Number(slot.id), tanggal, Number(slot.ta_id) || Number(row.ta_id) || 0,
-            dari, keGuru, mapelId, alasan, createdAt, createdAt);
+          (jadwal_id,tanggal,ta_id,dari_guru,ke_guru,mapel_id,alasan,alasan_jenis,status,jenis,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,'pending','tukar',?,?)`)
+          .run(Number(slot.id), slot === rowTujuan || targetIds.includes(Number(slot.id)) ? targetTanggal : tanggal,
+            Number(slot.ta_id) || Number(row.ta_id) || 0, dari, keGuru, mapelId, alasanTersimpan, alasanJenis,
+            createdAt, createdAt);
         const id = Number(ins.lastInsertRowid);
         createdIds.push(id);
         if (!requestId && Number(slot.id) === Number(row.id)) requestId = id;
@@ -2560,8 +2690,8 @@ ${isi}
     json(res, 200, {
       ok: true, id: requestId,
       tukar: (dbm.tukarOf(row.id, tanggal).find(t => Number(t.id) === requestId)) || null,
-      pasangan: { jadwal_id: rowTujuan.id, mapel_id: rowTujuan.mapel_id, mapel_nama: rowTujuan.mapel_nama, sesi: rowTujuan.sesi },
-      pesan: `Permintaan pertukaran ${row.mapel_nama || 'mapel'} ↔ ${mapel.nama || 'mapel'} dikirim ke ${ke.nama}. Setelah diterima, guru dan mapel berpindah pada kedua slot pekan ini; pekan berikutnya kembali normal.`
+      pasangan: { jadwal_id: rowTujuan.id, tanggal: targetTanggal, mapel_id: rowTujuan.mapel_id, mapel_nama: rowTujuan.mapel_nama, sesi: rowTujuan.sesi },
+      pesan: `Permintaan pertukaran ${row.mapel_nama || 'mapel'} ↔ ${mapel.nama || 'mapel'} dikirim ke ${ke.nama}. Setelah diterima, guru dan mapel berpindah pada kedua slot; jadwal rutin tidak berubah.`
     });
   });
 
@@ -2596,39 +2726,57 @@ ${isi}
     const status = aksi === 'terima' ? 'diterima' : (aksi === 'tolak' ? 'ditolak' : 'batal');
     const catatan = String(b.catatan || '').trim().slice(0, 240);
     const permintaanId = Number(t.permintaan_id) || Number(t.id);
-    const slotPasangan = db.prepare('SELECT DISTINCT jadwal_id FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
-      .all(permintaanId).map(x => Number(x.jadwal_id));
+    const slotPasangan = db.prepare('SELECT DISTINCT jadwal_id,tanggal FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
+      .all(permintaanId).map(x => ({ jadwal_id: Number(x.jadwal_id), tanggal: String(x.tanggal).slice(0, 10) }));
     if (aksi === 'terima') {
-      const tgl = String(t.tanggal || '').slice(0, 10);
-      if (tgl !== dbm.today()) {
-        return fail(res, 409, 'Permintaan tukar jadwal hanya dapat diterima pada hari sesi berlangsung.');
-      }
       if (!slotPasangan.length) return fail(res, 409, 'Slot permintaan tukar jadwal tidak ditemukan.');
-      const placeholders = slotPasangan.map(() => '?').join(',');
-      const jadwalTerlibat = db.prepare(`SELECT * FROM jadwal WHERE id IN (${placeholders})`).all(...slotPasangan);
-      if (jadwalTerlibat.length !== slotPasangan.length) {
-        return fail(res, 409, 'Sebagian slot jadwal sudah tidak tersedia. Permintaan tidak dapat diterima.');
+      const alasanJenis = String(t.alasan_jenis || 'lainnya');
+      const tanggalUnik = [...new Set(slotPasangan.map(x => x.tanggal))];
+      if (alasanJenis === 'lainnya' && (tanggalUnik.length !== 1 || tanggalUnik[0] !== dbm.today())) {
+        return fail(res, 409, 'Tukar pada hari yang sama hanya dapat diterima pada tanggal sesi berlangsung.');
       }
-      const sudahDikelompokkan = new Set();
+      if (alasanJenis !== 'lainnya'
+        && (tanggalUnik.length !== 2 || slotPasangan.some(x => !tanggalTukarMendatang(x.tanggal)))) {
+        return fail(res, 409, 'Permintaan Sakit/Izin harus tetap berada pada dua tanggal mendatang dalam minggu berjalan.');
+      }
       const cfgTukar = dbm.jadwalConfig();
-      for (const slot of jadwalTerlibat) {
-        const semua = dbm.jadwalRows(Number(slot.ta_id)).filter(x => Number(x.hari) === Number(slot.hari));
-        const group = kelompokJadwal(slot, semua, cfgTukar);
-        const groupKey = group.map(x => Number(x.id)).sort((a, b) => a - b).join(',');
-        if (sudahDikelompokkan.has(groupKey)) continue;
-        sudahDikelompokkan.add(groupKey);
-        const window = jendelaKelompok(group, t.tanggal, cfgTukar);
-        if (!window.sesi || window.nonaktif || !window.hariOk
-          || dbm.nowMenit() > dbm.jamMenit(window.tutup)) {
-          return fail(res, 409, 'Jam salah satu sesi sudah berakhir atau tidak berlaku. Permintaan tidak dapat diterima.');
+      const slotPerTanggal = new Map();
+      for (const item of slotPasangan) {
+        const group = slotPerTanggal.get(item.tanggal) || [];
+        group.push(item.jadwal_id);
+        slotPerTanggal.set(item.tanggal, group);
+      }
+      const semuaTerlibat = [];
+      for (const [tgl, ids] of slotPerTanggal) {
+        const placeholders = ids.map(() => '?').join(',');
+        const jadwalTerlibat = db.prepare(`SELECT * FROM jadwal WHERE id IN (${placeholders})`).all(...ids);
+        if (jadwalTerlibat.length !== ids.length) {
+          return fail(res, 409, 'Sebagian slot jadwal sudah tidak tersedia. Permintaan tidak dapat diterima.');
+        }
+        semuaTerlibat.push(...jadwalTerlibat);
+        const absensiAda = db.prepare(`SELECT 1 FROM absensi_guru
+          WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`).get(tgl, ...ids);
+        const sesiAda = db.prepare(`SELECT 1 FROM absensi_sesi
+          WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`).get(tgl, ...ids);
+        if (absensiAda || sesiAda) {
+          return fail(res, 409, 'Salah satu sesi sudah mulai diabsen/dibuka. Permintaan tukar jadwal tidak dapat diterima.');
+        }
+        const sudahDikelompokkan = new Set();
+        for (const slot of jadwalTerlibat) {
+          const semua = dbm.jadwalRows(Number(slot.ta_id)).filter(x => Number(x.hari) === Number(slot.hari));
+          const group = kelompokJadwal(slot, semua, cfgTukar);
+          const groupKey = group.map(x => Number(x.id)).sort((a, b) => a - b).join(',');
+          if (sudahDikelompokkan.has(groupKey)) continue;
+          sudahDikelompokkan.add(groupKey);
+          const window = jendelaKelompok(group, tgl, cfgTukar);
+          if (!window.sesi || window.nonaktif || !window.hariOk
+            || (tgl === dbm.today() && dbm.nowMenit() > dbm.jamMenit(window.tutup))) {
+            return fail(res, 409, 'Salah satu sesi sudah berakhir atau tidak berlaku. Permintaan tidak dapat diterima.');
+          }
         }
       }
-      const absensiAda = db.prepare(`SELECT 1 FROM absensi_guru
-        WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`).get(t.tanggal, ...slotPasangan);
-      const sesiAda = db.prepare(`SELECT 1 FROM absensi_sesi
-        WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`).get(t.tanggal, ...slotPasangan);
-      if (absensiAda || sesiAda) {
-        return fail(res, 409, 'Salah satu sesi sudah mulai diabsen/dibuka. Permintaan tukar jadwal tidak dapat diterima.');
+      if (alasanJenis === 'lainnya' && !semuaTerlibat.every(s => Number(s.hari) === dbm.hariOf(dbm.today()))) {
+        return fail(res, 409, 'Kedua slot tukar hari yang sama harus berada pada jadwal hari ini.');
       }
     }
     db.transaction(() => {
@@ -2637,13 +2785,14 @@ ${isi}
         .run(status, catatan, dbm.now(), Number(user.id), user.nama || '', dbm.now(), permintaanId);
       if (status === 'diterima') {
         /* Satu slot hanya boleh masuk ke satu pertukaran pada tanggal ini. */
-        const ph = slotPasangan.map(() => '?').join(',');
-        if (ph) db.prepare(`UPDATE jadwal_tukar SET status='ditolak', catatan_putus=?, diputus_at=?,
-            diputus_oleh=?, diputus_nama=?, updated_at=?
-          WHERE tanggal=? AND jadwal_id IN (${ph}) AND status='pending'
-            AND COALESCE(permintaan_id,id)<>?`)
-          .run('Slot sudah masuk ke pertukaran lain yang diterima', dbm.now(), Number(user.id),
-            user.nama || '', dbm.now(), t.tanggal, ...slotPasangan, permintaanId);
+        for (const item of slotPasangan) {
+          db.prepare(`UPDATE jadwal_tukar SET status='ditolak', catatan_putus=?, diputus_at=?,
+              diputus_oleh=?, diputus_nama=?, updated_at=?
+            WHERE tanggal=? AND jadwal_id=? AND status='pending'
+              AND COALESCE(permintaan_id,id)<>?`)
+            .run('Slot sudah masuk ke pertukaran lain yang diterima', dbm.now(), Number(user.id),
+              user.nama || '', dbm.now(), item.tanggal, item.jadwal_id, permintaanId);
+        }
       }
     })();
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(t.jadwal_id)) || {};
@@ -3316,6 +3465,29 @@ ${isi}
     return (dbm.can(user, 'absensi_siswa', 'write') || bolehSebagaiPengganti)
       && sesiBolehKelola(user, jadwalRow, tanggal);
   };
+  const perluCheckinGuru = (user, jadwalRow, tanggal) => {
+    if (isAdmin(user)) return false;
+    const tukar = dbm.tukarAktif(jadwalRow.id, tanggal);
+    if (tukar && String(tukar.jenis || '') === 'penugasan') return false;
+    const guruEfektif = tukar ? Number(tukar.ke_guru) : Number(jadwalRow.guru_id);
+    return guruEfektif === Number(user.id);
+  };
+  const checkinHadirGuru = (user, jadwalRow, tanggal) => {
+    if (!perluCheckinGuru(user, jadwalRow, tanggal)) return true;
+    const semua = dbm.jadwalRows(Number(jadwalRow.ta_id) || taOf({}))
+      .filter(x => Number(x.hari) === Number(jadwalRow.hari));
+    const group = kelompokJadwal(jadwalRow, semua, dbm.jadwalConfig());
+    const records = db.prepare(`SELECT jadwal_id,guru_id,status FROM absensi_guru
+      WHERE tanggal=? AND jadwal_id IN (${group.map(() => '?').join(',')})`)
+      .all(String(tanggal).slice(0, 10), ...group.map(x => Number(x.id)));
+    const bySlot = new Map(records.map(a => [Number(a.jadwal_id), a]));
+    return group.every(slot => {
+      const attendance = bySlot.get(Number(slot.id));
+      return attendance && attendance.status === 'hadir' && Number(attendance.guru_id) === Number(user.id);
+    });
+  };
+  const bolehBukaPresensi = (user, jadwalRow, tanggal) =>
+    sesiBolehTulisPresensi(user, jadwalRow, tanggal) && checkinHadirGuru(user, jadwalRow, tanggal);
 
   function pastikanSesi(req, jadwalRow, tanggal, user) {
     const tgl = String(tanggal || dbm.today()).slice(0, 10);
@@ -3475,7 +3647,9 @@ ${isi}
           terisi: Object.values(h).reduce((a, b) => a + b, 0),
           hadir: h.H || 0, alpa: (h.A || 0) + (h.B || 0),
           window: { aktif: w.aktif, alasan: w.alasan },
-          bisa: sesiBolehTulisPresensi(user, r, tanggal)
+          butuh_checkin: perluCheckinGuru(user, r, tanggal) && !checkinHadirGuru(user, r, tanggal),
+          checkin_hadir: checkinHadirGuru(user, r, tanggal),
+          bisa: bolehBukaPresensi(user, r, tanggal)
         };
       });
     json(res, 200, {
@@ -3500,6 +3674,9 @@ ${isi}
     if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || '')) ? String(b.tanggal) : dbm.today();
     if (!sesiBolehTulisPresensi(user, row, tanggal)) return fail(res, 403, 'Anda bukan guru pengampu / wali kelas pada slot jadwal ini.');
+    if (!checkinHadirGuru(user, row, tanggal)) {
+      return fail(res, 403, 'Lakukan Check-in Hadir pada Absensi Guru terlebih dahulu sebelum membuka presensi siswa.');
+    }
     if (tanggal !== dbm.today()) return fail(res, 403, 'Sesi presensi hanya dapat dibuat pada hari jadwal berlangsung.');
     if (Number(row.hari) !== dbm.hariOf(tanggal)) return fail(res, 403, 'Slot jadwal ini bukan untuk hari ini.');
     if (dbm.kalenderNonaktif(tanggal)) {
@@ -3515,7 +3692,7 @@ ${isi}
     const q = await qrUntuk(req, sesi);
     json(res, 200, {
       ok: true, ...detail, qr: q,
-      bisa_simpan: detail.window.terbuka && sesiBolehTulisPresensi(user, row, tanggal)
+      bisa_simpan: detail.window.terbuka && bolehBukaPresensi(user, row, tanggal)
     });
   });
 
@@ -3531,10 +3708,13 @@ ${isi}
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(sesi.jadwal_id));
     if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
     if (!sesiBolehKelola(user, row, sesi.tanggal)) return fail(res, 403, 'Anda tidak berhak membuka sesi presensi kelas ini.');
+    if (!checkinHadirGuru(user, row, sesi.tanggal)) {
+      return fail(res, 403, 'Lakukan Check-in Hadir pada Absensi Guru terlebih dahulu sebelum membuka presensi siswa.');
+    }
     (async () => {
       const detail = sesiDetail(req, sesi, { auth: true });
       const qrData = await qrUntuk(req, sesi);
-      json(res, 200, { ok: true, ...detail, qr: qrData, bisa_simpan: detail.window.terbuka && sesiBolehTulisPresensi(user, row, sesi.tanggal) });
+      json(res, 200, { ok: true, ...detail, qr: qrData, bisa_simpan: detail.window.terbuka && bolehBukaPresensi(user, row, sesi.tanggal) });
     })().catch(e => fail(res, 500, e.message));
   });
 
@@ -3546,6 +3726,9 @@ ${isi}
     if (!sesi) return fail(res, 404, 'Sesi presensi tidak ditemukan.');
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(sesi.jadwal_id));
     if (!row || !sesiBolehTulisPresensi(user, row, sesi.tanggal)) return fail(res, 403, 'Anda tidak berhak mengisi presensi kelas ini.');
+    if (!checkinHadirGuru(user, row, sesi.tanggal)) {
+      return fail(res, 403, 'Lakukan Check-in Hadir pada Absensi Guru terlebih dahulu sebelum mengisi presensi siswa.');
+    }
     const detail = sesiDetail(req, sesi, { auth: true });
     /* TIME-LOCKING: presensi tidak dapat diubah setelah jam pelajaran selesai. */
     if (!detail.window.terbuka) {

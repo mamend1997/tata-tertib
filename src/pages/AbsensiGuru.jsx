@@ -278,6 +278,13 @@ export default function AbsensiGuru({ ctx }) {
                           aktif ? 'text-emerald-700' : 'text-slate-500')}>
                           {sisa ? <><Timer size={10} className="mr-1 inline align-[-1px]" />{sisa}</> : sl.alasan_singkat}
                         </span>
+                        {sl.bisa_rencana_tukar ? (
+                          <button type="button" className="btn-ghost btn-sm"
+                            onClick={() => setTukarSlot({ ...sl, id: sl.jadwal_id, tanggal: h.tanggal })}
+                            data-tukar-hari={sl.jadwal_id}>
+                            <Repeat size={12} /> Rencana Sakit/Izin &amp; Tukar Hari
+                          </button>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -509,7 +516,7 @@ export default function AbsensiGuru({ ctx }) {
       <ModalAlasan open={!!alasan} data={alasan} busy={busyId > 0}
         onClose={() => setAlasan(null)} onSubmit={(catatan) => checkin(alasan.slot, alasan.status, catatan)} />
 
-      <ModalTukar open={!!tukarSlot} slot={tukarSlot} tanggal={tanggal}
+      <ModalTukar open={!!tukarSlot} slot={tukarSlot} tanggal={tukarSlot?.tanggal || tanggal}
         onClose={() => setTukarSlot(null)} onSaved={() => { setTukarSlot(null); load(); }} />
 
       <Modal open={waOpen} onClose={() => setWaOpen(false)} title="Rekap Absensi Guru via WhatsApp" size="md"
@@ -592,29 +599,55 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
   const [guruId, setGuruId] = useState('');
   const [mapelId, setMapelId] = useState('');
   const [alasan, setAlasan] = useState('');
+  const [alasanJenis, setAlasanJenis] = useState('lainnya');
   const [busy, setBusy] = useState(false);
+  const lintasHari = tanggal > hariIni();
 
   useEffect(() => {
     if (!open || !slot?.id) return;
     setLoading(true); setData(null); setGuruId(''); setMapelId(''); setAlasan('');
-    api(`/api/tukar-jadwal/kandidat?jadwal_id=${slot.id}&tanggal=${tanggal}`)
-      .then(r => setData(r)).catch(e => toast.err(e.message)).finally(() => setLoading(false));
-  }, [open, slot?.id, tanggal]);
+    setAlasanJenis(lintasHari ? 'sakit' : 'lainnya');
+  }, [open, slot?.id, tanggal, lintasHari]);
+
+  useEffect(() => {
+    if (!open || !slot?.id) return;
+    const jenis = lintasHari ? alasanJenis : 'lainnya';
+    setLoading(true); setData(null); setGuruId(''); setMapelId('');
+    let active = true;
+    api(`/api/tukar-jadwal/kandidat?jadwal_id=${slot.id}&tanggal=${tanggal}&alasan_jenis=${jenis}`)
+      .then(r => { if (active) setData(r); })
+      .catch(e => { if (active) toast.err(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [open, slot?.id, tanggal, lintasHari, alasanJenis]);
 
   const kandidat = data?.kandidat || [];
   const pilih = kandidat.find(k => Number(k.id) === Number(guruId)) || null;
   const mapelOpsi = pilih?.mapel || [];
   useEffect(() => {
     if (!mapelOpsi.length) { setMapelId(''); return; }
-    if (!mapelOpsi.some(m => Number(m.id) === Number(mapelId))) setMapelId(String(mapelOpsi[0].id));
+    const keyOf = m => lintasHari ? `${m.tanggal}:${m.jadwal_id}` : String(m.id);
+    if (!mapelOpsi.some(m => keyOf(m) === mapelId)) setMapelId(keyOf(mapelOpsi[0]));
   }, [guruId, data]);
+  const mapelTerpilih = mapelOpsi.find(m => (lintasHari
+    ? `${m.tanggal}:${m.jadwal_id}` === mapelId
+    : String(m.id) === mapelId)) || null;
 
   async function kirim() {
     if (!guruId) return toast.err('Pilih guru pengganti terlebih dahulu.');
+    if (!lintasHari && alasan.trim().length < 5) return toast.err('Alasan tukar wajib diisi minimal 5 karakter.');
+    if (lintasHari && !['izin', 'sakit'].includes(alasanJenis)) return toast.err('Pilih alasan Izin atau Sakit.');
     setBusy(true);
     try {
       const r = await api('/api/tukar-jadwal', {
-        method: 'POST', body: { jadwal_id: slot.id, tanggal, ke_guru: Number(guruId), mapel_id: Number(mapelId) || 0, alasan }
+        method: 'POST', body: {
+          jadwal_id: slot.id, tanggal, ke_guru: Number(guruId),
+          mapel_id: Number(mapelTerpilih?.id) || 0,
+          pasangan_jadwal_id: lintasHari ? Number(mapelTerpilih?.jadwal_id) || 0 : undefined,
+          pasangan_tanggal: lintasHari ? mapelTerpilih?.tanggal : tanggal,
+          alasan_jenis: lintasHari ? alasanJenis : 'lainnya',
+          alasan: lintasHari ? alasanJenis : alasan
+        }
       });
       toast.ok(r.pesan || 'Permintaan tukar jadwal dikirim.');
       onSaved?.();
@@ -639,12 +672,33 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
             <p><b>Kelas:</b> {data.slot.kelas_nama || '-'}</p>
             <p><b>Tanggal:</b> {data.tanggal} · <b>Guru pengampu:</b> {data.slot.guru_nama}</p>
             <p className="mt-1 text-[11.5px] italic text-slate-500">
-              Pertukaran memasangkan otomatis slot mapel guru tujuan pada kelas dan hari yang sama. Kedua guru saling bertukar mapel pada pekan ini; pekan berikutnya jadwal kembali normal.
+              {lintasHari
+                ? 'Pertukaran sakit/izin memasangkan dua sesi pada kelas dan jumlah jam yang sama di tanggal berbeda dalam minggu berjalan. Alasan ini bukan catatan absensi.'
+                : 'Pertukaran memasangkan slot guru yang sudah Check-in Hadir pada kelas dan hari yang sama. Alasan harus menjelaskan kendala mengajar, bukan Izin atau Sakit.'}
             </p>
           </div>
 
+          {lintasHari ? (
+            <Field label="Alasan pertukaran lintas hari" required>
+              <div className="grid grid-cols-2 gap-2">
+                {['izin', 'sakit'].map(jenis => (
+                  <button type="button" key={jenis} onClick={() => setAlasanJenis(jenis)}
+                    className={cx('btn justify-center', alasanJenis === jenis
+                      ? 'border-violet-300 bg-violet-100 text-violet-900'
+                      : 'border-slate-200 bg-white text-slate-600')}
+                    data-alasan-tukar-jenis={jenis}>
+                    {jenis === 'izin' ? <UserRoundX size={14} /> : <Stethoscope size={14} />}
+                    {jenis === 'izin' ? 'Izin' : 'Sakit'}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          ) : null}
+
           <Field label="Guru Tujuan" required
-            hint="Sistem mencari pasangan mapel dan slot guru tujuan secara otomatis pada kelas yang sama.">
+            hint={lintasHari
+              ? 'Guru tujuan harus memiliki slot pada tanggal berbeda di minggu ini, untuk kelas dan jumlah jam yang sama.'
+              : 'Guru tujuan harus sudah Check-in Hadir hari ini dan memiliki slot pasangan pada kelas yang sama.'}>
             <select className="input" value={guruId} onChange={e => setGuruId(e.target.value)} data-pilih-guru-tukar>
               <option value="">— pilih guru —</option>
               {kandidat.map(k => (
@@ -656,29 +710,33 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           </Field>
           {!kandidat.length ? (
             <Alert tone="warn" title="Belum ada guru lain yang mengampu kelas ini">
-              Tambahkan guru pengampu lain pada Data Master Mata Pelajaran / susun slot jadwal guru lain di kelas yang sama,
-              lalu ajukan tukar jadwal kembali.
+              {lintasHari
+                ? 'Pastikan ada guru lain dengan slot pada tanggal mendatang di minggu ini, pada kelas dan jumlah jam yang sama.'
+                : 'Pastikan guru lain sudah Check-in Hadir hari ini dan memiliki slot mapel pada kelas yang sama.'}
             </Alert>
           ) : null}
 
           <Field label="Mapel yang dipasangkan" required
-            hint="Slot pasangan ditentukan otomatis dari mapel dan durasi jamnya; kedua jadwal akan saling bertukar posisi.">
+            hint="Slot pasangan harus memiliki jumlah jam mapel yang sama dan kelas yang sama.">
             <select className="input" value={mapelId} onChange={e => setMapelId(e.target.value)} data-pilih-mapel-tukar>
-              {mapelOpsi.map(m => <option key={m.id + '-' + m.jadwal_id} value={m.id}>
-                {m.nama || m.kode} · sesi {m.sesi}{m.jam ? ` (${m.jam})` : ''}
+              {mapelOpsi.map(m => <option key={m.id + '-' + m.jadwal_id + '-' + (m.tanggal || '')}
+                value={lintasHari ? `${m.tanggal}:${m.jadwal_id}` : String(m.id)}>
+                {m.nama || m.kode} · {lintasHari ? `${m.tanggal} · ` : ''}sesi {m.sesi}{m.jam ? ` (${m.jam})` : ''}
               </option>)}
             </select>
           </Field>
 
-          <Field label="Alasan / Keterangan (opsional)">
-            <textarea className="input" rows={3} value={alasan} onChange={e => setAlasan(e.target.value)}
-              placeholder="mis. menghadiri undangan dinas, sakit, tugas luar…" data-alasan-tukar />
-          </Field>
+          {!lintasHari ? (
+            <Field label="Alasan / Keterangan" required hint="Minimal 5 karakter; alasan Sakit/Izin hanya dipakai untuk pertukaran lintas hari.">
+              <textarea className="input" rows={3} value={alasan} onChange={e => setAlasan(e.target.value)}
+                placeholder="mis. kegiatan sekolah di jam tersebut, tugas mendadak…" data-alasan-tukar />
+            </Field>
+          ) : null}
 
           <p className="flex items-start gap-1.5 rounded-xl bg-violet-50 px-3 py-2 text-[11.5px] text-violet-900">
             <ShieldCheck size={13} className="mt-0.5 shrink-0" />
-            Setelah guru tujuan <b>menerima</b>, guru dan mapel pada kedua slot berpindah posisi untuk pekan ini.
-            Bila <b>ditolak</b>, kedua jadwal tetap seperti semula.
+            Setelah guru tujuan <b>menerima</b>, guru dan mapel pada kedua slot berpindah posisi hanya pada tanggal yang dipilih.
+            Pertukaran tidak membuat catatan sakit/izin pada rekap absensi guru.
           </p>
         </div>
       )}

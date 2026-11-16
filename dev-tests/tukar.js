@@ -71,7 +71,7 @@ async function stopServer() {
   await startServer();
 
   const cfgBody = (extra = {}) => ({
-    hari: [HARI], max_jam: 8,
+    hari: extra.hari || [HARI], max_jam: 8,
     sesi: extra.sesi || [
       { label: 'Jam ke-1', mulai: hhmm(base - 15), selesai: hhmm(base + 25), istirahat: 0 },
       { label: 'Jam ke-2', mulai: hhmm(base + 26), selesai: hhmm(base + 60), istirahat: 0 },
@@ -134,12 +134,15 @@ async function stopServer() {
     ok('mapel A muncul lagi setelah jeda mapel lain', r.status === 200, r.body?.error);
     r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 6, mapel_id: mC, guru_id: gC, kelas_ids: [K2], abaikan: 1 } });
     ok('slot guru C (kelas 2) dibuat', r.status === 200, r.body?.error);
+    r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 5, mapel_id: mB, guru_id: gB, kelas_ids: [K2], abaikan: 1 } });
+    const slotBHadir = r.body.id;
+    ok('slot hadir guru B di kelas lain dibuat', r.status === 200, r.body?.error);
 
     /* ============ 1. JADWAL TIDAK LAGI KOSONG ============ */
     console.log('\n== 1. JADWAL & ABSENSI SISWA TIDAK KOSONG ==');
     r = await req('/api/jadwal?ta=99999');
     ok('parameter TA basi diabaikan (memakai TA aktif)', Number(r.body.ta) === 1, JSON.stringify({ ta: r.body.ta }));
-    ok('slot tetap terbaca walau TA di URL tidak ada', (r.body.rows || []).length === 6, String((r.body.rows || []).length));
+    ok('slot tetap terbaca walau TA di URL tidak ada', (r.body.rows || []).length === 7, String((r.body.rows || []).length));
 
     r = await req(`/api/absensi-siswa?tanggal=${TODAY}&ta=99999`);
     ok('Absensi Siswa per Mapel menampilkan sesi hari ini', (r.body.jadwal || []).length >= 2,
@@ -175,7 +178,7 @@ async function stopServer() {
     r = await req(`/api/absensi-guru/rekap?tanggal=${TODAY}`);
     const guruARekap = (r.body.rekap?.rows || []).find(x => Number(x.guru_id) === Number(gA));
     ok('ringkasan harian juga menghitung mapel-kelas hanya sekali',
-      r.status === 200 && Number(r.body.rekap?.jadwal) === 3
+      r.status === 200 && Number(r.body.rekap?.jadwal) === 4
         && Number(guruARekap?.jadwal) === 1
         && (guruARekap?.slots?.[0]?.jadwal_ids || []).length === 3,
       JSON.stringify({ total: r.body.rekap?.jadwal, guruA: guruARekap }));
@@ -211,6 +214,14 @@ async function stopServer() {
     console.log('\n== 3. TUKAR JADWAL MENGAJAR ==');
     await login('admin', 'admin123');
     r = await req('/api/jadwal');
+    const attendanceFixture = new Database(DB);
+    const slotBHadirTa = attendanceFixture.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(slotBHadir).ta_id;
+    attendanceFixture.prepare(`INSERT INTO absensi_guru
+      (jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,waktu_submit,ip,validasi,created_at,updated_at)
+      VALUES(?,?,?,?,'hadir','','Fixture hadir sebelumnya',?,'test','{}',?,?)`)
+      .run(slotBHadir, TODAY, gB, slotBHadirTa, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`);
+    attendanceFixture.close();
+    ok('fixture guru tujuan memiliki check-in Hadir pada hari yang sama', true);
     await login('gurua', 'guru123');
     r = await req(`/api/tukar-jadwal/kandidat?jadwal_id=${slotA}&tanggal=${TODAY}`);
     ok('kandidat guru pengganti tersedia', r.status === 200 && Array.isArray(r.body.kandidat), r.body?.error);
@@ -227,6 +238,10 @@ async function stopServer() {
     r = await req('/api/tukar-jadwal', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY, ke_guru: gB, alasan: 'uji' } });
     ok('guru tidak boleh menukar sesi milik guru lain', r.status === 403, r.body?.error);
 
+    r = await req('/api/tukar-jadwal', { method: 'POST', body: {
+      jadwal_id: slotA, tanggal: TODAY, ke_guru: gB, alasan_jenis: 'lainnya', alasan: 'guru sakit mendadak'
+    } });
+    ok('alasan Sakit/Izin tidak dapat disamarkan sebagai tukar hari yang sama', r.status === 400, r.body?.error);
     r = await req('/api/tukar-jadwal', { method: 'POST', body: { jadwal_id: slotA, tanggal: TODAY, ke_guru: gB, alasan: 'ada tugas luar' } });
     ok('permintaan tukar jadwal terkirim', r.status === 200 && r.body.tukar?.status === 'pending', JSON.stringify(r.body).slice(0, 200));
     const tukarId = r.body.id;
@@ -244,12 +259,22 @@ async function stopServer() {
     ok('dashboard guru tujuan memuat tukar_masuk (notifikasi)', (r.body.tukar_masuk || []).length === 1,
       JSON.stringify(r.body?.tukar_masuk));
 
-    /* Sesi yang dibuka setelah permintaan dibuat tidak boleh kemudian dipindah. */
+    /* Sesi hanya dapat dibuka guru setelah check-in Hadir; admin tetap dapat
+       membuka untuk menguji bahwa sesi yang sudah dibuat mengunci pertukaran. */
+    await login('gurub', 'guru123');
+    const sesiTanpaCheckin = await req('/api/absensi-siswa/sesi', {
+      method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY }
+    });
+    ok('guru tanpa check-in Hadir tidak dapat membuka sesi presensi',
+      sesiTanpaCheckin.status === 403 && /Check-in Hadir/i.test(sesiTanpaCheckin.body?.error || ''),
+      sesiTanpaCheckin.body?.error);
+    await login('admin', 'admin123');
     const sesiSaatMenunggu = await req('/api/absensi-siswa/sesi', {
       method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY }
     });
-    ok('guru tujuan dapat membuka sesi presensi saat permintaan masih menunggu',
+    ok('admin dapat membuka sesi presensi untuk uji kunci pertukaran',
       sesiSaatMenunggu.status === 200 && !!sesiSaatMenunggu.body?.sesi?.id, sesiSaatMenunggu.body?.error);
+    await login('gurub', 'guru123');
     r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: tukarId, aksi: 'terima' } });
     ok('permintaan ditolak bila sesi sudah dibuka sebelum diterima', r.status === 409, r.body?.error);
     if (sesiSaatMenunggu.body?.sesi?.id) {
@@ -292,6 +317,14 @@ async function stopServer() {
     ok('guru pengganti dapat check-in (tombol aktif/hak penuh)', !!slotBView && slotBView.milik_saya === true);
     ok('mapel slot pertama berubah ke mapel tujuan', Number(slotBView?.mapel_id) === Number(mB)
       && slotBView?.mapel_nama === 'Mapel B', JSON.stringify({ id: slotBView?.mapel_id, nama: slotBView?.mapel_nama }));
+    await login('admin', 'admin123');
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}`);
+    const rekapKelas1 = (r.body.rows || []).filter(x => String(x.kelas_nama) === String((kelas.find(k => Number(k.id) === Number(K1)) || {}).nama));
+    ok('rekap menampilkan dua kelompok jadwal kelas yang ditukar tanpa baris duplikat',
+      r.status === 200 && rekapKelas1.length === 2
+        && new Set(rekapKelas1.map(x => `${x.guru_id}|${x.mapel_id}`)).size === 2,
+      JSON.stringify(rekapKelas1.map(x => ({ guru: x.guru_id, mapel: x.mapel_id, ids: x.jadwal_ids, status: x.status }))));
+    await login('gurub', 'guru123');
     ok('pertukaran mencakup seluruh jam mapel berurutan', Number(slotBView?.jumlah_jam) === 2
       || (slotBView?.jadwal_ids || slotBView?.group_ids || []).length === 2,
     JSON.stringify({ jam: slotBView?.jumlah_jam, ids: slotBView?.jadwal_ids || slotBView?.group_ids }));
@@ -337,14 +370,65 @@ async function stopServer() {
     ok('check-in sesi pengganti tercatat atas nama guru B', r.status === 200, r.body?.error);
     await login('admin', 'admin123');
     r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gB}&mapel=${mB}`);
-    ok('rekap menghitung dua jam mapel sebagai satu kehadiran per hari',
-      r.status === 200 && (r.body.rows || []).length === 1 && (r.body.rows[0].jadwal_ids || []).length === 2,
-      JSON.stringify((r.body.rows || []).map(x => ({ mapel: x.mapel_id, slots: x.jadwal_ids, status: x.status }))));
+    const mapelBKelas1 = (r.body.rows || []).filter(x => String(x.kelas_nama) === String((kelas.find(k => Number(k.id) === Number(K1)) || {}).nama));
+    ok('rekap menghitung dua jam mapel sebagai satu kehadiran per kelas',
+      r.status === 200 && mapelBKelas1.length === 1 && (mapelBKelas1[0].jadwal_ids || []).length === 2,
+      JSON.stringify((r.body.rows || []).map(x => ({ kelas: x.kelas_nama, mapel: x.mapel_id, slots: x.jadwal_ids, status: x.status }))));
 
     /* setelah ada absensi, tukar baru ditolak */
     await login('gurub', 'guru123');
     r = await req('/api/tukar-jadwal', { method: 'POST', body: { jadwal_id: slotA, tanggal: TODAY, ke_guru: gA } });
     ok('sesi yang sudah diabsen tidak dapat ditukar lagi', r.status === 409 || r.status === 403, r.body?.error);
+
+    if (HARI >= 1 && HARI <= 5) {
+      console.log('\n== 4. TUKAR LINTAS HARI (IZIN/SAKIT) ==');
+      const addDate = n => {
+        const d = new Date(`${TODAY}T12:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + n);
+        return d.toISOString().slice(0, 10);
+      };
+      const TGL_A = addDate(1), TGL_B = addDate(2);
+      const HARI_A = (HARI + 1) % 7, HARI_B = (HARI + 2) % 7;
+      await login('admin', 'admin123');
+      r = await req('/api/jadwal/pengaturan', { method: 'POST', body: cfgBody({ hari: [HARI, HARI_A, HARI_B] }) });
+      ok('hari jadwal dua hari mendatang diaktifkan', r.status === 200, r.body?.error);
+      const buatSlot = async (hari, sesi, mapelId, guruId) => req('/api/jadwal/slot', {
+        method: 'POST', body: { hari, sesi, mapel_id: mapelId, guru_id: guruId, kelas_ids: [K1], abaikan: 1 }
+      });
+      const a1 = await buatSlot(HARI_A, 1, mA, gA);
+      const a2 = await buatSlot(HARI_A, 2, mA, gA);
+      const b1 = await buatSlot(HARI_B, 3, mB, gB);
+      const b2 = await buatSlot(HARI_B, 4, mB, gB);
+      ok('slot lintas hari dibuat dengan jumlah jam seimbang',
+        [a1, a2, b1, b2].every(x => x.status === 200 && x.body.id),
+        JSON.stringify([a1.body?.error, a2.body?.error, b1.body?.error, b2.body?.error]));
+      await login('gurua', 'guru123');
+      r = await req(`/api/tukar-jadwal/kandidat?jadwal_id=${a1.body.id}&tanggal=${TGL_A}&alasan_jenis=izin`);
+      const kLintas = (r.body.kandidat || []).find(k => Number(k.id) === Number(gB));
+      const pasanganLintas = (kLintas?.mapel || []).find(m => m.tanggal === TGL_B && Number(m.jadwal_id) === Number(b1.body.id));
+      ok('guru pasangan lintas hari hanya ditawarkan pada kelas dan jumlah slot yang sama',
+        r.status === 200 && !!pasanganLintas, JSON.stringify(kLintas?.mapel || []));
+      r = await req('/api/tukar-jadwal', { method: 'POST', body: {
+        jadwal_id: a1.body.id, tanggal: TGL_A, ke_guru: gB,
+        pasangan_jadwal_id: b1.body.id, pasangan_tanggal: TGL_B,
+        alasan_jenis: 'izin', alasan: 'izin'
+      } });
+      ok('pengajuan Izin lintas hari tersimpan sebagai pertukaran', r.status === 200, r.body?.error);
+      const lintasId = r.body.id;
+      await login('gurub', 'guru123');
+      r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: lintasId, aksi: 'terima' } });
+      ok('guru tujuan menerima pertukaran lintas hari', r.status === 200 && r.body.status === 'diterima', r.body?.error);
+      const persisted = new Database(DB);
+      const swapRows = persisted.prepare('SELECT jadwal_id,tanggal,alasan,alasan_jenis,status FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
+        .all(lintasId);
+      const attendanceRows = persisted.prepare('SELECT id FROM absensi_guru WHERE tanggal IN (?,?) AND jadwal_id IN (?,?,?,?)')
+        .all(TGL_A, TGL_B, a1.body.id, a2.body.id, b1.body.id, b2.body.id);
+      persisted.close();
+      ok('pertukaran sakit/izin tidak menambah status sakit/izin/alfa ke rekap absensi',
+        swapRows.length === 4 && swapRows.every(x => x.status === 'diterima' && x.alasan_jenis === 'izin')
+          && attendanceRows.length === 0,
+        JSON.stringify({ swaps: swapRows, absensi: attendanceRows }));
+    }
 
     /* RBAC: pengguna tanpa izin absensi_guru tidak boleh mengajukan */
     await login('wali1', 'wali123');

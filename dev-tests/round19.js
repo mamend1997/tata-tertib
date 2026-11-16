@@ -92,6 +92,9 @@ const menit = (d) => d.getUTCHours() * 60 + d.getUTCMinutes();
     ok('slot menandai tombol check-in tersedia', !!slot && slot.bisa_checkin === true, JSON.stringify(slot && { bisa: slot.bisa_checkin, window: slot.window }));
     ok('informasi alfa otomatis dibawa ke halaman', !!r.body.auto_alpha && r.body.auto_alpha.aktif === true);
 
+    r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: slotId, tanggal: TODAY } });
+    ok('guru tidak dapat membuka sesi presensi sebelum Check-in Hadir',
+      r.status === 403 && /Check-in Hadir/i.test(r.body?.error || ''), r.body?.error);
     r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotId, tanggal: TODAY, status: 'hadir' } });
     ok('check-in hadir berhasil tanpa jurnal', r.status === 200 && r.body.status === 'hadir', r.body?.error);
     const waktuCheckin = r.body.waktu_submit || '';
