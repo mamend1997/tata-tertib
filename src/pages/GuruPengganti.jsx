@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, BookOpenCheck, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, Eye,
-  FileText, Loader2, RefreshCw, Repeat, Search, Trash2, UserPlus, Users, XCircle
+  FileText, Loader2, Printer, RefreshCw, Repeat, Search, Trash2, UserPlus, Users, XCircle
 } from 'lucide-react';
 import { ModalJurnal } from './AbsensiGuru';
 import { api, hariIni } from '../api';
@@ -82,6 +82,64 @@ export default function GuruPengganti({ ctx }) {
     setRiwayatDipilih(ids => checked
       ? [...new Set([...ids, Number(id)])]
       : ids.filter(x => Number(x) !== Number(id)));
+  }
+
+  function cetakRiwayat() {
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      toast.err('Jendela cetak diblokir browser. Izinkan pop-up lalu coba lagi.');
+      return;
+    }
+    const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+    const periodeLabel = {
+      mingguan: 'Mingguan', bulanan: 'Bulanan', tahun: 'Tahun Pelajaran',
+      custom: 'Rentang Tanggal', semua: 'Semua Periode'
+    }[filterRiwayat.periode] || filterRiwayat.periode;
+    const rentang = data?.filter_riwayat?.dari && data?.filter_riwayat?.sampai
+      ? `${data.filter_riwayat.dari} s.d. ${data.filter_riwayat.sampai}` : '';
+    const baris = riwayat.map(r => {
+      const sesi = r.sesi ? `Jam ${r.sesi}${r.pasangan_sesi ? `, ${r.pasangan_sesi}` : ''}` : '-';
+      const status = r.status === 'diterima' ? 'Aktif' : r.status === 'batal' ? 'Dibatalkan'
+        : r.status === 'ditolak' ? 'Ditolak' : r.status === 'pending' ? 'Menunggu' : r.status;
+      const jenis = r.jenis === 'penugasan' ? 'Penugasan Pengganti' : 'Tukar Jadwal';
+      return `<tr><td>${esc(r.tanggal)}</td><td>${esc(sesi)}</td><td>${esc(r.kelas_nama || '-')}</td>
+        <td>${esc(r.mapel_nama || '-')}</td><td>${esc(r.dari_nama || '-')}</td><td>${esc(r.ke_nama || '-')}</td>
+        <td>${esc(jenis)}</td><td>${esc(status)}</td><td>${esc(r.alasan || r.catatan_putus || '-')}</td></tr>`;
+    }).join('');
+    const sekolah = ctx.boot?.settings?.sekolah_nama || 'Sekolah';
+    const namaFilter = [
+      filterRiwayat.kelas && `Kelas: ${(data?.kelas || []).find(x => String(x.id) === String(filterRiwayat.kelas))?.nama || filterRiwayat.kelas}`,
+      filterRiwayat.guru && `Guru: ${(data?.guru || []).find(x => String(x.id) === String(filterRiwayat.guru))?.nama || filterRiwayat.guru}`,
+      filterRiwayat.mapel && `Mapel: ${(data?.mapel || []).find(x => String(x.id) === String(filterRiwayat.mapel))?.nama || filterRiwayat.mapel}`,
+      filterRiwayat.q && `Pencarian: ${filterRiwayat.q}`
+    ].filter(Boolean).join(' · ');
+    popup.document.open();
+    popup.document.write(`<!doctype html><html lang="id"><head><meta charset="utf-8">
+      <title>Riwayat Guru Piket / Pengganti</title>
+      <style>
+        @page{size:A4 landscape;margin:12mm}
+        body{font:11px Arial,sans-serif;color:#172033}
+        h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:0 0 12px}
+        .meta{margin:4px 0;color:#475569}
+        table{width:100%;border-collapse:collapse;margin-top:12px}
+        th,td{border:1px solid #94a3b8;padding:6px;text-align:left;vertical-align:top}
+        th{background:#e2e8f0}tr{break-inside:avoid}
+        .aksi{margin:0 0 12px;padding:7px 12px}
+        @media print{.aksi{display:none}}
+      </style></head><body>
+      <button class="aksi" onclick="window.print()">Cetak / Simpan PDF</button>
+      <h1>${esc(sekolah)}</h1><h2>Riwayat Guru Piket / Pengganti</h2>
+      <p class="meta">Periode: ${esc(periodeLabel)}${rentang ? ` · ${esc(rentang)}` : ''}</p>
+      ${namaFilter ? `<p class="meta">${esc(namaFilter)}</p>` : ''}
+      <p class="meta">Jumlah riwayat: ${riwayat.length}</p>
+      <table><thead><tr><th>Tanggal</th><th>Jam</th><th>Kelas</th><th>Mata Pelajaran</th>
+      <th>Guru Utama</th><th>Guru Pengganti</th><th>Jenis</th><th>Status</th><th>Alasan / Catatan</th></tr></thead>
+      <tbody>${baris}</tbody></table></body></html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
   }
 
   async function hapusRiwayat() {
@@ -399,6 +457,10 @@ export default function GuruPengganti({ ctx }) {
               </label>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-slate-500" data-riwayat-count>{riwayatDipilih.length} dipilih</span>
+                <button type="button" className="btn-ghost btn-sm" onClick={cetakRiwayat}
+                  data-riwayat-cetak>
+                  <Printer size={13} /> Cetak / PDF
+                </button>
                 <button type="button" className="btn-danger btn-sm" onClick={hapusRiwayat}
                   disabled={!riwayatDipilih.length || hapusRiwayatBusy} data-riwayat-hapus>
                   {hapusRiwayatBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}

@@ -114,6 +114,17 @@ const base = Math.min(cur, 1440 - 160);
     r = await req('/api/jadwal');
     const slotBaru = (r.body.rows || []).find(x => Number(x.mapel_id) === Number(mapelMtk));
     ok('slot di database memakai guru pengampu mapel', !!slotBaru && Number(slotBaru.guru_id) === gHendra.id);
+    r = await req('/api/mapel/save', { method: 'POST', body: {
+      id: mapelMtk, nama: 'Matematika', kode: 'MTK', guru_ids: [gBudi.id]
+    } });
+    ok('pengampu slot yang masih tersusun tidak bisa dihapus dari master mapel', r.status === 409, r.body?.error);
+    const pengampuMtk = (await req('/api/mapel')).body.rows.find(m => Number(m.id) === Number(mapelMtk));
+    ok('penolakan perubahan master tidak mengubah daftar pengampu',
+      (pengampuMtk?.guru_ids || []).map(Number).includes(Number(gHendra.id)));
+    r = await req('/api/mapel/import/commit', { method: 'POST', body: {
+      rows: [{ baris: 2, nama: 'Matematika', kode: 'MTK', max_jam_hari: 0, guru: [{ id: gBudi.id }] }]
+    } });
+    ok('impor mapel juga menolak perubahan pengampu yang memutus slot tersusun', r.status === 409, r.body?.error);
 
     /* mapel TANPA guru pengampu: guru dari form diikat otomatis */
     r = await req('/api/mapel/save', { method: 'POST', body: { nama: 'Sejarah', kode: 'SJH' } });
@@ -267,6 +278,19 @@ const base = Math.min(cur, 1440 - 160);
       r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 5, mapel_id: mapelMtk, kelas_ids: [kelas[3].id], abaikan: 1, ta: taLain.id } });
       ok('slot dapat dibuat pada tahun pelajaran lain', r.status === 200, r.body?.error);
       const slotLain = r.body.id;
+      const salahTa = await req('/api/jadwal/slot', { method: 'POST', body: {
+        id: slotLain, hari: HARI, sesi: 6, mapel_id: mapelMtk,
+        kelas_ids: [kelas[3].id], abaikan: 1, ta: taAktif
+      } });
+      ok('edit slot dengan TA yang berbeda ditolak, bukan sukses semu', salahTa.status === 404, salahTa.body?.error);
+      const verifikasiSlotLain = (await req(`/api/jadwal?ta=${taLain.id}`)).body.rows
+        .find(x => Number(x.id) === Number(slotLain));
+      ok('slot pada TA asal tetap tidak berubah setelah edit TA salah',
+        Number(verifikasiSlotLain?.sesi) === 5 && Number(verifikasiSlotLain?.ta_id) === Number(taLain.id));
+      r = await req('/api/jadwal/slot', { method: 'POST', body: {
+        hari: HARI, sesi: 6, mapel_id: mapelMtk, kelas_ids: [987654321], abaikan: 1, ta: taLain.id
+      } });
+      ok('slot dengan ID kelas yang tidak dikenal ditolak', r.status === 400, r.body?.error);
       /* pindahkan sudut pandang ke TA tersebut (ta_aktif) */
       r = await req('/api/settings/tahun', { method: 'POST', body: { ta: taLain.id } });
       ok('tahun pelajaran pandangan dipindah', r.status === 200);

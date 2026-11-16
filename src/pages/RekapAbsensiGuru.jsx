@@ -243,8 +243,8 @@ function HapusRiwayatGuru({ data, rows, guruList, pilih, setPilih, fHapus, setFH
   const toast = useToast();
   const [konfirm, setKonfirm] = useState(null);
   const [busy, setBusy] = useState(false);
-  /* baris yang dapat dihapus: hanya yang sudah memiliki absensi tercatat */
-  const bisa = rows.filter(r => r.absensi_id);
+  /* Alpha historis bisa berupa hasil hitung dari jadwal tanpa baris absensi. */
+  const bisa = rows.filter(r => r.absensi_id || r.status === 'alpha');
   const keyOf = (r) => `${(r.jadwal_ids || [r.jadwal_id]).join(',')}|${r.tanggal}`;
   const semuaKey = bisa.map(keyOf);
   const semuaTerpilih = semuaKey.length > 0 && semuaKey.every(k => pilih.includes(k));
@@ -261,7 +261,9 @@ function HapusRiwayatGuru({ data, rows, guruList, pilih, setPilih, fHapus, setFH
             pin,
             items: pilih.flatMap(k => {
               const [ids, tanggal] = k.split('|');
-              return ids.split(',').map(jadwal_id => ({ jadwal_id: Number(jadwal_id), tanggal }));
+              return ids.split(',').map(jadwal_id => ({
+                jadwal_id: Number(jadwal_id), tanggal, abaikan_rekap: true
+              }));
             })
           }
         })
@@ -338,7 +340,7 @@ function HapusRiwayatGuru({ data, rows, guruList, pilih, setPilih, fHapus, setFH
               <tbody>
                 {rows.map((r, i) => {
                   const k = keyOf(r);
-                  const bisaHapus = !!r.absensi_id;
+                  const bisaHapus = !!r.absensi_id || r.status === 'alpha';
                   return (
                     <tr key={k + '-' + i} className={cx(pilih.includes(k) && 'bg-orange-50/50', !bisaHapus && 'text-slate-400')}>
                       <td className="c">
@@ -365,9 +367,9 @@ function HapusRiwayatGuru({ data, rows, guruList, pilih, setPilih, fHapus, setFH
             </table>
           </div>
         )}
-        <Alert tone="warn" title="Baris tanpa absensi tidak dapat dihapus">
-          Baris berstatus <b>Belum Absen</b> berasal dari jadwal (bukan data absensi), jadi tidak punya data untuk dihapus.
-          Hanya baris dengan absensi tercatat yang dapat dipilih.
+        <Alert tone="warn" title="Alpha historis dapat dihapus dari rekap">
+          Alpha yang dihitung dari jadwal tanpa baris absensi dapat dipilih dan dikeluarkan dari rekap tanpa menghapus jadwal.
+          Baris <b>Belum Dicatat</b> tetap tidak dapat dipilih karena sesi belum berakhir.
         </Alert>
       </Card>
 

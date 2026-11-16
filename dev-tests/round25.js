@@ -47,6 +47,8 @@ const login = async (u, pw) => { cookie = ''; return req('/api/login', { method:
 const pad = n => String(n).padStart(2, '0');
 const wib = new Date();
 const TODAY = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}-${pad(wib.getDate())}`;
+const lastWeek = new Date(wib.getFullYear(), wib.getMonth(), wib.getDate() - 7);
+const LAST_WEEK = `${lastWeek.getFullYear()}-${pad(lastWeek.getMonth() + 1)}-${pad(lastWeek.getDate())}`;
 const HARI = wib.getDay();
 const BESOK = (() => { const d = new Date(wib.getTime() + 86400000); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; })();
 const cur = wib.getHours() * 60 + wib.getMinutes();
@@ -561,6 +563,32 @@ function startWa() {
       JSON.stringify({ n: (r.body.rows || []).length }));
 
     /* ---- absensi guru ---- */
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${LAST_WEEK}`);
+    const alphaTanpaAbsensi = (r.body.rows || []).find(x => x.status === 'alpha' && !x.absensi_id);
+    ok('Alpha historis tanpa baris absensi ditampilkan', !!alphaTanpaAbsensi, JSON.stringify(alphaTanpaAbsensi));
+    if (alphaTanpaAbsensi) {
+      const itemsAlpha = (alphaTanpaAbsensi.jadwal_ids || [alphaTanpaAbsensi.jadwal_id])
+        .map(jadwal_id => ({ jadwal_id, tanggal: LAST_WEEK, abaikan_rekap: true }));
+      r = await req('/api/rekap/absensi-guru/hapus', {
+        method: 'POST', body: { items: itemsAlpha }
+      });
+      ok('hapus paksa Alpha tanpa PIN ditolak', r.status === 400, r.body?.error);
+      r = await req('/api/rekap/absensi-guru/hapus', {
+        method: 'POST', body: { items: itemsAlpha, pin: 'admin123' }
+      });
+      ok('hapus paksa Alpha historis tanpa absensi berhasil',
+        r.status === 200 && Number(r.body.alfa_dikeluarkan) === itemsAlpha.length && Number(r.body.snapshot) === 1,
+        JSON.stringify(r.body));
+      r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${LAST_WEEK}`);
+      const jadwalCheck = new (require('better-sqlite3'))(DB);
+      const slotTetapAda = !!jadwalCheck.prepare('SELECT id FROM jadwal WHERE id=?').get(alphaTanpaAbsensi.jadwal_id);
+      jadwalCheck.close();
+      ok('Alpha terpilih hilang dari rekap tanpa menghapus jadwal',
+        !(r.body.rows || []).some(x => (x.jadwal_ids || [x.jadwal_id]).some(id => itemsAlpha.some(it => Number(it.jadwal_id) === Number(id))))
+          && slotTetapAda,
+        JSON.stringify((r.body.rows || []).map(x => x.jadwal_id)));
+    }
+
     r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}`);
     const rowsGuru = (r.body.rows || []).filter(x => x.absensi_id);
     ok('riwayat absensi guru tersedia', rowsGuru.length > 0, String(rowsGuru.length));

@@ -290,6 +290,9 @@ module.exports = function mount(api) {
     if (!kode) return fail(res, 400, 'Kode mata pelajaran wajib diisi.');
     if (!/^[A-Z0-9._-]{2,12}$/.test(kode)) return fail(res, 400, 'Kode mapel 2–12 karakter (huruf, angka, titik, garis).');
     const id = Number(b.id) || 0;
+    if (id && !db.prepare('SELECT id FROM mapel WHERE id=?').get(id)) {
+      return fail(res, 404, 'Mata pelajaran tidak ditemukan.');
+    }
     const dupNama = db.prepare('SELECT id FROM mapel WHERE lower(nama)=lower(?) AND id<>?').get(nama, id);
     if (dupNama) return fail(res, 400, 'Nama mata pelajaran sudah dipakai.');
     const dupKode = db.prepare('SELECT id FROM mapel WHERE upper(kode)=? AND id<>?').get(kode, id);
@@ -309,7 +312,15 @@ module.exports = function mount(api) {
         return fail(res, 409, `${ruangWajib.nama} sudah bentrok dengan slot lain pada ${dbm.HARI_LABEL[Number(bentrokRuang.hari)] || 'hari'} sesi ${bentrokRuang.sesi}.`);
       }
     }
-    const guruIds = strIds(b.guru_ids);
+    const guruIds = [...new Set(strIds(b.guru_ids))];
+    if (id) {
+      const jadwalTidakSesuai = db.prepare('SELECT DISTINCT guru_id FROM jadwal WHERE mapel_id=?')
+        .all(id).find(row => !guruIds.includes(Number(row.guru_id)));
+      if (jadwalTidakSesuai) {
+        return fail(res, 409,
+          'Guru pengampu yang dipilih akan membuat jadwal yang sudah tersusun tidak sesuai. Tambahkan guru baru bersama guru lama, pindahkan slot jadwalnya, lalu simpan kembali tanpa guru lama.');
+      }
+    }
     let rowId = id;
     db.transaction(() => {
       if (id) {
@@ -490,6 +501,22 @@ module.exports = function mount(api) {
     const b = await readBody(req);
     const rows = Array.isArray(b.rows) ? b.rows : [];
     if (!rows.length) return fail(res, 400, 'Tidak ada baris untuk disimpan.');
+    for (const r of rows) {
+      if (r.error) continue;
+      const nama = String(r.nama || '').trim();
+      const kode = String(r.kode || '').toUpperCase().replace(/[^A-Z0-9._-]/g, '').slice(0, 12);
+      const guruIds = [...new Set((Array.isArray(r.guru) ? r.guru : []).map(g => Number(g.id || g)).filter(Boolean))];
+      if (!nama || !guruIds.length) continue;
+      const id = (kode && (db.prepare('SELECT id FROM mapel WHERE upper(kode)=?').get(kode) || {}).id)
+        || (db.prepare('SELECT id FROM mapel WHERE lower(TRIM(nama))=lower(TRIM(?))').get(nama) || {}).id;
+      if (!id) continue;
+      const jadwalTidakSesuai = db.prepare('SELECT DISTINCT guru_id FROM jadwal WHERE mapel_id=?')
+        .all(Number(id)).find(row => !guruIds.includes(Number(row.guru_id)));
+      if (jadwalTidakSesuai) {
+        return fail(res, 409,
+          `Baris ${Number(r.baris) || '?'}: perubahan guru pengampu akan membuat jadwal ${nama} yang sudah tersusun tidak sesuai. Pindahkan slot terlebih dahulu.`);
+      }
+    }
     let masuk = 0, diperbarui = 0;
     db.transaction(() => {
       let urut = db.prepare('SELECT COALESCE(MAX(urut),0) m FROM mapel').get().m || 0;
@@ -616,7 +643,7 @@ module.exports = function mount(api) {
     sesi: Number(b.sesi),
     mapel_id: Number(b.mapel_id) || 0,
     guru_id: Number(b.guru_id) || 0,
-    kelas_ids: strIds(b.kelas_ids || b.kelas),
+    kelas_ids: [...new Set(strIds(b.kelas_ids || b.kelas))],
     ruang: String(b.ruang || '').trim().slice(0, 40),
     catatan: String(b.catatan || '').trim().slice(0, 200)
   });
@@ -672,10 +699,18 @@ module.exports = function mount(api) {
     const taId = taOf(body);
     if (!taId) return fail(res, 400, 'Tahun pelajaran belum tersedia.');
     const s = slotBody(body);
+    const slotLama = s.id
+      ? db.prepare('SELECT * FROM jadwal WHERE id=? AND ta_id=?').get(s.id, taId)
+      : null;
+    if (s.id && !slotLama) return fail(res, 404, 'Slot jadwal tidak ditemukan pada tahun pelajaran terpilih.');
+    const kelasTersedia = new Set(dbm.kelasAll().map(k => Number(k.id)));
+    const kelasTidakDikenal = s.kelas_ids.filter(id => !kelasTersedia.has(id));
+    if (kelasTidakDikenal.length) {
+      return fail(res, 400, `Kelas/rombel tidak ditemukan: ${kelasTidakDikenal.join(', ')}.`);
+    }
     /* guru pengampu selalu dari Data Master Mata Pelajaran (terkunci) */
-    const slotLama = s.id ? (db.prepare('SELECT guru_id, mapel_id FROM jadwal WHERE id=?').get(Number(s.id)) || {}) : {};
     const penugasan = guruTerkunci(s.mapel_id, s.guru_id,
-      Number(slotLama.mapel_id) === Number(s.mapel_id) ? slotLama.guru_id : null);
+      slotLama && Number(slotLama.mapel_id) === Number(s.mapel_id) ? slotLama.guru_id : null);
     if (penugasan.error) return fail(res, 400, penugasan.error);
     s.guru_id = penugasan.guru_id;
     const alokasiRuang = dbm.jadwalRuangPilih({
@@ -2563,6 +2598,39 @@ ${isi}
     const permintaanId = Number(t.permintaan_id) || Number(t.id);
     const slotPasangan = db.prepare('SELECT DISTINCT jadwal_id FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
       .all(permintaanId).map(x => Number(x.jadwal_id));
+    if (aksi === 'terima') {
+      const tgl = String(t.tanggal || '').slice(0, 10);
+      if (tgl !== dbm.today()) {
+        return fail(res, 409, 'Permintaan tukar jadwal hanya dapat diterima pada hari sesi berlangsung.');
+      }
+      if (!slotPasangan.length) return fail(res, 409, 'Slot permintaan tukar jadwal tidak ditemukan.');
+      const placeholders = slotPasangan.map(() => '?').join(',');
+      const jadwalTerlibat = db.prepare(`SELECT * FROM jadwal WHERE id IN (${placeholders})`).all(...slotPasangan);
+      if (jadwalTerlibat.length !== slotPasangan.length) {
+        return fail(res, 409, 'Sebagian slot jadwal sudah tidak tersedia. Permintaan tidak dapat diterima.');
+      }
+      const sudahDikelompokkan = new Set();
+      const cfgTukar = dbm.jadwalConfig();
+      for (const slot of jadwalTerlibat) {
+        const semua = dbm.jadwalRows(Number(slot.ta_id)).filter(x => Number(x.hari) === Number(slot.hari));
+        const group = kelompokJadwal(slot, semua, cfgTukar);
+        const groupKey = group.map(x => Number(x.id)).sort((a, b) => a - b).join(',');
+        if (sudahDikelompokkan.has(groupKey)) continue;
+        sudahDikelompokkan.add(groupKey);
+        const window = jendelaKelompok(group, t.tanggal, cfgTukar);
+        if (!window.sesi || window.nonaktif || !window.hariOk
+          || dbm.nowMenit() > dbm.jamMenit(window.tutup)) {
+          return fail(res, 409, 'Jam salah satu sesi sudah berakhir atau tidak berlaku. Permintaan tidak dapat diterima.');
+        }
+      }
+      const absensiAda = db.prepare(`SELECT 1 FROM absensi_guru
+        WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`).get(t.tanggal, ...slotPasangan);
+      const sesiAda = db.prepare(`SELECT 1 FROM absensi_sesi
+        WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`).get(t.tanggal, ...slotPasangan);
+      if (absensiAda || sesiAda) {
+        return fail(res, 409, 'Salah satu sesi sudah mulai diabsen/dibuka. Permintaan tukar jadwal tidak dapat diterima.');
+      }
+    }
     db.transaction(() => {
       db.prepare(`UPDATE jadwal_tukar SET status=?, catatan_putus=?, diputus_at=?, diputus_oleh=?, diputus_nama=?, updated_at=?
         WHERE COALESCE(permintaan_id,id)=? AND status='pending'`)

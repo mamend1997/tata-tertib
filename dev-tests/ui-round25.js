@@ -66,6 +66,8 @@ const ok = (name, cond, extra) => {
   const pad = n => String(n).padStart(2, '0');
   const wib = new Date();
   const TODAY = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}-${pad(wib.getDate())}`;
+  const lastWeek = new Date(wib.getFullYear(), wib.getMonth(), wib.getDate() - 7);
+  const LAST_WEEK = `${lastWeek.getFullYear()}-${pad(lastWeek.getMonth() + 1)}-${pad(lastWeek.getDate())}`;
   const HARI = wib.getDay();
   const cur = wib.getHours() * 60 + wib.getMinutes();
   const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((((m % 1440) + 1440) % 1440) % 60)}`;
@@ -203,6 +205,14 @@ const ok = (name, cond, extra) => {
     ok('ceklis & Pilih Semua pada rekap guru', await page.locator('[data-pilih-semua-guru]').count() === 1);
     ok('form hapus berdasarkan rentang tanggal', await page.locator('[data-hapus-guru-dari]').count() === 1
       && await page.locator('[data-hapus-guru-filter]').count() === 1);
+    await page.locator('[data-periode]').selectOption('harian');
+    await page.locator('input[type="date"]').first().fill(LAST_WEEK);
+    await page.getByRole('button', { name: /Terapkan Filter/ }).click();
+    await page.waitForTimeout(650);
+    const alphaTanpaAbsensi = page.locator('[data-tbl="hapus-guru"] tbody tr')
+      .filter({ hasText: 'Alpha' }).first().locator('[data-pilih-guru]');
+    ok('Alpha historis tanpa rekaman absensi dapat dipilih',
+      await alphaTanpaAbsensi.count() === 1 && !(await alphaTanpaAbsensi.isDisabled()));
     await page.locator('[data-pilih-semua-guru]').check();
     await page.waitForTimeout(200);
     ok('baris absensi guru dapat dipilih', await page.locator('[data-pilih-guru]:checked').count() >= 1,
@@ -272,6 +282,24 @@ const ok = (name, cond, extra) => {
       await page.locator('[data-riwayat-item]').count() >= 1
         && await page.locator('[data-riwayat-item]').first().isDisabled()
         && await page.locator('[data-riwayat-hapus]').isDisabled());
+    ok('tombol Cetak / PDF riwayat tersedia', await page.locator('[data-riwayat-cetak]').count() === 1);
+    await page.evaluate(() => {
+      window.__ujiCetakRiwayat = { html: '', dipanggil: false };
+      window.open = () => ({
+        document: {
+          open() {},
+          write(html) { window.__ujiCetakRiwayat.html = html; },
+          close() {}
+        },
+        focus() {},
+        print() { window.__ujiCetakRiwayat.dipanggil = true; }
+      });
+    });
+    await page.click('[data-riwayat-cetak]');
+    const hasilCetak = await page.evaluate(() => window.__ujiCetakRiwayat);
+    ok('Cetak / PDF membuka dokumen dengan filter dan isi riwayat',
+      hasilCetak.dipanggil && /Riwayat Guru Piket \/ Pengganti/.test(hasilCetak.html)
+        && /Guru Utama/.test(hasilCetak.html) && /Guru Pengganti/.test(hasilCetak.html));
     await page.locator('[data-riwayat-detail-btn]').first().click();
     await page.waitForSelector('[data-riwayat-detail]', { timeout: 15000 });
     ok('tombol Detail membuka modal riwayat pengganti',

@@ -244,6 +244,24 @@ async function stopServer() {
     ok('dashboard guru tujuan memuat tukar_masuk (notifikasi)', (r.body.tukar_masuk || []).length === 1,
       JSON.stringify(r.body?.tukar_masuk));
 
+    /* Sesi yang dibuka setelah permintaan dibuat tidak boleh kemudian dipindah. */
+    const sesiSaatMenunggu = await req('/api/absensi-siswa/sesi', {
+      method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY }
+    });
+    ok('guru tujuan dapat membuka sesi presensi saat permintaan masih menunggu',
+      sesiSaatMenunggu.status === 200 && !!sesiSaatMenunggu.body?.sesi?.id, sesiSaatMenunggu.body?.error);
+    r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: tukarId, aksi: 'terima' } });
+    ok('permintaan ditolak bila sesi sudah dibuka sebelum diterima', r.status === 409, r.body?.error);
+    if (sesiSaatMenunggu.body?.sesi?.id) {
+      const fixture = new Database(DB);
+      fixture.transaction(() => {
+        fixture.prepare('DELETE FROM absensi_pencatat WHERE sesi_id=?').run(Number(sesiSaatMenunggu.body.sesi.id));
+        fixture.prepare('DELETE FROM absensi_siswa WHERE sesi_id=?').run(Number(sesiSaatMenunggu.body.sesi.id));
+        fixture.prepare('DELETE FROM absensi_sesi WHERE id=?').run(Number(sesiSaatMenunggu.body.sesi.id));
+      })();
+      fixture.close();
+    }
+
     /* TOLAK dulu → jadwal tetap milik guru A */
     r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: tukarId, aksi: 'tolak' } });
     ok('guru tujuan dapat menolak permintaan', r.status === 200 && r.body.status === 'ditolak', JSON.stringify(r.body).slice(0, 160));

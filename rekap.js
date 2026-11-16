@@ -106,6 +106,9 @@ module.exports = function mount(api) {
       } catch (e) { return []; }
     })();
     const izinMap = new Map(izinRows.map(a => [`${a.jadwal_id}|${a.tanggal}`, a]));
+    const riwayatDiabaikan = new Set(db.prepare(`SELECT jadwal_id, tanggal FROM absensi_guru_abaikan
+      WHERE tanggal BETWEEN ? AND ?`).all(r.dari, r.sampai)
+      .map(a => `${a.jadwal_id}|${a.tanggal}`));
     const cfg = dbm.jadwalConfig();
     const rows = [];
     const batas = todayISO();
@@ -125,6 +128,7 @@ module.exports = function mount(api) {
         const effectiveMapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(effectiveMapelId) || {};
         const records = ids.map(id => absMap.get(`${id}|${d}`)).filter(Boolean);
         const absences = ids.map(id => izinMap.get(`${id}|${d}`)).filter(Boolean);
+        if (!records.length && !absences.length && ids.every(id => riwayatDiabaikan.has(`${id}|${d}`))) continue;
         if (!records.length && !absences.length && dbm.kalenderNonaktif(d)) continue;
         const waktu = dbm.absensiRentangSesi(group, cfg);
         let status;
@@ -606,7 +610,8 @@ module.exports = function mount(api) {
        (slot yang belum diabsen pun tampil), jadi kunci pasangan slot+tanggal. */
     const items = (Array.isArray(b.items) ? b.items : []).map(it => ({
       jadwal_id: Number(it && it.jadwal_id) || 0,
-      tanggal: ISO_RE.test(String((it && it.tanggal) || '')) ? String(it.tanggal) : ''
+      tanggal: ISO_RE.test(String((it && it.tanggal) || '')) ? String(it.tanggal) : '',
+      abaikan_rekap: !!(it && it.abaikan_rekap)
     })).filter(it => it.jadwal_id && it.tanggal);
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(x => Number(x)).filter(n => n > 0);
     if (!items.length && !ids.length) return fail(res, 400, 'Pilih minimal satu baris absensi guru.');
@@ -623,24 +628,42 @@ module.exports = function mount(api) {
       const z = db.prepare('SELECT * FROM absensi_guru_izin WHERE jadwal_id=? AND tanggal=?').get(it.jadwal_id, it.tanggal);
       if (z && !izinRows.some(x => Number(x.id) === Number(z.id))) izinRows.push(z);
     }
-    if (!rows.length && !izinRows.length) return fail(res, 404, 'Baris absensi guru yang dipilih sudah tidak ada.');
-    const snap = dbm.snapshotJson('pre-hapus-absensi-guru', {
-      dibuat: dbm.now(), oleh: user.nama, rows, izinRows
+    const ignoredItems = items.filter(it => it.abaikan_rekap && it.tanggal <= todayISO()).filter(it => {
+      const slot = db.prepare('SELECT hari FROM jadwal WHERE id=?').get(it.jadwal_id);
+      return slot && dbm.hariOf(it.tanggal) === Number(slot.hari);
     });
-    let n = 0;
+    if (!rows.length && !izinRows.length && !ignoredItems.length) {
+      return fail(res, 404, 'Baris absensi guru yang dipilih sudah tidak ada.');
+    }
+    const ignoredSnapshot = ignoredItems.map(it => db.prepare(`SELECT * FROM absensi_guru_abaikan
+      WHERE jadwal_id=? AND tanggal=?`).get(it.jadwal_id, it.tanggal)).filter(Boolean);
+    const snap = dbm.snapshotJson('pre-hapus-absensi-guru', {
+      dibuat: dbm.now(), oleh: user.nama, rows, izinRows,
+      riwayatDiabaikan: ignoredSnapshot, rekapDikecualikan: ignoredItems
+    });
+    let nAbsensi = 0, nIzin = 0, nDiabaikan = 0;
     db.transaction(() => {
       if (rows.length) {
         const ph = rows.map(() => '?').join(',');
-        n += db.prepare(`DELETE FROM absensi_guru WHERE id IN (${ph})`).run(...rows.map(r => Number(r.id))).changes;
+        nAbsensi = db.prepare(`DELETE FROM absensi_guru WHERE id IN (${ph})`).run(...rows.map(r => Number(r.id))).changes;
       }
       if (izinRows.length) {
         const ph = izinRows.map(() => '?').join(',');
-        n += db.prepare(`DELETE FROM absensi_guru_izin WHERE id IN (${ph})`).run(...izinRows.map(r => Number(r.id))).changes;
+        nIzin = db.prepare(`DELETE FROM absensi_guru_izin WHERE id IN (${ph})`).run(...izinRows.map(r => Number(r.id))).changes;
+      }
+      const insertIgnored = db.prepare(`INSERT OR IGNORE INTO absensi_guru_abaikan
+        (jadwal_id,tanggal,dibuat_oleh,dibuat_nama,created_at) VALUES(?,?,?,?,?)`);
+      for (const it of ignoredItems) {
+        nDiabaikan += insertIgnored.run(it.jadwal_id, it.tanggal, Number(user.id) || 0, user.nama || '', dbm.now()).changes;
       }
     })();
+    const n = nAbsensi + nIzin + nDiabaikan;
     dbm.logAudit(user, 'HAPUS', 'rekap_absensi_guru',
-      `Hapus ${n} baris absensi guru (terpilih)${snap ? ' — snapshot tersimpan' : ''}`, ipOf(req));
-    json(res, 200, { ok: true, dihapus: n, snapshot: snap ? 1 : 0, pesan: `${n} baris absensi guru dihapus.` });
+      `Hapus ${n} baris absensi guru (terpilih; ${nDiabaikan} Alpha historis dikeluarkan dari rekap)${snap ? ' — snapshot tersimpan' : ''}`, ipOf(req));
+    const pesan = nDiabaikan
+      ? `${nAbsensi + nIzin} data absensi dihapus; ${nDiabaikan} baris historis dikeluarkan dari rekap.`
+      : `${n} baris absensi guru dihapus.`;
+    json(res, 200, { ok: true, dihapus: n, absensi_dihapus: nAbsensi + nIzin, alfa_dikeluarkan: nDiabaikan, snapshot: snap ? 1 : 0, pesan });
   });
 
   post('/api/rekap/absensi-guru/hapus-filter', async (req, res) => {

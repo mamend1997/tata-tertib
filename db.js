@@ -240,6 +240,16 @@ CREATE TABLE IF NOT EXISTS absensi_guru_izin (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_absensi_guru_izin ON absensi_guru_izin(jadwal_id, tanggal);
 `;
 
+/* Penanda penghapusan riwayat rekap per slot/tanggal. Dipakai untuk
+   menyembunyikan Alpha historis yang dihitung dari jadwal tanpa baris absensi. */
+const ABSENSI_GURU_ABAIKAN_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS absensi_guru_abaikan (
+  jadwal_id INTEGER NOT NULL, tanggal TEXT NOT NULL,
+  dibuat_oleh INTEGER, dibuat_nama TEXT, created_at TEXT,
+  PRIMARY KEY (jadwal_id, tanggal)
+);
+`;
+
 /* =====================================================================
    KALENDER AKADEMIK & PEMETAAN JAM GURU (Wakasek Kurikulum)
    ---------------------------------------------------------------------
@@ -597,6 +607,7 @@ ${BK_SCHEMA_SQL}
 ${PENCATAT_SCHEMA_SQL}
 
 ${IZIN_SCHEMA_SQL}
+${ABSENSI_GURU_ABAIKAN_SCHEMA_SQL}
 ${KURIKULUM_SCHEMA_SQL}
 `;
 
@@ -698,6 +709,7 @@ function runMigrations() {
     db.exec(PENCATAT_SCHEMA_SQL);
     /* rekam ketidakhadiran guru saat guru pengganti ditunjuk */
     db.exec(IZIN_SCHEMA_SQL);
+    db.exec(ABSENSI_GURU_ABAIKAN_SCHEMA_SQL);
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_kejadian_ref ON kejadian(sumber, ref_id) WHERE sumber IS NOT NULL AND ref_id IS NOT NULL');
     db.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_kategori_auto ON kategori(auto_key) WHERE auto_key IS NOT NULL');
     /* REPARASI SLOT JADWAL YATIM: slot yang dibuat saat peramban masih memilih
@@ -718,6 +730,7 @@ function runMigrations() {
         AND EXISTS(SELECT 1 FROM tahun_ajaran)`);
     /* permintaan tukar yang menunjuk slot jadwal yang sudah tidak ada */
     db.exec('DELETE FROM jadwal_tukar WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
+    db.exec('DELETE FROM absensi_guru_abaikan WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
     /* ABSENSI YATIM: slot jadwal yang DIHAPUS meninggalkan baris absensi guru
        (termasuk ALFA otomatis) & rekam izin yang tidak punya jadwal lagi.
        Baris seperti itu tetap muncul di panel "Notifikasi Guru Tidak Hadir"
@@ -4511,6 +4524,10 @@ function autoAlfaGuru(tanggal) {
       const tutup = jamMenit(w.tutup);
       if (tutup === null || kini <= tutup) continue;   // jendela masih berjalan / belum mulai
       const ids = items.map(x => Number(x.id));
+      const diabaikan = new Set(db.prepare(`SELECT jadwal_id FROM absensi_guru_abaikan
+        WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`).all(tgl, ...ids)
+        .map(row => Number(row.jadwal_id)));
+      if (ids.every(id => diabaikan.has(id))) continue;
       const ada = db.prepare(`SELECT jadwal_id FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
         .all(tgl, ...ids);
       if (!ada.length) {
@@ -4570,6 +4587,8 @@ function absensiGuruRekap(tanggal, taId) {
   const abs = db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?')
     .all(tgl, Number(taId) || 0);
   const absMap = new Map(abs.map(a => [Number(a.jadwal_id), a]));
+  const diabaikan = new Set(db.prepare('SELECT jadwal_id FROM absensi_guru_abaikan WHERE tanggal=?').all(tgl)
+    .map(row => Number(row.jadwal_id)));
   const tukar = tukarMap(tgl);
   const guru = new Map();
   for (const mapelHari of absensiMapelHari(slots, tukar)) {
@@ -4591,8 +4610,9 @@ function absensiGuruRekap(tanggal, taId) {
       guru_id: gid, nama: guruNama || ('Guru #' + gid), nip: guruNip || '',
       jadwal: 0, hadir: 0, izin: 0, sakit: 0, alpha: 0, belum: 0, slots: []
     };
-    entry.jadwal++;
     const absGroup = ids.map(id => absMap.get(id)).filter(Boolean);
+    if (!absGroup.length && ids.every(id => diabaikan.has(id))) continue;
+    entry.jadwal++;
     const a = absGroup[0] || null;
     const w = absensiWindowKelompok(group, tgl, cfg);
     let status = '';
