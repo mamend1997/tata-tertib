@@ -21,6 +21,18 @@ const DB = path.join(os.tmpdir(), 'stt-absrole-' + Date.now() + '.sqlite');
 const SAAS = path.join(os.tmpdir(), 'stt-absrole-saas-' + Date.now() + '.sqlite');
 const PORT = 6700 + Math.floor(Math.random() * 150);
 const BASE = `http://127.0.0.1:${PORT}`;
+/* Simulasikan izin lama yang sudah tersimpan sebagai ditolak; migrasi harus memperbaikinya. */
+const legacyDb = new (require('better-sqlite3'))(DB);
+legacyDb.exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+  CREATE TABLE permissions (
+    role TEXT NOT NULL, feature TEXT NOT NULL, action TEXT NOT NULL,
+    allowed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(role, feature, action)
+  );`);
+const denyOldView = legacyDb.prepare('INSERT INTO permissions(role,feature,action,allowed) VALUES(?,?,?,0)');
+for (const role of ['kepala_sekolah', 'wakasek_kurikulum', 'kesiswaan']) {
+  for (const feature of ['absensi_guru', 'absensi_siswa']) denyOldView.run(role, feature, 'view');
+}
+legacyDb.close();
 let cookie = '';
 let pass = 0, fail = 0;
 const fails = [];
@@ -163,8 +175,14 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     ok('login wakasek kesiswaan', r.status === 200, JSON.stringify(r.body));
     r = await req('/api/bootstrap');
     ok('peran kesiswaan aktif', (r.body.user.roles || []).includes('kesiswaan'), JSON.stringify(r.body.user.roles));
-    ok('Wakasek Kesiswaan tanpa jadwal tidak mendapat menu absensi', r.body.absensi_menu_visible === false,
+    ok('Wakasek Kesiswaan tetap mendapat menu absensi', r.body.absensi_menu_visible === true,
       JSON.stringify(r.body.absensi_menu_visible));
+    ok('izin lihat absensi tersedia untuk Wakasek Kesiswaan',
+      r.body.perms?.absensi_guru?.view === 1 && r.body.perms?.absensi_siswa?.view === 1,
+      JSON.stringify({ guru: r.body.perms?.absensi_guru, siswa: r.body.perms?.absensi_siswa }));
+    ok('pintasan ponsel Wakasek Kesiswaan memuat kedua menu',
+      ['absensi_guru', 'absensi_siswa'].every(key => (r.body.bottom_nav || []).some(item => item.key === key)),
+      JSON.stringify(r.body.bottom_nav));
 
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     ok('absensi guru: lihat_semua = true untuk Wakasek Kesiswaan', r.body.lihat_semua === true, JSON.stringify(r.body.lihat_semua));
@@ -201,6 +219,15 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: slotB, tanggal: TODAY } });
     ok('Wakasek Kesiswaan dapat membuka sesi presensi mapel guru lain', r.status === 200, `${r.status} ${JSON.stringify(r.body)}`);
 
+    await login('wakkur', 'wakkur123');
+    r = await req('/api/bootstrap');
+    ok('Wakasek Kurikulum tetap mendapat menu absensi', r.body.absensi_menu_visible === true
+      && r.body.perms?.absensi_guru?.view === 1 && r.body.perms?.absensi_siswa?.view === 1,
+    JSON.stringify({ visible: r.body.absensi_menu_visible, guru: r.body.perms?.absensi_guru, siswa: r.body.perms?.absensi_siswa }));
+    ok('pintasan ponsel Wakasek Kurikulum memuat kedua menu',
+      ['absensi_guru', 'absensi_siswa'].every(key => (r.body.bottom_nav || []).some(item => item.key === key)),
+      JSON.stringify(r.body.bottom_nav));
+
     /* ---------- 3. ADMIN / KURIKULUM tetap bisa bertindak atas nama guru ---------- */
     console.log('\n== 3. ADMIN TETAP BISA CHECK-IN ATAS NAMA GURU ==');
     await login('admin', 'admin123');
@@ -220,8 +247,14 @@ const hhmm = (m) => `${pad(Math.floor(((m % 1440) + 1440) % 1440 / 60))}:${pad((
     r = await login('kepseku', 'kepseku123');
     ok('login kepala sekolah', r.status === 200, JSON.stringify(r.body));
     r = await req('/api/bootstrap');
-    ok('Kepala Sekolah tanpa jadwal tidak mendapat menu absensi', r.body.absensi_menu_visible === false,
+    ok('Kepala Sekolah tetap mendapat menu absensi', r.body.absensi_menu_visible === true,
       JSON.stringify(r.body.absensi_menu_visible));
+    ok('izin lihat absensi tersedia untuk Kepala Sekolah',
+      r.body.perms?.absensi_guru?.view === 1 && r.body.perms?.absensi_siswa?.view === 1,
+      JSON.stringify({ guru: r.body.perms?.absensi_guru, siswa: r.body.perms?.absensi_siswa }));
+    ok('pintasan ponsel Kepala Sekolah memuat kedua menu',
+      ['absensi_guru', 'absensi_siswa'].every(key => (r.body.bottom_nav || []).some(item => item.key === key)),
+      JSON.stringify(r.body.bottom_nav));
     r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
     ok('kepala sekolah melihat semua slot', r.body.lihat_semua === true && (r.body.jadwal || []).length >= 2,
       JSON.stringify({ l: r.body.lihat_semua, n: (r.body.jadwal || []).length }));

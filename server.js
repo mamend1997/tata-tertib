@@ -1089,9 +1089,12 @@ get('/api/bootstrap', (req, res) => {
   const ta = dbm.tahunList();
   const f = filters({});
   const brand = saas.branding();
+  const absensiRoles = s ? dbm.userRoleList(s.user) : [];
+  const pengawasAbsensi = absensiRoles.some(role =>
+    ['kepala_sekolah', 'wakasek_kurikulum', 'kesiswaan'].includes(role));
   const hasAbsensiSchedule = !!(s && ta.some(t => dbm.jadwalRows(t.id)
     .some(row => Number(row.guru_id) === Number(s.user.id))));
-  const absensiMenuVisible = !!(s && (dbm.userRoleList(s.user).includes('admin') || hasAbsensiSchedule));
+  const absensiMenuVisible = !!(s && (absensiRoles.includes('admin') || pengawasAbsensi || hasAbsensiSchedule));
   /* MODE PEMELIHARAAN: akun sekolah tidak boleh memuat data apa pun.
      Super Admin (blok di atas) tidak terpengaruh. */
   const maint = isMaintenance();
@@ -1136,8 +1139,7 @@ get('/api/bootstrap', (req, res) => {
     },
     /* tombol navigasi bawah (khusus ponsel) sesuai role pengguna */
     bottom_nav: s ? dbm.bottomNavFor(s.user) : [],
-    /* Absensi mapel ditampilkan untuk admin dan akun apa pun yang memiliki slot
-       jadwal, termasuk guru yang juga memegang jabatan pimpinan. */
+    /* Absensi mapel ditampilkan untuk admin, pimpinan sekolah, dan pemilik slot jadwal. */
     absensi_menu_visible: absensiMenuVisible,
     tindak_lanjut_jenis: dbm.TL_JENIS,
     tindak_lanjut_status: dbm.TL_STATUS,

@@ -115,29 +115,29 @@ module.exports = function mount(api) {
       const hari = dbm.hariOf(d);
       const slotsHari = slots.filter(s => Number(s.hari) === hari);
       const tukar = dbm.tukarMap(d);
-      const seen = new Set();
       const sesiHari = dbm.sesiOfHari(cfg, hari);
-      for (const s of slotsHari) {
-        const group = dbm.absensiKelompok(s, slotsHari, cfg);
+      for (const mapelHari of dbm.absensiMapelHari(slotsHari, tukar)) {
+        const group = mapelHari.rows;
+        const s = group[0];
         const ids = group.map(x => Number(x.id));
-        const groupKey = ids.slice().sort((a, b) => a - b).join(',');
-        if (seen.has(groupKey)) continue;
-        seen.add(groupKey);
         const t = tukar.get(Number(s.id));
-        const effectiveGuruId = t ? Number(t.ke_guru) : Number(s.guru_id);
-        const effectiveMapelId = t && Number(t.mapel_id) ? Number(t.mapel_id) : Number(s.mapel_id);
+        const effectiveGuruId = mapelHari.guru_id;
+        const effectiveMapelId = mapelHari.mapel_id;
         const effectiveMapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(effectiveMapelId) || {};
         const records = ids.map(id => absMap.get(`${id}|${d}`)).filter(Boolean);
         const absences = ids.map(id => izinMap.get(`${id}|${d}`)).filter(Boolean);
-        const sesiAwal = sesiHari.find(x => Number(x.idx) === Number(group[0].sesi));
-        const sesiAkhir = sesiHari.find(x => Number(x.idx) === Number(group[group.length - 1].sesi));
-        const jam = sesiAwal && sesiAkhir ? `${sesiAwal.mulai}–${sesiAkhir.selesai}` : '';
+        const jam = group.map(slot => {
+          const sesi = sesiHari.find(x => Number(x.idx) === Number(slot.sesi));
+          return sesi ? `${sesi.mulai}–${sesi.selesai}` : '';
+        }).filter(Boolean).join(', ');
         const status = records.length
           ? (['alpha', 'izin', 'sakit', 'hadir'].find(x => records.some(a => a.status === x)) || 'hadir')
           : 'belum';
         const attendance = records[0] || null;
         const actualGuruId = attendance && Number(attendance.guru_id) || effectiveGuruId;
         const actualGuru = db.prepare('SELECT nama FROM users WHERE id=?').get(actualGuruId) || {};
+        const journalText = field => [...new Set(records.map(a => String(a[field] || '').trim()).filter(Boolean))].join(' · ');
+        const firstFoto = records.find(a => a.foto_url);
         const cocokFilter = (!mapelId || effectiveMapelId === mapelId)
           && (!guruId || actualGuruId === guruId || absences.some(a => Number(a.guru_id) === guruId));
         if (!cocokFilter) continue;
@@ -149,10 +149,10 @@ module.exports = function mount(api) {
           mapel_id: effectiveMapelId, mapel_nama: effectiveMapel.nama || s.mapel_nama || '',
           sesi: group[0].sesi, jam, kelas_nama: s.kelas_nama || '',
           status, status_label: GURU_STATUS_LABEL[status] || status,
-          materi: attendance ? (attendance.materi || '') : '',
-          catatan: attendance ? (attendance.catatan || '') : '',
+          materi: journalText('materi'),
+          catatan: journalText('catatan'),
           waktu_submit: attendance ? (attendance.waktu_submit || '') : '',
-          foto_url: attendance ? (attendance.foto_url || '') : '',
+          foto_url: firstFoto ? firstFoto.foto_url : '',
           alpha: status === 'belum' || status === 'alpha' ? 1 : 0,
           ada_izin: absences.length > 0
         };

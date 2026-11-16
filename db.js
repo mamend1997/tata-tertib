@@ -1526,9 +1526,9 @@ const BOTTOM_NAV_DEFAULT = {
   guru_umum: ['kejadian', 'absensi_guru', 'jurnal'],
   wali_kelas: ['kejadian', 'absensi_guru', 'jurnal'],
   guru_bk: ['dashboard', 'bk_layanan', 'jurnal'],
-  kesiswaan: ['dashboard', 'kejadian', 'tindak_lanjut'],
-  wakasek_kurikulum: ['dashboard', 'absensi_guru', 'laporan'],
-  kepala_sekolah: ['dashboard', 'laporan', 'deteksi'],
+  kesiswaan: ['dashboard', 'absensi_guru', 'absensi_siswa', 'kejadian', 'tindak_lanjut'],
+  wakasek_kurikulum: ['dashboard', 'absensi_guru', 'absensi_siswa', 'laporan'],
+  kepala_sekolah: ['dashboard', 'absensi_guru', 'absensi_siswa', 'laporan', 'deteksi'],
   tu: ['dashboard', 'kejadian', 'jurnal'],
   admin: ['dashboard', 'kejadian', 'laporan']
 };
@@ -2706,6 +2706,14 @@ function seedPermissions() {
           ins.run(role, f.key, a, allowed);
         }
       }
+    }
+    if (getSetting('mig_absensi_pimpinan_view_v1', '') !== '1') {
+      const grantView = db.prepare(`INSERT INTO permissions(role,feature,action,allowed) VALUES(?,?, 'view',1)
+        ON CONFLICT(role,feature,action) DO UPDATE SET allowed=1`);
+      for (const role of ['kepala_sekolah', 'wakasek_kurikulum', 'kesiswaan']) {
+        for (const feature of ['absensi_guru', 'absensi_siswa']) grantView.run(role, feature);
+      }
+      setSetting('mig_absensi_pimpinan_view_v1', '1');
     }
   })();
 }
@@ -4315,6 +4323,24 @@ function absensiKelompok(jadwalRow, rows, cfg) {
   return Array.from({ length: akhir - awal + 1 }, (_, i) => jadwalByNo.get(awal + i))
     .filter(Boolean).sort((a, b) => Number(a.sesi) - Number(b.sesi));
 }
+/** Kelompok rekap satu mapel efektif per kelas dan guru pada hari yang sama. */
+function absensiMapelHari(rows, tukar = new Map()) {
+  const groups = new Map();
+  for (const row of rows || []) {
+    const perubahan = tukar.get(Number(row.id));
+    const guruId = perubahan ? Number(perubahan.ke_guru) : Number(row.guru_id) || 0;
+    const mapelId = perubahan && Number(perubahan.mapel_id)
+      ? Number(perubahan.mapel_id) : Number(row.mapel_id) || 0;
+    const kelasIds = jadwalKelasIds(row).sort((a, b) => a - b);
+    const key = `${guruId}|${mapelId}|${kelasIds.join(',')}`;
+    if (!groups.has(key)) groups.set(key, { guru_id: guruId, mapel_id: mapelId, kelas_ids: kelasIds, rows: [] });
+    groups.get(key).rows.push(row);
+  }
+  return [...groups.values()].map(group => ({
+    ...group,
+    rows: group.rows.sort((a, b) => Number(a.sesi) - Number(b.sesi))
+  }));
+}
 /** Jendela absensi bersama untuk rentang sesi berurutan. */
 function absensiWindowKelompok(items, tanggal, cfg) {
   if (!Array.isArray(items) || !items.length) {
@@ -4516,15 +4542,12 @@ function absensiGuruRekap(tanggal, taId) {
   const absMap = new Map(abs.map(a => [Number(a.jadwal_id), a]));
   const tukar = tukarMap(tgl);
   const guru = new Map();
-  const sudahDihitung = new Set();
-  for (const s of slots) {
-    const group = absensiKelompok(s, slots, cfg);
+  for (const mapelHari of absensiMapelHari(slots, tukar)) {
+    const group = mapelHari.rows;
+    const s = group[0];
     const ids = group.map(x => Number(x.id));
-    const groupKey = [...ids].sort((a, b) => a - b).join(',');
-    if (sudahDihitung.has(groupKey)) continue;
-    sudahDihitung.add(groupKey);
     const t = tukar.get(Number(s.id));
-    const gid = t ? Number(t.ke_guru) : Number(s.guru_id) || 0;
+    const gid = mapelHari.guru_id;
     if (!gid) continue;
     const key = gid;
     const guruNama = t ? t.ke_nama : (s.guru_nama || ('Guru #' + gid));
@@ -4543,16 +4566,18 @@ function absensiGuruRekap(tanggal, taId) {
     } else if (w.aktif) status = 'belum';
     else if (w.tutup && nowMenit() > jamMenit(w.tutup)) status = 'alpha';
     else status = 'belum';
-    const mapelId = t ? Number(t.mapel_id) || Number(s.mapel_id) : Number(s.mapel_id);
+    const mapelId = mapelHari.mapel_id;
     const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(mapelId) || {};
     const sesiList = sesiOfHari(cfg, hari);
-    const sesiAwal = sesiList.find(x => Number(x.idx) === Number(group[0].sesi));
-    const sesiAkhir = sesiList.find(x => Number(x.idx) === Number(group[group.length - 1].sesi));
+    const jam = group.map(slot => {
+      const sesi = sesiList.find(x => Number(x.idx) === Number(slot.sesi));
+      return sesi ? `${sesi.mulai}–${sesi.selesai}` : '';
+    }).filter(Boolean).join(', ');
     entry[status] = (entry[status] || 0) + 1;
     entry.slots.push({
       jadwal_id: s.id, jadwal_ids: ids, mapel_id: mapelId, mapel: mapel.nama || s.mapel_nama,
       kelas: s.kelas_nama, sesi: group[0].sesi,
-      jam: sesiAwal && sesiAkhir ? `${sesiAwal.mulai}–${sesiAkhir.selesai}` : '',
+      jam,
       status, absensi_id: a ? a.id : null, waktu_submit: a ? a.waktu_submit : '',
       guru_asli: t ? (s.guru_nama || '') : '', tukar: !!t
     });
@@ -4578,7 +4603,7 @@ function absensiGuruRekap(tanggal, taId) {
   }
   return {
     tanggal: tgl, hari, tanggal_label: tanggalPanjang(tgl),
-    jadwal: slots.length, guru: rows.length, rows, hitung,
+    jadwal: rows.reduce((total, row) => total + row.jadwal, 0), guru: rows.length, rows, hitung,
     belum_absen: rows.filter(g => g.ringkas !== 'Hadir'),
     sesi: sesiOfHari(cfg, hari)
   };
@@ -4688,7 +4713,7 @@ module.exports = {
   userRoleList, roleLabelOf, permsFor, seedPermissions,
   HARI_LABEL, DEFAULT_HARI, DEFAULT_SESI, ABSENSI_SISWA_STATUS, ABSENSI_GURU_STATUS,
   jamMenit, menitJam, nowMenit, hariOf, tanggalPanjang, jadwalConfig, jadwalDesain, jadwalTampil, normSesi, sesiBernomor, sesiHariMap, sesiOfHari, mapelList,
-  jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiKelompok, absensiWindowKelompok,
+  jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiKelompok, absensiMapelHari, absensiWindowKelompok,
   absensiGuruOf, absensiGuruRekap, autoAlfaGuru, absensiAlur,
   targetJamConfig, kelasTargetJam, bebanKelas, targetKelasRows,
   guruTargetMap, guruTargetRows, guruTargetSave, hariEfektifBulan,

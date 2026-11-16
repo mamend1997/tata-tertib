@@ -1,10 +1,10 @@
 'use strict';
 /* =====================================================================
-   UI — MENU ABSENSI HANYA UNTUK GURU BERPENJADWAL / ADMIN (Playwright)
+   UI — MENU ABSENSI TERSEDIA UNTUK PIMPINAN & GURU BERPENJADWAL (Playwright)
 
    Memastikan di antarmuka:
-   · Wakasek Kesiswaan tidak melihat menu Absensi Guru Mapel / Absensi Siswa per Mapel
-   · Navigasi langsung ke halaman tersebut dialihkan
+   · Wakasek Kesiswaan melihat menu Absensi Guru Mapel / Absensi Siswa per Mapel
+   · Navigasi langsung membuka halaman absensi
    · Tanpa error JS & tanpa overflow di 390px
 
    Jalankan: node dev-tests/ui-absensi-role.js
@@ -107,17 +107,17 @@ async function req(p, opt = {}) {
     await page.click('button[type="submit"]');
     await page.waitForTimeout(2200);
 
-    /* ---------- menu absensi tersembunyi untuk Wakasek Kesiswaan ---------- */
+    /* ---------- menu absensi tersedia untuk Wakasek Kesiswaan ---------- */
     const navText = await page.locator('aside nav').innerText();
-    ok('menu Absensi Guru Mapel tidak tampil', !/Absensi Guru Mapel/i.test(navText), navText);
-    ok('menu Absensi Siswa per Mapel tidak tampil', !/Absensi Siswa per Mapel/i.test(navText), navText);
+    ok('menu Absensi Guru Mapel tampil', /Absensi Guru Mapel/i.test(navText), navText);
+    ok('menu Absensi Siswa per Mapel tampil', /Absensi Siswa per Mapel/i.test(navText), navText);
     await page.goto(BASE + '/#/absensi_guru', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(2000);
-    ok('akses langsung Absensi Guru dialihkan', await page.locator('[data-agenda-jadwal]').count() === 0,
+    ok('akses langsung Absensi Guru membuka agenda', await page.locator('[data-agenda-jadwal]').count() > 0,
       await page.locator('h2').first().innerText().catch(() => ''));
     await page.goto(BASE + '/#/absensi_siswa', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1800);
-    ok('akses langsung Absensi Siswa dialihkan', await page.locator('[data-sesi-jadwal]').count() === 0,
+    ok('akses langsung Absensi Siswa membuka halaman', await page.locator('h2[data-tour-id="btn-absensi-siswa"]').count() === 1,
       await page.locator('h2').first().innerText().catch(() => ''));
 
     /* ---------- mobile 390px ---------- */
