@@ -3037,7 +3037,8 @@ ${isi}
         db.prepare("UPDATE jadwal_tukar SET status='batal', catatan_putus=?, diputus_at=?, diputus_oleh=?, diputus_nama=?, updated_at=? WHERE jadwal_id=? AND tanggal=? AND status='diterima'")
           .run('Diganti dengan penunjukan baru', createdAt, Number(user.id), user.nama || '', createdAt, Number(slot.id), tanggal);
         const abs = db.prepare('SELECT * FROM absensi_guru WHERE jadwal_id=? AND tanggal=?').get(Number(slot.id), tanggal);
-        const statusUtama = abs && ['sakit', 'izin'].includes(String(abs.status)) ? abs.status : status;
+        const statusUtama = ['sakit', 'izin'].includes(String(b.status || '').toLowerCase())
+          ? status : abs && ['sakit', 'izin'].includes(String(abs.status)) ? abs.status : status;
         const catatanUtama = abs && !b.status && abs.catatan ? abs.catatan : alasan;
         db.prepare(`INSERT INTO absensi_guru_izin(jadwal_id,tanggal,ta_id,guru_id,status,catatan,materi,foto_url,waktu_submit,ip,validasi,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -3112,43 +3113,88 @@ ${isi}
     const t = db.prepare('SELECT * FROM jadwal_tukar WHERE id=?').get(Number(b.id) || 0);
     if (!t) return fail(res, 404, 'Penugasan tidak ditemukan.');
     if (String(t.status) !== 'diterima') return fail(res, 409, 'Penugasan ini sudah tidak aktif.');
+    if (String(t.jenis || '') !== 'penugasan') return fail(res, 400, 'Hanya penugasan guru pengganti yang dapat dibatalkan dari menu ini.');
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(t.jadwal_id)) || {};
     const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(Number(t.mapel_id)) || {};
     const ke = db.prepare('SELECT nama FROM users WHERE id=?').get(Number(t.ke_guru)) || {};
-    const assigned = t.jenis === 'penugasan' && t.created_at
+    const assigned = t.created_at
       ? db.prepare(`SELECT * FROM jadwal_tukar WHERE tanggal=? AND created_at=? AND dari_guru=? AND ke_guru=?
           AND jenis='penugasan' AND status='diterima'`)
         .all(t.tanggal, t.created_at, Number(t.dari_guru), Number(t.ke_guru))
       : [t];
-    const ids = assigned.map(x => Number(x.jadwal_id));
-    const placeholders = ids.map(() => '?').join(',');
-    const sudahMulai = db.prepare(`SELECT 1 FROM absensi_guru WHERE tanggal=? AND guru_id=? AND jadwal_id IN (${placeholders}) LIMIT 1`)
-      .get(t.tanggal, Number(t.ke_guru), ...ids)
-      || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${placeholders}) LIMIT 1`)
-        .get(t.tanggal, ...ids);
-    if (sudahMulai) return fail(res, 409, 'Guru pengganti sudah mulai mengisi absensi. Penugasan tidak dapat dibatalkan agar data presensi dan jurnal tetap konsisten.');
+    const detail = assigned.map(assignment => {
+      const jadwalId = Number(assignment.jadwal_id);
+      const absensiGuru = db.prepare('SELECT * FROM absensi_guru WHERE jadwal_id=? AND tanggal=?')
+        .get(jadwalId, t.tanggal);
+      const izinAsli = db.prepare('SELECT * FROM absensi_guru_izin WHERE jadwal_id=? AND tanggal=?')
+        .get(jadwalId, t.tanggal);
+      if (absensiGuru && Number(absensiGuru.guru_id) !== Number(assignment.ke_guru)
+        && Number(absensiGuru.guru_id) !== Number(assignment.dari_guru)) {
+        return { error: jadwalId };
+      }
+      const sesiIds = db.prepare('SELECT id FROM absensi_sesi WHERE jadwal_id=? AND tanggal=?')
+        .all(jadwalId, t.tanggal).map(x => Number(x.id));
+      const siswaIds = sesiIds.length
+        ? db.prepare(`SELECT id FROM absensi_siswa WHERE sesi_id IN (${sesiIds.map(() => '?').join(',')})`)
+          .all(...sesiIds).map(x => Number(x.id))
+        : [];
+      const guruAbsensiIds = absensiGuru && Number(absensiGuru.guru_id) === Number(assignment.ke_guru)
+        ? [Number(absensiGuru.id)] : [];
+      const uploadIds = guruAbsensiIds.length
+        ? [...new Set([
+          ...guruAbsensiIds.map(id => Number(absensiGuru.foto_id) || 0).filter(Boolean),
+          ...db.prepare(`SELECT id FROM uploads WHERE ref_tabel='absensi_guru' AND ref_id IN (${guruAbsensiIds.map(() => '?').join(',')})`)
+            .all(...guruAbsensiIds).map(x => Number(x.id))
+        ])]
+        : [];
+      return { assignment, absensiGuru, izinAsli, sesiIds, siswaIds, guruAbsensiIds, uploadIds };
+    });
+    if (detail.some(x => x.error)) {
+      return fail(res, 409, 'Data absensi pada sesi berubah. Muat ulang halaman sebelum membatalkan penugasan.');
+    }
+    let siswaDihapus = 0, sesiDihapus = 0, jurnalDihapus = 0;
     db.transaction(() => {
-      for (const assignment of assigned) {
+      for (const item of detail) {
+        const assignment = item.assignment;
         db.prepare("UPDATE jadwal_tukar SET status='batal', catatan_putus=?, diputus_at=?, diputus_oleh=?, diputus_nama=?, updated_at=? WHERE id=?")
           .run('Dibatalkan oleh ' + (user.nama || 'sekolah'), dbm.now(), Number(user.id), user.nama || '', dbm.now(), Number(assignment.id));
-        const iz = db.prepare('SELECT * FROM absensi_guru_izin WHERE jadwal_id=? AND tanggal=?')
-          .get(Number(assignment.jadwal_id), t.tanggal);
-        if (iz) {
+        if (item.siswaIds.length) {
+          const ph = item.siswaIds.map(() => '?').join(',');
+          db.prepare(`DELETE FROM kejadian WHERE sumber='absensi' AND ref_id IN (${ph})`).run(...item.siswaIds);
+          siswaDihapus += db.prepare(`DELETE FROM absensi_siswa WHERE id IN (${ph})`).run(...item.siswaIds).changes;
+        }
+        if (item.sesiIds.length) {
+          const ph = item.sesiIds.map(() => '?').join(',');
+          db.prepare(`DELETE FROM absensi_pencatat WHERE sesi_id IN (${ph})`).run(...item.sesiIds);
+          sesiDihapus += db.prepare(`DELETE FROM absensi_sesi WHERE id IN (${ph})`).run(...item.sesiIds).changes;
+        }
+        for (const guruAbsensiId of item.guruAbsensiIds) {
+          const guruAbsensi = db.prepare('SELECT materi FROM absensi_guru WHERE id=?').get(guruAbsensiId);
+          if (guruAbsensi && String(guruAbsensi.materi || '').trim()) jurnalDihapus++;
+          db.prepare('DELETE FROM absensi_guru WHERE id=?').run(guruAbsensiId);
+        }
+        if (item.uploadIds.length) dbm.uploadDelete(item.uploadIds);
+        if (item.izinAsli) {
           const ada = db.prepare('SELECT id FROM absensi_guru WHERE jadwal_id=? AND tanggal=?')
-            .get(Number(iz.jadwal_id), iz.tanggal);
+            .get(Number(assignment.jadwal_id), t.tanggal);
           if (!ada) {
             db.prepare(`INSERT OR IGNORE INTO absensi_guru(jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,foto_url,foto_id,waktu_submit,ip,validasi,created_at,updated_at)
               VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)`)
-              .run(Number(iz.jadwal_id), iz.tanggal, Number(iz.guru_id), Number(iz.ta_id) || 0, iz.status, iz.materi || '',
-                iz.catatan || '', iz.foto_url || null, iz.waktu_submit || '', iz.ip || '', iz.validasi || '', iz.created_at || dbm.now(), dbm.now());
+              .run(Number(assignment.jadwal_id), item.izinAsli.tanggal, Number(item.izinAsli.guru_id),
+                Number(item.izinAsli.ta_id) || 0, item.izinAsli.status, item.izinAsli.materi || '',
+                item.izinAsli.catatan || '', item.izinAsli.foto_url || null, item.izinAsli.waktu_submit || '',
+                item.izinAsli.ip || '', item.izinAsli.validasi || '', item.izinAsli.created_at || dbm.now(), dbm.now());
           }
-          db.prepare('DELETE FROM absensi_guru_izin WHERE id=?').run(Number(iz.id));
+          db.prepare('DELETE FROM absensi_guru_izin WHERE id=?').run(Number(item.izinAsli.id));
         }
       }
     })();
     dbm.logAudit(user, 'UBAH', 'jadwal',
-      `Batalkan penunjukan guru pengganti ${mapel.nama || 'mapel'} sesi ${row.sesi || '-'} (${t.tanggal}): ${ke.nama || '-'}`, ipOf(req));
-    json(res, 200, { ok: true, pesan: `Penunjukan ${ke.nama || 'guru pengganti'} dibatalkan — seluruh slot rentang kembali ke guru semula.` });
+      `Batalkan penunjukan guru pengganti ${mapel.nama || 'mapel'} sesi ${row.sesi || '-'} (${t.tanggal}): ${ke.nama || '-'}; hapus ${siswaDihapus} presensi siswa dan ${jurnalDihapus} jurnal`, ipOf(req));
+    json(res, 200, {
+      ok: true, presensi_siswa_dihapus: siswaDihapus, sesi_dihapus: sesiDihapus, jurnal_dihapus: jurnalDihapus,
+      pesan: `Penunjukan ${ke.nama || 'guru pengganti'} dibatalkan. Presensi siswa dan jurnal pengganti dihapus; status guru semula dipulihkan.`
+    });
   });
 
   /** daftar guru yang sedang Sakit/Izin pada tanggal tertentu (dipakai notifikasi dashboard) */

@@ -123,7 +123,10 @@ export default function GuruPengganti({ ctx }) {
   }
 
   async function batal(p) {
-    if (!window.confirm(`Batalkan penunjukan ${p.ke_nama} dan kembalikan sesi ke guru semula?`)) return;
+    if (!window.confirm(
+      `Batalkan penunjukan ${p.ke_nama} dan kembalikan sesi ke guru semula?\n\n` +
+      'Presensi siswa, jurnal, foto, dan poin otomatis dari pengganti pada sesi ini akan dihapus. Status sakit/izin guru semula akan dipulihkan.'
+    )) return;
     setBusy(p.id);
     try {
       const r = await api('/api/guru-pengganti/batal', { method: 'POST', body: { id: p.id } });
@@ -279,7 +282,7 @@ export default function GuruPengganti({ ctx }) {
                           </button>
                           {p && p.jenis === 'penugasan' ? (
                             <button className="btn-sm border border-rose-200 bg-rose-50 text-rose-700"
-                              disabled={!bolehUbah || busy === p.id || (s.absensi && Number(s.absensi.oleh) === Number(p.ke_guru))}
+                              disabled={!bolehUbah || busy === p.id}
                               onClick={() => batal(p)} data-batal={p.id}>
                               {busy === p.id ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={13} />} Batal
                             </button>

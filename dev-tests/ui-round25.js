@@ -280,9 +280,15 @@ const ok = (name, cond, extra) => {
       await page.locator('[data-detail-absensi-siswa]').count() >= 1
         && await page.locator('[data-detail-jurnal]').count() >= 1);
     await page.locator('[data-modal-title="Detail Riwayat Guru Pengganti"] button[aria-label="Tutup"]').click();
-    page.on('dialog', dialog => dialog.accept());
+    let konfirmasiBatal = '';
+    page.on('dialog', dialog => {
+      konfirmasiBatal = dialog.message();
+      dialog.accept();
+    });
     await page.locator('[data-batal]').first().click();
     await page.waitForTimeout(1200);
+    ok('konfirmasi pembatalan menjelaskan penghapusan data pengganti',
+      /presensi siswa, jurnal, foto/i.test(konfirmasiBatal) && /status sakit\/izin guru semula/i.test(konfirmasiBatal));
     ok('penugasan yang dibatalkan menjadi dapat dipilih',
       await page.locator('[data-riwayat-item]:not([disabled])').count() >= 1);
     await page.locator('[data-riwayat-all]').check();

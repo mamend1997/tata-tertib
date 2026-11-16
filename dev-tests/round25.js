@@ -326,7 +326,7 @@ function startWa() {
     r = await req('/api/absensi-siswa/simpan', {
       method: 'POST', body: {
         sesi_id: sesiPenggantiId,
-        items: (r.body?.siswa || []).map(s => ({ siswa_id: s.id, status: 'H' }))
+        items: (r.body?.siswa || []).map((s, i) => ({ siswa_id: s.id, status: i === 0 ? 'A' : 'H' }))
       }
     });
     ok('presensi siswa pengganti tersimpan', r.status === 200, r.body?.error);
@@ -365,6 +365,9 @@ function startWa() {
     const rekapIzin = (r.body.rows || []).filter(x => Number(x.jadwal_id) === Number(slotNanti));
     ok('rekap memuat baris izin guru asli + baris guru pengganti', rekapIzin.length >= 2,
       JSON.stringify(rekapIzin.map(x => ({ g: x.guru_nama, s: x.status }))));
+    ok('status izin guru semula tetap tercatat setelah penunjukan',
+      rekapIzin.some(x => Number(x.guru_id) === Number(gA) && x.dari_izin && x.status === 'izin'),
+      JSON.stringify(rekapIzin.map(x => ({ g: x.guru_id, status: x.status, izin: x.dari_izin }))));
     r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gA}&mapel=${mD}`);
     ok('filter nama guru tetap menampilkan baris izin guru asli',
       (r.body.rows || []).some(x => Number(x.guru_id) === Number(gA) && x.dari_izin),
@@ -375,19 +378,45 @@ function startWa() {
       r.status === 200 && !!detailSlot?.presensi_siswa?.total && /Materi pengganti/.test(detailSlot?.jurnal?.materi || ''),
       JSON.stringify(detailSlot && { siswa: detailSlot.presensi_siswa?.total, jurnal: detailSlot.jurnal?.materi }));
     ok('detail riwayat menampilkan status absensi siswa',
-      !!detailSlot && detailSlot.presensi_siswa.hitung.H === detailSlot.presensi_siswa.total
+      !!detailSlot && detailSlot.presensi_siswa.hitung.H === detailSlot.presensi_siswa.total - 1
+        && detailSlot.presensi_siswa.hitung.A === 1
         && detailSlot.presensi_siswa.tercatat === detailSlot.presensi_siswa.total,
       JSON.stringify(detailSlot?.presensi_siswa?.hitung));
 
-    /* pengambilalihan tidak dapat dibatalkan setelah pengganti mulai mengisi */
-    r = await req('/api/guru-pengganti/batal', { method: 'POST', body: { id: idTunjuk } });
-    ok('penunjukan terkunci setelah pengganti mulai mengisi', r.status === 409, r.body?.error);
-    await login('admin', 'admin123');
-    r = await req(`/api/guru-pengganti?tanggal=${TODAY}`);
-    ok('penugasan tetap aktif setelah pengganti mulai mengisi',
-      (r.body.slots || []).some(s => Number(s.jadwal_id) === Number(slotNanti) && Number(s.guru_efektif_id) === Number(gB)));
+    const cleanupDb = new (require('better-sqlite3'))(DB);
+    const poinSebelumBatal = cleanupDb.prepare(`SELECT COUNT(*) c FROM kejadian
+      WHERE sumber='absensi' AND ref_id IN (SELECT id FROM absensi_siswa WHERE sesi_id=?)`).get(sesiPenggantiId).c;
+    cleanupDb.close();
+    ok('poin otomatis dari absensi pengganti tersedia untuk diuji', Number(poinSebelumBatal) === 1, poinSebelumBatal);
     r = await req('/api/guru-pengganti/riwayat/hapus', { method: 'POST', body: { ids: [idTunjuk] } });
-    ok('hapus riwayat menolak penugasan yang masih aktif', r.status === 409, r.body?.error);
+    ok('riwayat penugasan aktif belum dapat dihapus', r.status === 409, r.body?.error);
+    r = await req('/api/guru-pengganti/batal', { method: 'POST', body: { id: idTunjuk } });
+    ok('penunjukan tetap dapat dibatalkan setelah presensi dan jurnal diisi', r.status === 200, r.body?.error);
+    ok('pembatalan melaporkan data presensi yang dihapus',
+      Number(r.body?.presensi_siswa_dihapus) > 0 && Number(r.body?.jurnal_dihapus) > 0,
+      JSON.stringify(r.body));
+    const cleanupVerify = new (require('better-sqlite3'))(DB);
+    const sisaSesi = cleanupVerify.prepare('SELECT COUNT(*) c FROM absensi_sesi WHERE id=?').get(sesiPenggantiId).c;
+    const sisaSiswa = cleanupVerify.prepare('SELECT COUNT(*) c FROM absensi_siswa WHERE sesi_id=?').get(sesiPenggantiId).c;
+    const sisaPoin = cleanupVerify.prepare(`SELECT COUNT(*) c FROM kejadian
+      WHERE sumber='absensi' AND ref_id IN (SELECT id FROM absensi_siswa WHERE sesi_id=?)`).get(sesiPenggantiId).c;
+    const sisaPengganti = cleanupVerify.prepare('SELECT COUNT(*) c FROM absensi_guru WHERE jadwal_id=? AND tanggal=? AND guru_id=?')
+      .get(slotNanti, TODAY, gB).c;
+    const izinAsliPulih = cleanupVerify.prepare('SELECT status FROM absensi_guru WHERE jadwal_id=? AND tanggal=? AND guru_id=?')
+      .get(slotNanti, TODAY, gA);
+    const sisaIzinAsli = cleanupVerify.prepare('SELECT COUNT(*) c FROM absensi_guru_izin WHERE jadwal_id=? AND tanggal=?')
+      .get(slotNanti, TODAY).c;
+    cleanupVerify.close();
+    ok('pembatalan menghapus sesi, presensi siswa, dan poin otomatis',
+      Number(sisaSesi) === 0 && Number(sisaSiswa) === 0 && Number(sisaPoin) === 0,
+      JSON.stringify({ sesi: sisaSesi, siswa: sisaSiswa, poin: sisaPoin }));
+    ok('pembatalan menghapus kehadiran/jurnal pengganti dan memulihkan izin guru asal',
+      Number(sisaPengganti) === 0 && izinAsliPulih?.status === 'izin' && Number(sisaIzinAsli) === 0,
+      JSON.stringify({ pengganti: sisaPengganti, asli: izinAsliPulih?.status, izin: sisaIzinAsli }));
+    r = await req(`/api/guru-pengganti?tanggal=${TODAY}`);
+    const slotKembali = (r.body.slots || []).find(s => Number(s.jadwal_id) === Number(slotNanti));
+    ok('slot kembali ke guru semula setelah pembatalan',
+      slotKembali && Number(slotKembali.guru_efektif_id) === Number(gA) && !slotKembali.pengganti);
 
     const fixtureDb = new (require('better-sqlite3'))(DB);
     const taFixture = fixtureDb.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(slotBelum).ta_id;
@@ -429,9 +458,14 @@ function startWa() {
     })).body.id;
     r = await req('/api/guru-pengganti/tunjuk', {
       method: 'POST',
-      body: { jadwal_id: slotKepala, tanggal: TODAY, ke_guru: gKepala, alasan: 'menggantikan guru berhalangan' }
+      body: { jadwal_id: slotKepala, tanggal: TODAY, ke_guru: gKepala, status: 'sakit', alasan: 'menggantikan guru berhalangan' }
     });
     ok('kepala sekolah dapat ditunjuk sebagai pengganti', r.status === 200, r.body?.error);
+    r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}&guru=${gB}&mapel=${mB}`);
+    const sakitAsli = (r.body.rows || []).find(x =>
+      Number(x.guru_id) === Number(gB) && (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(slotKepala)) && x.dari_izin);
+    ok('status sakit guru semula langsung muncul pada rekap setelah penunjukan',
+      sakitAsli?.status === 'sakit', JSON.stringify(sakitAsli && { status: sakitAsli.status, nama: sakitAsli.guru_nama }));
     await login('kepalaganti', 'guru123');
     r = await req(`/api/absensi-siswa?tanggal=${TODAY}`);
     const slotKepalaTampil = (r.body.jadwal || []).find(x => Number(x.id) === Number(slotKepala));
