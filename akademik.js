@@ -2046,7 +2046,7 @@ ${isi}
 
   /* simpan jurnal mengajar + foto bukti setelah check-in (status tidak berubah) */
   post('/api/absensi-guru/jurnal', async (req, res) => {
-    const user = guard(req, res, 'absensi_guru', 'write'); if (!user) return;
+    const user = guard(req, res, 'absensi_guru', 'view'); if (!user) return;
     const b = await readBody(req);
     const jadwalId = Number(b.jadwal_id) || 0;
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jadwalId);
@@ -2062,6 +2062,12 @@ ${isi}
     if (!ada) return fail(res, 400, 'Check-in slot ini belum tercatat.');
     const tukarIni = dbm.tukarAktif(row.id, tanggal);
     const pemilik = tukarIni ? Number(tukarIni.ke_guru) : Number(row.guru_id);
+    const jurnalPenugasan = tukarIni && String(tukarIni.jenis || '') === 'penugasan'
+      && Number(tukarIni.ke_guru) === Number(user.id)
+      && dbm.can(user, 'guru_pengganti', 'write');
+    if (!dbm.can(user, 'absensi_guru', 'write') && !jurnalPenugasan) {
+      return fail(res, 403, 'Anda tidak memiliki izin jurnal mengajar untuk sesi ini.');
+    }
     if (pemilik !== Number(user.id) && !isAdmin(user)) {
       return fail(res, 403, 'Anda hanya dapat mengisi jurnal pada slot jadwal Anda sendiri.');
     }
@@ -3165,6 +3171,21 @@ ${isi}
     }
     return false;
   };
+  const guardAbsensiSiswaWrite = (req, res) => {
+    const user = guard(req, res, 'absensi_siswa', 'view');
+    if (!user) return null;
+    if (dbm.can(user, 'absensi_siswa', 'write') || dbm.can(user, 'guru_pengganti', 'write')) return user;
+    fail(res, 403, 'Anda tidak memiliki izin "Tambah/Ubah" pada modul ini.');
+    return null;
+  };
+  const sesiBolehTulisPresensi = (user, jadwalRow, tanggal) => {
+    const penugasan = dbm.tukarAktif(jadwalRow.id, tanggal);
+    const bolehSebagaiPengganti = penugasan
+      && String(penugasan.jenis || '') === 'penugasan'
+      && dbm.can(user, 'guru_pengganti', 'write');
+    return (dbm.can(user, 'absensi_siswa', 'write') || bolehSebagaiPengganti)
+      && sesiBolehKelola(user, jadwalRow, tanggal);
+  };
 
   function pastikanSesi(req, jadwalRow, tanggal, user) {
     const tgl = String(tanggal || dbm.today()).slice(0, 10);
@@ -3324,7 +3345,7 @@ ${isi}
           terisi: Object.values(h).reduce((a, b) => a + b, 0),
           hadir: h.H || 0, alpa: (h.A || 0) + (h.B || 0),
           window: { aktif: w.aktif, alasan: w.alasan },
-          bisa: sesiBolehKelola(user, r, tanggal) && dbm.can(user, 'absensi_siswa', 'write')
+          bisa: sesiBolehTulisPresensi(user, r, tanggal)
         };
       });
     json(res, 200, {
@@ -3343,12 +3364,12 @@ ${isi}
 
   /* buat/buka sesi presensi + QR (guru) */
   post('/api/absensi-siswa/sesi', async (req, res) => {
-    const user = guard(req, res, 'absensi_siswa', 'write'); if (!user) return;
+    const user = guardAbsensiSiswaWrite(req, res); if (!user) return;
     const b = await readBody(req);
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(b.jadwal_id) || 0);
     if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || '')) ? String(b.tanggal) : dbm.today();
-    if (!sesiBolehKelola(user, row, tanggal)) return fail(res, 403, 'Anda bukan guru pengampu / wali kelas pada slot jadwal ini.');
+    if (!sesiBolehTulisPresensi(user, row, tanggal)) return fail(res, 403, 'Anda bukan guru pengampu / wali kelas pada slot jadwal ini.');
     if (tanggal !== dbm.today()) return fail(res, 403, 'Sesi presensi hanya dapat dibuat pada hari jadwal berlangsung.');
     if (Number(row.hari) !== dbm.hariOf(tanggal)) return fail(res, 403, 'Slot jadwal ini bukan untuk hari ini.');
     if (dbm.kalenderNonaktif(tanggal)) {
@@ -3364,7 +3385,7 @@ ${isi}
     const q = await qrUntuk(req, sesi);
     json(res, 200, {
       ok: true, ...detail, qr: q,
-      bisa_simpan: detail.window.terbuka && dbm.can(user, 'absensi_siswa', 'write')
+      bisa_simpan: detail.window.terbuka && sesiBolehTulisPresensi(user, row, tanggal)
     });
   });
 
@@ -3383,18 +3404,18 @@ ${isi}
     (async () => {
       const detail = sesiDetail(req, sesi, { auth: true });
       const qrData = await qrUntuk(req, sesi);
-      json(res, 200, { ok: true, ...detail, qr: qrData, bisa_simpan: detail.window.terbuka && dbm.can(user, 'absensi_siswa', 'write') });
+      json(res, 200, { ok: true, ...detail, qr: qrData, bisa_simpan: detail.window.terbuka && sesiBolehTulisPresensi(user, row, sesi.tanggal) });
     })().catch(e => fail(res, 500, e.message));
   });
 
   /* simpan presensi oleh guru/wali kelas/admin */
   post('/api/absensi-siswa/simpan', async (req, res) => {
-    const user = guard(req, res, 'absensi_siswa', 'write'); if (!user) return;
+    const user = guardAbsensiSiswaWrite(req, res); if (!user) return;
     const b = await readBody(req);
     const sesi = db.prepare('SELECT * FROM absensi_sesi WHERE id=?').get(Number(b.sesi_id) || 0);
     if (!sesi) return fail(res, 404, 'Sesi presensi tidak ditemukan.');
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(sesi.jadwal_id));
-    if (!row || !sesiBolehKelola(user, row, sesi.tanggal)) return fail(res, 403, 'Anda tidak berhak mengisi presensi kelas ini.');
+    if (!row || !sesiBolehTulisPresensi(user, row, sesi.tanggal)) return fail(res, 403, 'Anda tidak berhak mengisi presensi kelas ini.');
     const detail = sesiDetail(req, sesi, { auth: true });
     /* TIME-LOCKING: presensi tidak dapat diubah setelah jam pelajaran selesai. */
     if (!detail.window.terbuka) {

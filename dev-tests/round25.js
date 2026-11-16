@@ -105,7 +105,8 @@ function startWa() {
     })).body.id;
     const gA = await mk('Guru Pengampu A', 'gurua');
     const gB = await mk('Guru Pengganti B', 'gurub');
-    ok('akun guru dibuat', !!gA && !!gB);
+    const gKepala = await mk('Kepala Sekolah Pengganti', 'kepalaganti', ['kepala_sekolah']);
+    ok('akun guru & kepala sekolah dibuat', !!gA && !!gB && !!gKepala);
 
     const siswa = (await req('/api/siswa?limit=12')).body.rows || [];
     ok('data siswa contoh tersedia', siswa.length >= 4, String(siswa.length));
@@ -403,6 +404,52 @@ function startWa() {
     await login('gurua', 'guru123');
     r = await req('/api/guru-pengganti/tunjuk', { method: 'POST', body: { jadwal_id: slotNanti, tanggal: TODAY, ke_guru: gB } });
     ok('guru biasa tidak boleh menunjuk pengganti (403)', r.status === 403, r.body?.error);
+
+    /* kepala sekolah hanya boleh mengisi presensi pada sesi yang ditugaskan kepadanya */
+    await login('admin', 'admin123');
+    const kelasExtra = ((await req('/api/jadwal')).body.kelas || [])
+      .find(k => Number(k.id) !== Number(kelas1));
+    const slotKepala = (await req('/api/jadwal/slot', {
+      method: 'POST',
+      body: {
+        hari: HARI, sesi: 2, mapel_id: mB, guru_id: gB,
+        kelas_ids: [Number(kelasExtra?.id) || Number(kelas1)], abaikan: 1
+      }
+    })).body.id;
+    r = await req('/api/guru-pengganti/tunjuk', {
+      method: 'POST',
+      body: { jadwal_id: slotKepala, tanggal: TODAY, ke_guru: gKepala, alasan: 'menggantikan guru berhalangan' }
+    });
+    ok('kepala sekolah dapat ditunjuk sebagai pengganti', r.status === 200, r.body?.error);
+    await login('kepalaganti', 'guru123');
+    r = await req(`/api/absensi-siswa?tanggal=${TODAY}`);
+    const slotKepalaTampil = (r.body.jadwal || []).find(x => Number(x.id) === Number(slotKepala));
+    ok('sesi penugasan kepala sekolah ditandai dapat diisi',
+      slotKepalaTampil?.bisa === true, JSON.stringify(slotKepalaTampil && { bisa: slotKepalaTampil.bisa }));
+    r = await req('/api/absensi-siswa/sesi', {
+      method: 'POST', body: { jadwal_id: slotKepala, tanggal: TODAY }
+    });
+    ok('kepala sekolah dapat membuka absensi pada sesi penugasannya', r.status === 200, r.body?.error);
+    const sesiKepala = r.body?.sesi?.id;
+    r = await req('/api/absensi-siswa/simpan', {
+      method: 'POST',
+      body: { sesi_id: sesiKepala, items: (r.body?.siswa || []).map(s => ({ siswa_id: s.id, status: 'H' })) }
+    });
+    ok('kepala sekolah dapat menyimpan absensi pada sesi penugasannya', r.status === 200, r.body?.error);
+    r = await req('/api/absensi-guru/jurnal', {
+      method: 'POST',
+      body: { jadwal_id: slotKepala, tanggal: TODAY, materi: 'Jurnal kepala sekolah pengganti' }
+    });
+    ok('kepala sekolah dapat mengisi jurnal pada sesi penugasannya', r.status === 200, r.body?.error);
+    r = await req('/api/absensi-siswa/sesi', {
+      method: 'POST', body: { jadwal_id: slotKini, tanggal: TODAY }
+    });
+    ok('kepala sekolah tetap ditolak mengisi sesi guru lain', r.status === 403, r.body?.error);
+    r = await req('/api/absensi-guru/jurnal', {
+      method: 'POST',
+      body: { jadwal_id: slotKini, tanggal: TODAY, materi: 'Tidak boleh' }
+    });
+    ok('kepala sekolah tetap ditolak mengisi jurnal guru lain', r.status === 403, r.body?.error);
 
     /* ================= 4. REKAP BULANAN TERPADU ================= */
     console.log('\n== 4. REKAP BULANAN (PORTOFOLIO KELAS) ==');
