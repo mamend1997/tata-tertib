@@ -509,10 +509,13 @@ async function stopServer() {
         ['admin', 'admin', 'admin123'], ['kepsek', 'kepala', 'kepsek123'], ['wakasek', 'wakasek', 'guru123']
       ]) {
         await login(akun, password);
+        r = await req('/api/tukar-jadwal/pembatalan/masuk');
+        ok(`${nama} melihat permintaan pembatalan untuk menu Guru Piket & Pengganti`,
+          (r.body.permintaan || []).some(x => Number(x.id) === Number(lintasId)),
+          JSON.stringify(r.body.permintaan));
         r = await req('/api/dashboard');
-        ok(`${nama} melihat permintaan pembatalan di dashboard`,
-          (r.body.tukar_pembatalan_masuk || []).some(x => Number(x.id) === Number(lintasId)),
-          JSON.stringify(r.body.tukar_pembatalan_masuk));
+        ok(`${nama} tidak menerima antrean pembatalan di endpoint dashboard`,
+          !Object.prototype.hasOwnProperty.call(r.body, 'tukar_pembatalan_masuk'));
       }
 
       await login('admin', 'admin123');

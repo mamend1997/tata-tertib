@@ -64,23 +64,6 @@ export default function Dashboard({ ctx }) {
     } catch (e) { toast.err(e.message); }
     finally { setTukarBusy(0); }
   }
-  async function putusPembatalanTukar(row, aksi) {
-    const konfirmasi = aksi === 'setujui'
-      ? 'Setujui pembatalan pertukaran ini? Jadwal akan kembali ke guru dan mata pelajaran semula.'
-      : 'Tolak permintaan pembatalan ini? Pertukaran tetap berlaku.';
-    if (!window.confirm(konfirmasi)) return;
-    setTukarBusy(row.id);
-    try {
-      const r = await api('/api/tukar-jadwal/pembatalan/putus', {
-        method: 'POST', body: { id: row.id, aksi }
-      });
-      toast.ok(r.pesan || 'Keputusan pembatalan disimpan.');
-      const fresh = await api(`/api/dashboard?ta=${filters.ta || ''}`);
-      setData(fresh);
-    } catch (e) { toast.err(e.message); }
-    finally { setTukarBusy(0); }
-  }
-
   /* kartu portal publik siswa — tautan SELALU mengikuti slug sekolah yang login */
   const portalHref = portalUrlOf(boot?.tenant);
   const portalLabel = portalAbsUrl(boot?.tenant);
@@ -200,42 +183,6 @@ export default function Dashboard({ ctx }) {
                   </button>
                   <button className="btn-sm border border-rose-300 bg-rose-50 text-rose-700"
                     disabled={tukarBusy === t.id} onClick={() => putusTukar(t, 'tolak')} data-tukar-tolak={t.id}>
-                    <XCircle size={13} /> Tolak
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {(data.tukar_pembatalan_masuk || []).length ? (
-        <section className="rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-3" data-tukar-pembatalan-card>
-          <div className="flex items-center gap-2">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-600 text-white"><Repeat size={17} /></span>
-            <div>
-              <p className="text-[13px] font-extrabold text-amber-900">Permintaan Pembatalan Tukar Jadwal</p>
-              <p className="text-[11.5px] text-amber-800">{data.tukar_pembatalan_masuk.length} permintaan menunggu keputusan sekolah</p>
-            </div>
-          </div>
-          <div className="mt-2 space-y-2">
-            {data.tukar_pembatalan_masuk.map(t => (
-              <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white p-3" data-tukar-pembatalan={t.id}>
-                <div className="min-w-0">
-                  <p className="text-[12.5px] font-bold text-slate-800">
-                    {t.pembatalan_nama || 'Guru'} meminta membatalkan pertukaran {t.dari_nama} ↔ {t.ke_nama}
-                  </p>
-                  <p className="text-[11px] text-slate-600">
-                    {t.mapel_nama || 'Mapel'} · {t.kelas_nama || '-'} · sesi {t.sesi} · {t.tanggal}
-                  </p>
-                </div>
-                <div className="flex gap-1.5">
-                  <button className="btn-sm border border-emerald-300 bg-emerald-50 text-emerald-800"
-                    disabled={tukarBusy === t.id} onClick={() => putusPembatalanTukar(t, 'setujui')} data-pembatalan-setuju={t.id}>
-                    {tukarBusy === t.id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />} Setujui Batal
-                  </button>
-                  <button className="btn-sm border border-rose-300 bg-rose-50 text-rose-700"
-                    disabled={tukarBusy === t.id} onClick={() => putusPembatalanTukar(t, 'tolak')} data-pembatalan-tolak={t.id}>
                     <XCircle size={13} /> Tolak
                   </button>
                 </div>

@@ -1323,9 +1323,6 @@ get('/api/dashboard', (req, res, q) => {
     sanksiRekap[key] = (sanksiRekap[key] || 0) + 1;
   }
   const tindakStats = dbm.tindakLanjutStats();
-  const canDecideTukarCancellation = dbm.userRoleList(user)
-    .some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role));
-
   json(res, 200, {
     ok: true, filters: f,
     kpi: {
@@ -1347,7 +1344,6 @@ get('/api/dashboard', (req, res, q) => {
     riwayat: dbm.riwayatAktivitas({ taId: f.taId, user, limit: 150 }),
     /* permintaan tukar jadwal mengajar yang menunggu jawaban guru ini */
     tukar_masuk: dbm.tukarMasuk(user.id),
-    tukar_pembatalan_masuk: canDecideTukarCancellation ? dbm.tukarPembatalanMasuk(50) : [],
     feedback_baru: dbm.can(user, 'feedback_admin', 'view') ? dbm.feedbackStats().baru : 0,
     wa: { cooldown_jam: dbm.waConfig().cooldownJam, gateway_aktif: dbm.waConfig().aktif },
     rules, dini,

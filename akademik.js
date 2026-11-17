@@ -2888,6 +2888,15 @@ ${isi}
 
   /* guru pengaju atau guru tujuan dapat meminta pembatalan pertukaran aktif;
      jadwal baru kembali seperti semula setelah disetujui pihak sekolah. */
+  get('/api/tukar-jadwal/pembatalan/masuk', (req, res) => {
+    const user = guard(req, res, 'guru_pengganti', 'view'); if (!user) return;
+    const roles = dbm.userRoleList(user);
+    if (!roles.some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role))) {
+      return json(res, 200, { ok: true, permintaan: [] });
+    }
+    json(res, 200, { ok: true, permintaan: dbm.tukarPembatalanMasuk(50) });
+  });
+
   post('/api/tukar-jadwal/pembatalan', async (req, res) => {
     const user = guard(req, res, 'absensi_guru', 'view'); if (!user) return;
     const b = await readBody(req);

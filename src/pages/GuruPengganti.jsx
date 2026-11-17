@@ -27,6 +27,8 @@ export default function GuruPengganti({ ctx }) {
   const bolehUbah = can('guru_pengganti', 'write');
   const [tanggal, setTanggal] = useState(() => hariIni());
   const [data, setData] = useState(null);
+  const [tukarPembatalan, setTukarPembatalan] = useState([]);
+  const [tukarPembatalanBusy, setTukarPembatalanBusy] = useState(0);
   const [loading, setLoading] = useState(true);
   const [cari, setCari] = useState('');
   const [filterSlot, setFilterSlot] = useState({ kelas: '', guru: '' });
@@ -61,6 +63,31 @@ export default function GuruPengganti({ ctx }) {
       .then(r => setData(r)).catch(e => toast.err(e.message)).finally(() => setLoading(false));
   }, [tanggal, filterSlot, filterRiwayat, filters?.ta]);
   useEffect(load, [load]);
+  const loadPembatalanTukar = useCallback(async () => {
+    const r = await api('/api/tukar-jadwal/pembatalan/masuk');
+    setTukarPembatalan(r.permintaan || []);
+  }, []);
+  useEffect(() => {
+    loadPembatalanTukar().catch(e => toast.err(e.message));
+  }, [loadPembatalanTukar, toast]);
+
+  async function putusPembatalanTukar(row, aksi) {
+    const konfirmasi = aksi === 'setujui'
+      ? 'Setujui pembatalan pertukaran ini? Jadwal akan kembali ke guru dan mata pelajaran semula.'
+      : 'Tolak permintaan pembatalan ini? Pertukaran tetap berlaku.';
+    if (!window.confirm(konfirmasi)) return;
+    setTukarPembatalanBusy(row.id);
+    try {
+      const r = await api('/api/tukar-jadwal/pembatalan/putus', {
+        method: 'POST', body: { id: row.id, aksi }
+      });
+      toast.ok(r.pesan || 'Keputusan pembatalan disimpan.');
+      load();
+      await loadPembatalanTukar();
+    } catch (e) { toast.err(e.message); }
+    finally { setTukarPembatalanBusy(0); }
+  }
+
   const riwayat = data?.riwayat || NO_RIWAYAT;
   const riwayatBisaDihapus = useMemo(() => riwayat.filter(r => ['batal', 'ditolak'].includes(String(r.status))), [riwayat]);
   const riwayatPilihSet = useMemo(() => new Set(riwayatDipilih.map(Number)), [riwayatDipilih]);
@@ -239,6 +266,46 @@ export default function GuruPengganti({ ctx }) {
         <Stat label="Sudah Ditunjuk" value={data?.jumlah_pengganti || 0} sub="sesi berpindah ke guru pengganti" icon={Repeat} tone="violet" />
         <Stat label="Guru Tidak Hadir" value={(data?.tidak_hadir || []).length} sub="izin / sakit hari ini" icon={Users} tone="rose" />
       </div>
+
+      {tukarPembatalan.length ? (
+        <section className="rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-3" data-tukar-pembatalan-card>
+          <div className="flex items-center gap-2">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-600 text-white"><Repeat size={17} /></span>
+            <div>
+              <p className="text-[13px] font-extrabold text-amber-900">Permintaan Pembatalan Tukar Jadwal</p>
+              <p className="text-[11.5px] text-amber-800">{tukarPembatalan.length} permintaan menunggu keputusan sekolah</p>
+            </div>
+          </div>
+          <div className="mt-2 space-y-2">
+            {tukarPembatalan.map(t => (
+              <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-white p-3" data-tukar-pembatalan={t.id}>
+                <div className="min-w-0">
+                  <p className="text-[12.5px] font-bold text-slate-800">
+                    {t.pembatalan_nama || 'Guru'} meminta membatalkan pertukaran {t.dari_nama} ↔ {t.ke_nama}
+                  </p>
+                  <p className="text-[11px] text-slate-600">
+                    {t.mapel_nama || 'Mapel'} · {t.kelas_nama || '-'} · sesi {t.sesi} · {t.tanggal}
+                  </p>
+                </div>
+                <div className="flex gap-1.5">
+                  <button className="btn-sm border border-emerald-300 bg-emerald-50 text-emerald-800"
+                    disabled={tukarPembatalanBusy === t.id}
+                    onClick={() => putusPembatalanTukar(t, 'setujui')} data-pembatalan-setuju={t.id}>
+                    {tukarPembatalanBusy === t.id
+                      ? <Loader2 size={13} className="animate-spin" />
+                      : <CheckCircle2 size={13} />} Setujui Batal
+                  </button>
+                  <button className="btn-sm border border-rose-300 bg-rose-50 text-rose-700"
+                    disabled={tukarPembatalanBusy === t.id}
+                    onClick={() => putusPembatalanTukar(t, 'tolak')} data-pembatalan-tolak={t.id}>
+                    <XCircle size={13} /> Tolak
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {(data?.tidak_hadir || []).length ? (
         <Card title="Notifikasi Guru Tidak Hadir" subtitle="Guru yang mengajukan Sakit/Izin — segera tunjuk pengganti agar kelas tetap terisi">

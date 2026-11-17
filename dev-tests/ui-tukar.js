@@ -227,8 +227,12 @@ const ok = (name, cond, extra) => {
       await page.locator(`[data-tukar-riwayat-aktif="${permintaanBatalId}"]`).count() === 1);
     await login('admin', 'admin123');
     await page.goto(BASE + '/#/dashboard', { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(1000);
+    ok('kartu pembatalan tidak lagi tampil di Dashboard', await page.locator('[data-tukar-pembatalan-card]').count() === 0);
+    await page.goto(BASE + '/#/guru_pengganti', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('[data-page="guru-pengganti"]', { timeout: 15000 });
     await page.waitForSelector(`[data-tukar-pembatalan="${permintaanBatalId}"]`, { timeout: 15000 });
-    ok('permintaan tampil pada dashboard Admin', true);
+    ok('permintaan tampil di menu Guru Piket & Pengganti untuk Admin', true);
     await page.locator(`[data-pembatalan-setuju="${permintaanBatalId}"]`).click();
     await page.waitForFunction(id => !document.querySelector(`[data-tukar-pembatalan="${id}"]`), permintaanBatalId, { timeout: 15000 });
     const jadwalKembali = await page.evaluate(async jadwalId => {
