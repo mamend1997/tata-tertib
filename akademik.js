@@ -4135,6 +4135,70 @@ ${isi}
      Semua dihitung dari slot jadwal hari ini (jam pelajaran berjalan),
      absensi guru, rekam izin, dan data tukar/penunjukan pengganti.
      ================================================================= */
+  get('/api/monitor-kbm/pratinjau', (req, res, q) => {
+    const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return;
+    const jadwalId = Number(q.jadwal_id) || 0;
+    const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(q.tanggal || '')) ? String(q.tanggal) : dbm.today();
+    const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jadwalId);
+    if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
+    if (Number(row.hari) !== dbm.hariOf(tanggal)) return fail(res, 400, 'Tanggal tidak sesuai dengan hari jadwal.');
+
+    const cfg = dbm.jadwalConfig();
+    const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(q)).filter(x => Number(x.hari) === Number(row.hari));
+    const group = kelompokJadwal(row, semua, cfg);
+    const alurList = group.map(slot => ({ slot, alur: dbm.absensiAlur(slot.id, tanggal) }));
+    if (alurList.some(x => x.alur.status !== 'hadir' || !x.alur.selesai)) {
+      return fail(res, 409, 'Pratinjau hanya tersedia setelah absensi siswa, jurnal, dan dokumentasi wajib selesai.');
+    }
+
+    const tukar = dbm.tukarMap(tanggal);
+    const kelasList = kelasPicker();
+    const slots = alurList.map(({ slot, alur }) => {
+      const sesi = db.prepare('SELECT * FROM absensi_sesi WHERE jadwal_id=? AND tanggal=?')
+        .get(Number(slot.id), tanggal);
+      const absensi = db.prepare('SELECT * FROM absensi_guru WHERE jadwal_id=? AND tanggal=?')
+        .get(Number(slot.id), tanggal);
+      const nilai = sesi
+        ? db.prepare('SELECT siswa_id,status,keterangan FROM absensi_siswa WHERE sesi_id=?').all(Number(sesi.id))
+        : [];
+      const nilaiMap = new Map(nilai.map(x => [Number(x.siswa_id), x]));
+      const kelasIds = sesi ? dbm.jadwalKelasIds(sesi) : dbm.jadwalKelasIds(slot);
+      const siswa = dbm.siswaOfKelas(kelasIds).map((s, i) => {
+        const v = nilaiMap.get(Number(s.id));
+        return {
+          no: i + 1, nama: s.nama || '', kelas_id: Number(s.kelas_id) || 0,
+          kelas_nama: (kelasList.find(k => Number(k.id) === Number(s.kelas_id)) || {}).nama || '',
+          status: v ? String(v.status) : 'H', keterangan: v ? String(v.keterangan || '') : ''
+        };
+      });
+      const ringkasan = { H: 0, S: 0, I: 0, A: 0, B: 0 };
+      for (const s of siswa) if (Object.prototype.hasOwnProperty.call(ringkasan, s.status)) ringkasan[s.status]++;
+      const tukarSlot = tukar.get(Number(slot.id));
+      const mapelId = tukarSlot && Number(tukarSlot.mapel_id) ? Number(tukarSlot.mapel_id) : Number(slot.mapel_id);
+      const mapel = db.prepare('SELECT id,nama,kode FROM mapel WHERE id=?').get(mapelId) || {};
+      const guruId = tukarSlot ? Number(tukarSlot.ke_guru) : Number(absensi.guru_id);
+      const guru = db.prepare('SELECT id,nama FROM users WHERE id=?').get(guruId) || {};
+      const sesiJam = dbm.sesiOfHari(cfg, slot.hari).find(x => Number(x.idx) === Number(slot.sesi)) || {};
+      return {
+        jadwal_id: Number(slot.id), sesi: Number(slot.sesi),
+        label_sesi: sesiJam.no ? `Jam ke-${sesiJam.no}` : (sesiJam.label || `Sesi ${slot.sesi}`),
+        jam: sesiJam.mulai ? `${sesiJam.mulai}–${sesiJam.selesai}` : '',
+        mapel_nama: mapel.nama || '', mapel_kode: mapel.kode || '',
+        guru_nama: guru.nama || '', kelas_ids: kelasIds,
+        absensi_siswa: siswa, ringkasan,
+        jurnal: { materi: absensi.materi || '', catatan: absensi.catatan || '', waktu: absensi.waktu_submit || '' },
+        dokumentasi: { url: absensi.foto_url || '', wajib: alur.foto.wajib, ada: alur.foto.ada }
+      };
+    });
+    const kelasNama = kelasList.find(k => Number(k.id) === Number(group[0]?.kelas_ids?.[0]));
+    json(res, 200, {
+      ok: true, tanggal, tanggal_label: dbm.tanggalPanjang(tanggal),
+      kelas_nama: slots[0]?.absensi_siswa?.[0]?.kelas_nama || kelasNama?.nama || '',
+      mapel_nama: slots[0]?.mapel_nama || '', guru_nama: slots[0]?.guru_nama || '',
+      slots
+    });
+  });
+
   get('/api/monitor-kbm', (req, res, q) => {
     const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return;
     const cfg = dbm.jadwalConfig();
@@ -4237,7 +4301,12 @@ ${isi}
     const tukarMatriks = tanggalMatriks === tanggal ? tukar : dbm.tukarMap(tanggalMatriks);
     const kiniMatriks = tanggalMatriks === dbm.today() ? kini : (tanggalMatriks < dbm.today() ? 1440 : -1);
     const monitorJadwal = semuaMatriks.filter(r => !r.istirahat)
-      .map(r => jumlahkan(r, tanggalMatriks, absMapMatriks, izinMapMatriks, tukarMatriks, kiniMatriks));
+      .map(r => jumlahkan(r, tanggalMatriks, absMapMatriks, izinMapMatriks, tukarMatriks, kiniMatriks))
+      .map(x => {
+        const alur = dbm.absensiAlur(x.jadwal_id, tanggalMatriks);
+        const alurSelesai = alur.status === 'hadir' && alur.selesai;
+        return { ...x, alur_selesai: alurSelesai, status_label: alurSelesai ? 'Selesai' : x.status_label };
+      });
     const berlangsung = slot.filter(x => x.fase === 'berlangsung');
     const selesai = slot.filter(x => x.fase === 'selesai');
     const belum = slot.filter(x => x.fase === 'belum');

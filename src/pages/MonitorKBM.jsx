@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, AlertTriangle, BookOpenCheck, CalendarClock, CheckCircle2, Clock, Loader2, RefreshCw,
+  Activity, AlertTriangle, BookOpenCheck, CalendarClock, CheckCircle2, Clock, Eye, Image as ImageIcon, Loader2, RefreshCw,
   Repeat, UserCheck, UserX, Users
 } from 'lucide-react';
 import { api, hariIni, tgl } from '../api';
-import { Alert, Card, Empty, Spinner, Stat, cx, useToast } from '../ui';
+import { Alert, Card, Empty, Modal, Spinner, Stat, cx, useToast } from '../ui';
 
 /* =====================================================================
    MONITORING KBM REAL-TIME (Wakasek Kurikulum)
@@ -17,6 +17,7 @@ import { Alert, Card, Empty, Spinner, Stat, cx, useToast } from '../ui';
    dan data tukar/penunjukan pengganti. Halaman menyegarkan diri otomatis.
    ===================================================================== */
 const REFRESH_MS = 30000;
+const ABSENSI_STATUS = { H: 'Hadir', S: 'Sakit', I: 'Izin', A: 'Alpa', B: 'Bolos' };
 
 export default function MonitorKBM({ ctx }) {
   const { filters, toast } = ctx;
@@ -29,6 +30,9 @@ export default function MonitorKBM({ ctx }) {
   const [gridMode, setGridMode] = useState('semua');
   const [gridKelas, setGridKelas] = useState('');
   const [gridGuru, setGridGuru] = useState('');
+  const [previewSlot, setPreviewSlot] = useState(null);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const ta = filters?.ta || '';
 
   const load = useCallback((silent = false) => {
@@ -98,6 +102,23 @@ export default function MonitorKBM({ ctx }) {
     if (x.belum_checkin) return 'Belum check-in';
     return 'Menunggu jam';
   };
+  async function bukaPratinjau(x) {
+    setPreviewSlot(x);
+    setPreviewData(null);
+    setPreviewLoading(true);
+    try {
+      setPreviewData(await api(`/api/monitor-kbm/pratinjau?jadwal_id=${x.jadwal_id}&tanggal=${encodeURIComponent(d?.tanggal_matriks || tanggalMatriks)}`));
+    } catch (e) {
+      toast.err(e.message);
+      setPreviewSlot(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+  function tutupPratinjau() {
+    setPreviewSlot(null);
+    setPreviewData(null);
+  }
 
   return (
     <div className="space-y-4" data-page="monitor-kbm">
@@ -224,7 +245,7 @@ export default function MonitorKBM({ ctx }) {
                         return <td key={k.id} className="text-center text-slate-300">—</td>;
                       }
                       const statusTone = ['hadir', 'sedang berlangsung'].includes(String(x.status_label).toLowerCase())
-                        ? 'badge-aman'
+                        || String(x.status_label).toLowerCase() === 'selesai' ? 'badge-aman'
                         : ['sakit'].includes(String(x.status_label).toLowerCase()) ? 'badge-perhatian'
                           : ['izin', 'akan datang'].includes(String(x.status_label).toLowerCase()) ? 'badge-pantau'
                             : ['alpha', 'belum check-in'].includes(String(x.status_label).toLowerCase()) ? 'badge-siaga'
@@ -245,6 +266,12 @@ export default function MonitorKBM({ ctx }) {
                               </p>
                             ) : x.pengganti ? (
                               <p className="mt-1 text-[10px] font-semibold text-violet-700">Guru piket/pengganti</p>
+                            ) : null}
+                            {x.alur_selesai ? (
+                              <button type="button" className="btn-ghost btn-sm mt-2"
+                                onClick={() => bukaPratinjau(x)} data-monitor-preview={x.jadwal_id}>
+                                <Eye size={13} /> Pratinjau
+                              </button>
                             ) : null}
                           </div>
                         </td>
@@ -387,6 +414,82 @@ export default function MonitorKBM({ ctx }) {
           <DaftarJurnal rows={d?.jurnal?.belum || []} status="belum" />
         </Card>
       </div>
+      <Modal open={!!previewSlot} onClose={tutupPratinjau} title="Pratinjau Rekap KBM" size="xl"
+        subtitle={previewData
+          ? `${previewData.mapel_nama || previewSlot?.mapel_nama || ''} · ${previewData.kelas_nama || ''} · ${previewData.tanggal_label || ''}`
+          : `${previewSlot?.mapel_nama || ''} · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`}>
+        {previewLoading || !previewData ? <Spinner label="Memuat rekap absensi, jurnal, dan dokumentasi…" /> : (
+          <div className="space-y-4" data-monitor-preview-content>
+            <p className="text-[12px] text-slate-500">
+              Guru: <b className="text-slate-700">{previewData.guru_nama || previewSlot?.guru_efektif_nama || '-'}</b>
+            </p>
+            {(previewData.slots || []).map(slot => (
+              <section key={slot.jadwal_id} className="space-y-3 rounded-xl border border-slate-200 p-3"
+                data-monitor-preview-slot={slot.jadwal_id}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-[13px] font-bold text-slate-800">
+                      {slot.label_sesi} · {slot.jam} · {slot.mapel_kode ? `${slot.mapel_kode} · ` : ''}{slot.mapel_nama}
+                    </h3>
+                    <p className="text-[11.5px] text-slate-500">{slot.guru_nama || '-'}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {Object.entries(ABSENSI_STATUS).map(([kode, label]) => (
+                      <span key={kode} className="chip !py-0.5" data-preview-ringkasan={kode}>
+                        {label}: {slot.ringkasan?.[kode] || 0}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg bg-slate-50 p-3" data-preview-jurnal>
+                    <h4 className="text-[12px] font-bold text-slate-700">Jurnal Mengajar</h4>
+                    <p className="mt-1 whitespace-pre-wrap text-[12px] text-slate-700">{slot.jurnal?.materi || 'Materi tidak dicatat.'}</p>
+                    {slot.jurnal?.catatan ? <p className="mt-1 whitespace-pre-wrap text-[11.5px] text-slate-500">{slot.jurnal.catatan}</p> : null}
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-3" data-preview-dokumentasi>
+                    <h4 className="flex items-center gap-1.5 text-[12px] font-bold text-slate-700">
+                      <ImageIcon size={14} /> Dokumentasi
+                    </h4>
+                    {slot.dokumentasi?.url ? (
+                      <img src={slot.dokumentasi.url} alt={`Dokumentasi ${slot.mapel_nama}`}
+                        className="mt-2 max-h-56 w-full rounded-lg border border-slate-200 bg-white object-contain"
+                        data-preview-foto />
+                    ) : (
+                      <p className="mt-1 text-[11.5px] text-slate-500">
+                        {slot.dokumentasi?.wajib ? 'Dokumentasi wajib tidak ditemukan.' : 'Tidak ada dokumentasi (opsional).'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="mb-1 text-[12px] font-bold text-slate-700">
+                    Rekap Absensi Siswa ({(slot.absensi_siswa || []).length})
+                  </h4>
+                  <div className="tbl-wrap max-h-60">
+                    <table className="tbl" data-preview-absensi>
+                      <thead><tr><th className="w-10 c">No</th><th>Nama Siswa</th><th>Kelas</th><th>Status</th><th>Keterangan</th></tr></thead>
+                      <tbody>
+                        {(slot.absensi_siswa || []).map(siswa => (
+                          <tr key={`${slot.jadwal_id}-${siswa.no}`}>
+                            <td className="c">{siswa.no}</td>
+                            <td className="font-semibold">{siswa.nama}</td>
+                            <td>{siswa.kelas_nama || '-'}</td>
+                            <td>{ABSENSI_STATUS[siswa.status] || siswa.status}</td>
+                            <td>{siswa.keterangan || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

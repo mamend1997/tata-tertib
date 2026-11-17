@@ -257,24 +257,31 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
     ok('daftar jurnal belum diisi tampil', (await page.locator('[data-tbl="monitor-jurnal-belum"]').count()) === 1);
     ok('sakelar auto-refresh tersedia', (await page.locator('[data-monitor-auto]').count()) === 1);
     /* guru mengisi jurnal → persentase naik setelah disegarkan */
-    await page.evaluate(async ({ s1id, today, kelasId }) => {
-      const post = async (p, b) => (await fetch(p, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
-      const get = async (p) => (await fetch(p, { credentials: 'same-origin' })).json();
-      const siswa = ((await get('/api/siswa?limit=30')).rows || []).filter(x => Number(x.kelas_id) === Number(kelasId));
-      const s = await post('/api/absensi-siswa/sesi', { jadwal_id: s1id, tanggal: today });
-      if (s && s.sesi) {
-        await post('/api/absensi-siswa/simpan', { sesi_id: s.sesi.id, items: siswa.map(x => ({ siswa_id: x.id, status: 'H' })) });
+    const loginA = await apiLogin('guru', 'guru123');
+    ok('login guru A untuk mengisi alur KBM', loginA.status === 200, loginA.status);
+    const checkinA = await apiReq('/api/absensi-guru/checkin', {
+      method: 'POST', body: { jadwal_id: setup.s1id, tanggal: TODAY, status: 'hadir' }
+    });
+    ok('guru A check-in hadir', checkinA.status === 200, checkinA.body?.error);
+    const siswaA = ((await apiReq('/api/siswa?limit=30')).body.rows || [])
+      .filter(x => Number(x.kelas_id) === Number(setup.kelasId));
+    const sesiA = await apiReq('/api/absensi-siswa/sesi', {
+      method: 'POST', body: { jadwal_id: setup.s1id, tanggal: TODAY }
+    });
+    ok('sesi presensi guru A dibuat', sesiA.status === 200, sesiA.body?.error);
+    const simpanA = await apiReq('/api/absensi-siswa/simpan', {
+      method: 'POST', body: {
+        sesi_id: sesiA.body?.sesi?.id,
+        items: siswaA.map(x => ({ siswa_id: x.id, status: 'H' }))
       }
-    }, { s1id: setup.s1id, today: TODAY, kelasId: setup.kelasId });
-    /* check-in + jurnal dilakukan sebagai guru (butuh sesi guru) */
-    const loginGuru = await page.evaluate(async ({ s1id, today }) => {
-      const r = await fetch('/api/login', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'guru', password: 'guru123', kode: window.__SEKOLAH_KODE__ || '' })
-      });
-      return r.status;
-    }, { s1id: setup.s1id, today: TODAY });
-    void loginGuru;
+    });
+    ok('absensi siswa guru A lengkap', simpanA.status === 200, simpanA.body?.error);
+    const jurnalA = await apiReq('/api/absensi-guru/jurnal', {
+      method: 'POST', body: {
+        jadwal_id: setup.s1id, tanggal: TODAY, materi: 'Materi monitoring dan latihan soal'
+      }
+    });
+    ok('jurnal guru A tersimpan', jurnalA.status === 200, jurnalA.body?.error);
     await page.click('[data-monitor-refresh]').catch(() => {});
     await page.waitForTimeout(1200);
     ok('tombol segarkan memuat ulang data', (await page.locator('[data-page="monitor-kbm"]').count()) === 1);
@@ -286,9 +293,23 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
     });
     ok('izin guru B tercatat', izinRes.status === 200, izinRes.body?.error || izinRes.status);
     await apiLogin('admin', 'admin123');
+    await page.evaluate(async ({ kode }) => fetch('/api/login', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin123', kode })
+    }), { kode: KODE });
     await page.reload();
     await page.waitForSelector('[data-page="monitor-kbm"]', { timeout: 20000 });
     await page.waitForTimeout(1200);
+    const previewButton = page.locator(`[data-monitor-preview="${setup.s1id}"]`);
+    ok('tombol pratinjau muncul setelah semua langkah KBM selesai', await previewButton.count() === 1);
+    await previewButton.click();
+    await page.waitForSelector('[data-monitor-preview-content]', { timeout: 15000 });
+    ok('pratinjau rekap tampil di modal tanpa navigasi halaman',
+      await page.locator('[data-modal-title="Pratinjau Rekap KBM"]').count() === 1
+      && await page.locator('[data-preview-absensi]').count() === 1
+      && await page.locator('[data-preview-jurnal]').count() === 1
+      && await page.locator('[data-preview-dokumentasi]').count() === 1);
+    await page.locator('[data-modal-title="Pratinjau Rekap KBM"] button[aria-label="Tutup"]').click();
     const teksMon = await page.locator('[data-page="monitor-kbm"]').innerText();
     ok('tabel guru berhalangan tampil setelah ada izin', (await page.locator('[data-tbl="monitor-berhalangan"]').count()) === 1,
       teksMon.slice(0, 120));

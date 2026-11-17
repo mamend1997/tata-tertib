@@ -161,6 +161,9 @@ const BULAN = TODAY.slice(0, 7);
     console.log('\n== 2. MONITORING KBM REAL-TIME ==');
     r = await req('/api/monitor-kbm?tanggal=' + TODAY);
     ok('endpoint monitoring tersedia', r.status === 200 && !!r.body.stats, r.body?.error);
+    const belumLengkapPreview = await req(`/api/monitor-kbm/pratinjau?jadwal_id=${sA}&tanggal=${TODAY}`);
+    ok('pratinjau ditolak sebelum alur presensi dan jurnal selesai', belumLengkapPreview.status === 409,
+      `${belumLengkapPreview.status} ${belumLengkapPreview.body?.error || ''}`);
     ok('tanggal & jam server dikirim', r.body.tanggal === TODAY && !!r.body.jam_sekarang, JSON.stringify({ t: r.body.tanggal, j: r.body.jam_sekarang }));
     ok('5 slot hari ini dihitung', Number(r.body.stats.slot) === 5, JSON.stringify(r.body.stats));
     ok('sesi yang sedang berjalan terdeteksi', (r.body.sedang_belajar || []).length >= 1,
@@ -209,6 +212,18 @@ const BULAN = TODAY.slice(0, 7);
     r = await req('/api/monitor-kbm?tanggal=' + TODAY);
     const s1row = (r.body.jurnal?.sudah || []).find(x => Number(x.jadwal_id) === Number(sA));
     ok('jurnal yang sudah diisi masuk daftar "sudah"', !!s1row && s1row.jurnal_isi === true, JSON.stringify(r.body.jurnal?.sudah));
+    const matriksSelesai = (r.body.monitor_jadwal || []).find(x => Number(x.jadwal_id) === Number(sA));
+    ok('matriks menandai slot selesai setelah presensi dan jurnal lengkap',
+      matriksSelesai?.alur_selesai === true && matriksSelesai.status_label === 'Selesai',
+      JSON.stringify(matriksSelesai));
+    const preview = await req(`/api/monitor-kbm/pratinjau?jadwal_id=${sA}&tanggal=${TODAY}`);
+    const slotPreview = preview.body.slots?.[0];
+    ok('pratinjau mengirim rekap siswa, jurnal, dan dokumentasi',
+      preview.status === 200 && slotPreview?.absensi_siswa?.length === siswaKelas.length
+        && slotPreview?.absensi_siswa?.every(x => x.status === 'H')
+        && slotPreview?.jurnal?.materi === 'Membahas persamaan linear dan latihan soal'
+        && slotPreview?.dokumentasi?.wajib === false,
+      JSON.stringify(preview.body).slice(0, 400));
     ok('persentase jurnal naik (20%)', Number(r.body.stats.persen_jurnal) === 20, String(r.body.stats.persen_jurnal));
     ok('guru yang check-in tercatat hadir', Number(r.body.stats.hadir) >= 1, JSON.stringify(r.body.stats.hadir));
 
