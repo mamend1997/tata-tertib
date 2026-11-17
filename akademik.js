@@ -2379,22 +2379,20 @@ ${isi}
     const hari = Number(row.hari);
     const pemilik = guruPemilik(row, tanggal);
     const taId = Number(row.ta_id) || taOf({});
+    const cfgTukar = dbm.jadwalConfig();
     const semua = dbm.jadwalRows(taId).filter(r => Number(r.hari) === hari);
-    const groupAsal = dbm.absensiKelompok(row, semua, dbm.jadwalConfig());
+    const groupAsal = dbm.absensiKelompok(row, semua, cfgTukar);
     const asalIds = new Set(groupAsal.map(x => Number(x.id)));
     const asalJam = sesiIds(groupAsal);
     const keyKelas = kelasKey(row);
     const guruIds = [...new Set(semua.filter(r => Number(r.guru_id) !== pemilik && kelasKey(r) === keyKelas)
       .map(r => Number(r.guru_id)).filter(Boolean))];
     return guruIds.map(guruId => {
-      const sudahHadir = db.prepare(`SELECT 1 FROM absensi_guru
-        WHERE tanggal=? AND guru_id=? AND status='hadir' LIMIT 1`).get(tanggal, guruId);
-      if (!sudahHadir) return null;
       const jadwalTujuan = semua.filter(r => Number(r.guru_id) === guruId && kelasKey(r) === keyKelas);
       const grupSeen = new Set();
       const groups = [];
       for (const slot of jadwalTujuan) {
-        const group = dbm.absensiKelompok(slot, semua, dbm.jadwalConfig());
+        const group = dbm.absensiKelompok(slot, semua, cfgTukar);
         const ids = group.map(x => Number(x.id));
         const key = ids.slice().sort((a, b) => a - b).join(',');
         if (grupSeen.has(key) || ids.some(id => asalIds.has(id)) || group.length !== groupAsal.length) continue;
@@ -2403,6 +2401,10 @@ ${isi}
           .get(tanggal, ...ids)
           || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`)
             .get(tanggal, ...ids)) continue;
+        const window = jendelaKelompok(group, tanggal, cfgTukar);
+        const mulai = dbm.jamMenit(window.sesi && window.sesi.mulai);
+        if (!window.sesi || window.nonaktif || !window.hariOk
+          || (tanggal === dbm.today() && (mulai === null || dbm.nowMenit() >= mulai))) continue;
         grupSeen.add(key);
         const jam = sesiIds(group);
         const bentrokAsal = semua.find(x => Number(x.guru_id) === pemilik && asalJam.has(Number(x.sesi)) === false
@@ -2648,11 +2650,18 @@ ${isi}
       }
     }
     const cfgTukar = dbm.jadwalConfig();
-    for (const [group, groupTanggal] of [[groupAsal, tanggal], [groupTujuan, targetTanggal]]) {
+    for (const [group, groupTanggal, isTujuan] of [
+      [groupAsal, tanggal, false], [groupTujuan, targetTanggal, true]
+    ]) {
       const w = jendelaKelompok(group, groupTanggal, cfgTukar);
       if (!w.sesi || w.nonaktif || !w.hariOk
         || (groupTanggal === dbm.today() && dbm.nowMenit() > dbm.jamMenit(w.tutup))) {
         return fail(res, 403, 'Kedua slot harus memiliki jam pelajaran yang berlaku dan belum terlewat.');
+      }
+      const mulai = dbm.jamMenit(w.sesi.mulai);
+      if (alasanJenis === 'lainnya' && isTujuan && groupTanggal === dbm.today()
+        && (mulai === null || dbm.nowMenit() >= mulai)) {
+        return fail(res, 409, 'Jadwal guru tujuan sudah dimulai. Pilih slot pasangan yang belum masuk jam pelajaran.');
       }
     }
     const alasan = String(b.alasan || '').trim().slice(0, 240);
@@ -2740,6 +2749,9 @@ ${isi}
         return fail(res, 409, 'Permintaan Sakit/Izin harus tetap berada pada dua tanggal mendatang dalam minggu berjalan.');
       }
       const cfgTukar = dbm.jadwalConfig();
+      const targetSlotIds = new Set(db.prepare(`SELECT jadwal_id FROM jadwal_tukar
+        WHERE COALESCE(permintaan_id,id)=? AND dari_guru=?`).all(permintaanId, Number(t.ke_guru))
+        .map(x => Number(x.jadwal_id)));
       const slotPerTanggal = new Map();
       for (const item of slotPasangan) {
         const group = slotPerTanggal.get(item.tanggal) || [];
@@ -2772,6 +2784,12 @@ ${isi}
           if (!window.sesi || window.nonaktif || !window.hariOk
             || (tgl === dbm.today() && dbm.nowMenit() > dbm.jamMenit(window.tutup))) {
             return fail(res, 409, 'Salah satu sesi sudah berakhir atau tidak berlaku. Permintaan tidak dapat diterima.');
+          }
+          const mulai = dbm.jamMenit(window.sesi.mulai);
+          if (alasanJenis === 'lainnya' && tgl === dbm.today()
+            && group.some(item => targetSlotIds.has(Number(item.id)))
+            && (mulai === null || dbm.nowMenit() >= mulai)) {
+            return fail(res, 409, 'Jadwal guru tujuan sudah dimulai. Permintaan tukar tidak dapat diterima.');
           }
         }
       }

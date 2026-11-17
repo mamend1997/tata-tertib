@@ -213,16 +213,11 @@ async function stopServer() {
     /* ============ 3. TUKAR JADWAL MENGAJAR ============ */
     console.log('\n== 3. TUKAR JADWAL MENGAJAR ==');
     await login('admin', 'admin123');
-    r = await req('/api/jadwal');
-    const attendanceFixture = new Database(DB);
-    const slotBHadirTa = attendanceFixture.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(slotBHadir).ta_id;
-    attendanceFixture.prepare(`INSERT INTO absensi_guru
-      (jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,waktu_submit,ip,validasi,created_at,updated_at)
-      VALUES(?,?,?,?,'hadir','','Fixture hadir sebelumnya',?,'test','{}',?,?)`)
-      .run(slotBHadir, TODAY, gB, slotBHadirTa, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`);
-    attendanceFixture.close();
-    ok('fixture guru tujuan memiliki check-in Hadir pada hari yang sama', true);
     await login('gurua', 'guru123');
+    const belumCheckinDb = new Database(DB);
+    const belumCheckin = belumCheckinDb.prepare('SELECT 1 FROM absensi_guru WHERE guru_id=? AND tanggal=? LIMIT 1').get(gB, TODAY);
+    belumCheckinDb.close();
+    ok('guru tujuan belum Check-in Hadir pada hari ini', !belumCheckin);
     r = await req(`/api/tukar-jadwal/kandidat?jadwal_id=${slotA}&tanggal=${TODAY}`);
     ok('kandidat guru pengganti tersedia', r.status === 200 && Array.isArray(r.body.kandidat), r.body?.error);
     const kand = r.body.kandidat || [];
@@ -231,6 +226,11 @@ async function stopServer() {
     ok('guru C (kelas lain) TIDAK muncul', !kand.some(k => Number(k.id) === Number(gC)), JSON.stringify(kand.map(k => k.nama)));
     const kB = kand.find(k => Number(k.id) === Number(gB)) || {};
     ok('kandidat menyertakan mata pelajaran yang diampu', (kB.mapel || []).length >= 1, JSON.stringify(kB.mapel));
+    await login('gurub', 'guru123');
+    r = await req(`/api/tukar-jadwal/kandidat?jadwal_id=${slotB}&tanggal=${TODAY}`);
+    ok('jadwal guru yang sudah dimulai tidak ditawarkan sebagai pasangan, meski belum check-in',
+      !(r.body.kandidat || []).some(k => Number(k.id) === Number(gA)), JSON.stringify(r.body.kandidat || []));
+    await login('gurua', 'guru123');
 
     r = await req('/api/tukar-jadwal', { method: 'POST', body: { jadwal_id: slotA, tanggal: TODAY, ke_guru: gC, alasan: 'uji' } });
     ok('guru yang mengampu kelas lain ditolak server', r.status === 409 && /tidak memiliki slot mapel pasangan/i.test(r.body.error || ''), r.body?.error);

@@ -665,7 +665,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Repeat size={15} />} Kirim Permintaan Tukar Jadwal
         </button>
       </>}>
-      {loading ? <Spinner label="Mencari guru yang mengampu kelas ini…" /> : !data ? null : (
+      {loading ? <Spinner label="Mencari jadwal pasangan pada kelas ini…" /> : !data ? null : (
         <div className="space-y-3" data-modal-tukar>
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-[12px] text-slate-600">
             <p><b>Sesi:</b> {data.slot.mapel_nama} ({data.slot.mapel_kode || '-'}) · sesi {data.slot.sesi} · {data.slot.jam}</p>
@@ -674,7 +674,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
             <p className="mt-1 text-[11.5px] italic text-slate-500">
               {lintasHari
                 ? 'Pertukaran sakit/izin memasangkan dua sesi pada kelas dan jumlah jam yang sama di tanggal berbeda dalam minggu berjalan. Alasan ini bukan catatan absensi.'
-                : 'Pertukaran memasangkan slot guru yang sudah Check-in Hadir pada kelas dan hari yang sama. Alasan harus menjelaskan kendala mengajar, bukan Izin atau Sakit.'}
+                : 'Pertukaran memasangkan slot pada kelas dan hari yang sama yang belum dimulai. Guru tujuan tidak perlu Check-in. Alasan harus menjelaskan kendala mengajar, bukan Izin atau Sakit.'}
             </p>
           </div>
 
@@ -698,7 +698,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           <Field label="Guru Tujuan" required
             hint={lintasHari
               ? 'Guru tujuan harus memiliki slot pada tanggal berbeda di minggu ini, untuk kelas dan jumlah jam yang sama.'
-              : 'Guru tujuan harus sudah Check-in Hadir hari ini dan memiliki slot pasangan pada kelas yang sama.'}>
+              : 'Guru tujuan tidak perlu Check-in, tetapi jam slot pasangannya hari ini belum boleh dimulai.'}>
             <select className="input" value={guruId} onChange={e => setGuruId(e.target.value)} data-pilih-guru-tukar>
               <option value="">— pilih guru —</option>
               {kandidat.map(k => (
@@ -709,10 +709,10 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
             </select>
           </Field>
           {!kandidat.length ? (
-            <Alert tone="warn" title="Belum ada guru lain yang mengampu kelas ini">
+            <Alert tone="warn" title="Belum ada jadwal pasangan yang tersedia di kelas ini">
               {lintasHari
                 ? 'Pastikan ada guru lain dengan slot pada tanggal mendatang di minggu ini, pada kelas dan jumlah jam yang sama.'
-                : 'Pastikan guru lain sudah Check-in Hadir hari ini dan memiliki slot mapel pada kelas yang sama.'}
+                : 'Slot pasangan harus pada kelas yang sama, jumlah jamnya sama, belum dimulai, dan belum dibuka/diisi absensinya.'}
             </Alert>
           ) : null}
 

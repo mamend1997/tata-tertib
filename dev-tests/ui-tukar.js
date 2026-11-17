@@ -104,13 +104,10 @@ const ok = (name, cond, extra) => {
     ok('data uji siap (2 guru satu kelas + 1 guru kelas lain)', !!setup.slotA && !!setup.gB);
     const Database = require('better-sqlite3');
     const fixture = new Database(DB);
-    const fixtureTa = fixture.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(setup.slotHadir).ta_id;
-    fixture.prepare(`INSERT INTO absensi_guru
-      (jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,waktu_submit,ip,validasi,created_at,updated_at)
-      VALUES(?,?,?,?,'hadir','','Fixture hadir sebelumnya',?,'test','{}',?,?)`)
-      .run(setup.slotHadir, TODAY, setup.gB, fixtureTa, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`, `${TODAY} 06:00:00`);
+    const checkinGuruB = fixture.prepare('SELECT 1 FROM absensi_guru WHERE guru_id=? AND tanggal=? LIMIT 1')
+      .get(setup.gB, TODAY);
     fixture.close();
-    ok('guru tujuan sudah berstatus Hadir pada slot lain hari ini', true);
+    ok('guru tujuan belum Check-in Hadir saat pertukaran diajukan', !checkinGuruB);
 
     /* ---------------- 1. guru A melihat tombol Tukar Jadwal ---------------- */
     await login('gurua', 'guru123');
