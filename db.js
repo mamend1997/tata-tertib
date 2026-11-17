@@ -226,6 +226,20 @@ CREATE INDEX IF NOT EXISTS idx_tukar_slot ON jadwal_tukar(jadwal_id, tanggal, st
 CREATE INDEX IF NOT EXISTS idx_tukar_guru ON jadwal_tukar(ke_guru, status, tanggal);
 `;
 
+/* Pengecualian KBM reguler per slot dan tanggal; jadwal mingguan tetap utuh. */
+const JADWAL_KBM_NONAKTIF_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS jadwal_kbm_nonaktif (
+  jadwal_id INTEGER NOT NULL,
+  tanggal TEXT NOT NULL,
+  alasan TEXT NOT NULL,
+  dibuat_oleh INTEGER,
+  dibuat_nama TEXT,
+  created_at TEXT,
+  PRIMARY KEY (jadwal_id, tanggal)
+);
+CREATE INDEX IF NOT EXISTS idx_jadwal_kbm_nonaktif_tanggal ON jadwal_kbm_nonaktif(tanggal, jadwal_id);
+`;
+
 /* REKAM KETIDAKHADIRAN GURU pada satu slot/tanggal (Sakit/Izin/Alpha).
    Dipisah dari absensi_guru karena absensi_guru hanya boleh satu baris per
    (jadwal,tanggal): bila kurikulum menunjuk GURU PENGGANTI, baris ketidakhadiran
@@ -700,6 +714,7 @@ function runMigrations() {
     ensureColumn('kalender_akademik', 'warna', 'TEXT');
     /* permintaan tukar jadwal mengajar (temporer per tanggal) */
     db.exec(TUKAR_SCHEMA_SQL);
+    db.exec(JADWAL_KBM_NONAKTIF_SCHEMA_SQL);
     /* kolom penunjukan pengganti (DB sekolah yang sudah berjalan) */
     ensureColumn('jadwal_tukar', 'jenis', "TEXT DEFAULT 'tukar'");
     ensureColumn('jadwal_tukar', 'dibuat_oleh', 'INTEGER');
@@ -742,6 +757,7 @@ function runMigrations() {
         AND EXISTS(SELECT 1 FROM tahun_ajaran)`);
     /* permintaan tukar yang menunjuk slot jadwal yang sudah tidak ada */
     db.exec('DELETE FROM jadwal_tukar WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
+    db.exec('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
     db.exec('DELETE FROM absensi_guru_abaikan WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
     /* ABSENSI YATIM: slot jadwal yang DIHAPUS meninggalkan baris absensi guru
        (termasuk ALFA otomatis) & rekam izin yang tidak punya jadwal lagi.
@@ -1800,6 +1816,7 @@ function tahunDelete(id, user, opts = {}) {
       hapus += db.prepare('DELETE FROM absensi_sesi WHERE ta_id=?').run(n).changes;
       hapus += db.prepare('DELETE FROM absensi_guru WHERE ta_id=?').run(n).changes;
       hapus += db.prepare('DELETE FROM jadwal_tukar WHERE ta_id=? OR jadwal_id IN (SELECT id FROM jadwal WHERE ta_id=?)').run(n, n).changes;
+      hapus += db.prepare('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id IN (SELECT id FROM jadwal WHERE ta_id=?)').run(n).changes;
       hapus += db.prepare('DELETE FROM jadwal WHERE ta_id=?').run(n).changes;
       /* siswa & kelas milik tahun pelajaran ini */
       hapus += db.prepare('DELETE FROM siswa WHERE tahun_ajaran_id=?').run(n).changes;
@@ -4413,6 +4430,11 @@ function absensiMapelHari(rows, tukar = new Map()) {
     rows: group.rows.sort((a, b) => Number(a.sesi) - Number(b.sesi))
   }));
 }
+function jadwalKbmNonaktifMap(tanggal) {
+  const tgl = String(tanggal || today()).slice(0, 10);
+  return new Map(db.prepare('SELECT * FROM jadwal_kbm_nonaktif WHERE tanggal=?').all(tgl)
+    .map(row => [Number(row.jadwal_id), row]));
+}
 /** Jendela absensi bersama untuk rentang sesi berurutan. */
 function absensiWindowKelompok(items, tanggal, cfg) {
   if (!Array.isArray(items) || !items.length) {
@@ -4572,6 +4594,7 @@ function autoAlfaGuru(tanggal) {
   /* TUKAR JADWAL: slot yang sudah ditukar untuk tanggal ini menjadi tanggung
      jawab guru pengganti — guru asli tidak boleh tercatat ALFA. */
   const tukar = tukarMap(tgl);
+  const nonaktif = jadwalKbmNonaktifMap(tgl);
   const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")
     .all(tgl).map(row => Number(row.jadwal_id)));
   const guruEfektif = (r) => {
@@ -4592,6 +4615,7 @@ function autoAlfaGuru(tanggal) {
       const tutup = jamMenit(w.tutup);
       if (tutup === null || kini <= tutup) continue;   // jendela masih berjalan / belum mulai
       const ids = items.map(x => Number(x.id));
+      if (ids.some(id => nonaktif.has(id))) continue;
       if (ids.some(id => pendingTukar.has(id))) {
         const autoRows = db.prepare(`SELECT id,validasi FROM absensi_guru
           WHERE tanggal=? AND status='alpha' AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
@@ -4626,6 +4650,7 @@ function autoAlfaGuru(tanggal) {
        jam pelajaran berakhir → status diturunkan menjadi alpha (terkunci). */
     for (const items of kelompok.values()) {
       const ids = items.map(x => Number(x.id));
+      if (ids.some(id => nonaktif.has(id))) continue;
       if (ids.some(id => pendingTukar.has(id))) continue;
       const rows = db.prepare(`SELECT * FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
         .all(tgl, ...ids);
@@ -4667,6 +4692,7 @@ function absensiGuruRekap(tanggal, taId) {
   const abs = db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?')
     .all(tgl, Number(taId) || 0);
   const absMap = new Map(abs.map(a => [Number(a.jadwal_id), a]));
+  const nonaktif = jadwalKbmNonaktifMap(tgl);
   const diabaikan = new Set(db.prepare('SELECT jadwal_id FROM absensi_guru_abaikan WHERE tanggal=?').all(tgl)
     .map(row => Number(row.jadwal_id)));
   const tukar = tukarMap(tgl);
@@ -4677,6 +4703,7 @@ function absensiGuruRekap(tanggal, taId) {
     const group = mapelHari.rows;
     const s = group[0];
     const ids = group.map(x => Number(x.id));
+    if (ids.some(id => nonaktif.has(id))) continue;
     const t = tukar.get(Number(s.id));
     const gid = mapelHari.guru_id;
     const penugasanPengganti = group.some(slot => {
@@ -4851,6 +4878,7 @@ module.exports = {
   HARI_LABEL, DEFAULT_HARI, DEFAULT_SESI, ABSENSI_SISWA_STATUS, ABSENSI_GURU_STATUS,
   jamMenit, menitJam, nowMenit, hariOf, tanggalPanjang, jadwalConfig, jadwalDesain, jadwalTampil, normSesi, sesiBernomor, sesiHariMap, sesiOfHari, mapelList,
   jadwalRows, jadwalKelasIds, jadwalConflict, absensiWindow, absensiKelompok, absensiMapelHari, absensiWindowKelompok, absensiRentangSesi,
+  jadwalKbmNonaktifMap,
   absensiGuruOf, absensiGuruRekap, autoAlfaGuru, absensiAlur,
   targetJamConfig, kelasTargetJam, bebanKelas, targetKelasRows,
   guruTargetMap, guruTargetRows, guruTargetSave, hariEfektifBulan,

@@ -92,8 +92,13 @@ const BULAN = TODAY.slice(0, 7);
       method: 'POST', body: { nama: 'Guru Monitor C', username: 'gurumonitorc', password: 'guru123', role: 'guru_umum', roles: ['guru'] }
     });
     const gC = r.body?.id;
+    const wakasekFixture = await req('/api/users/save', {
+      method: 'POST', body: { nama: 'Wakasek Kurikulum Uji', username: 'wakasek', password: 'guru123', role: 'wakasek_kurikulum' }
+    });
     const kelas = (await req('/api/jadwal')).body.kelas || [];
-    ok('3 guru & 2 kelas tersedia', !!gA && !!gB && !!gC && kelas.length >= 2);
+    ok('3 guru, Wakasek Kurikulum, & 2 kelas tersedia',
+      !!gA && !!gB && !!gC && wakasekFixture.status === 200 && kelas.length >= 2,
+      wakasekFixture.body?.error);
 
     const mapelId = async (nama, kode, guruId) => (await req('/api/mapel/save', {
       method: 'POST', body: { nama, kode, guru_ids: [guruId] }
@@ -136,6 +141,58 @@ const BULAN = TODAY.slice(0, 7);
     ok('duplikat slot tidak ada → 404', r.status === 404, r.status);
     /* hapus hasil duplikat agar data uji bersih */
     await req(`/api/jadwal/slot/${idDup}`, { method: 'DELETE' });
+
+    /* pengecualian hanya untuk tanggal terpilih dan seluruh rentang mapel */
+    r = await req('/api/monitor-kbm/nonaktif', {
+      method: 'POST', body: { jadwal_id: sC, tanggal: TODAY, alasan: 'Sosialisasi program sekolah' }
+    });
+    ok('admin menonaktifkan KBM sebelum jam pelajaran dimulai', r.status === 200
+      && (r.body.jadwal_ids || []).includes(Number(sC)), r.body?.error);
+    const monitorNonaktif = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${TODAY}`);
+    const slotNonaktif = (monitorNonaktif.body.monitor_jadwal || []).find(x => Number(x.jadwal_id) === Number(sC));
+    ok('matriks menandai slot nonaktif beserta alasan', slotNonaktif?.nonaktif === true
+      && slotNonaktif.nonaktif_alasan === 'Sosialisasi program sekolah'
+      && slotNonaktif.status_label === 'KBM tidak berlaku', JSON.stringify(slotNonaktif));
+    ok('slot nonaktif dikeluarkan dari statistik kehadiran', Number(monitorNonaktif.body.stats.slot) === 2,
+      JSON.stringify(monitorNonaktif.body.stats));
+    const absGuruNonaktif = await req(`/api/absensi-guru?tanggal=${TODAY}`);
+    ok('slot nonaktif tidak muncul di daftar absensi guru',
+      !(absGuruNonaktif.body.jadwal_hari || []).some(x => Number(x.id) === Number(sC)));
+    const absSiswaNonaktif = await req(`/api/absensi-siswa?tanggal=${TODAY}`);
+    ok('slot nonaktif tidak muncul di daftar presensi siswa',
+      !(absSiswaNonaktif.body.jadwal || []).some(x => Number(x.id) === Number(sC)));
+    const checkinNonaktif = await req('/api/absensi-guru/checkin', {
+      method: 'POST', body: { jadwal_id: sC, tanggal: TODAY, status: 'hadir' }
+    });
+    ok('server menolak check-in pada slot nonaktif', checkinNonaktif.status === 409
+      && checkinNonaktif.body?.kbm_nonaktif === true, checkinNonaktif.body?.error);
+    const rekapNonaktif = await req(`/api/rekap/absensi-guru?periode=custom&dari=${TODAY}&sampai=${TODAY}&guru=${gA.id}&mapel=${m1}`);
+    ok('slot nonaktif tidak dihitung pada rekap absensi guru',
+      !(rekapNonaktif.body.rows || []).some(x => (x.jadwal_ids || [x.jadwal_id]).map(Number).includes(Number(sC))));
+    const nextWeekDate = new Date(`${TODAY}T12:00:00`);
+    nextWeekDate.setDate(nextWeekDate.getDate() + 7);
+    const nextWeek = `${nextWeekDate.getFullYear()}-${pad(nextWeekDate.getMonth() + 1)}-${pad(nextWeekDate.getDate())}`;
+    await login('kepsek', 'kepsek123');
+    const kepalaNonaktif = await req('/api/monitor-kbm/nonaktif', {
+      method: 'POST', body: { jadwal_id: sA, tanggal: nextWeek, alasan: 'Kegiatan kepala sekolah' }
+    });
+    ok('Kepala Sekolah berhak menonaktifkan KBM', kepalaNonaktif.status === 200, kepalaNonaktif.body?.error);
+    await login('wakasek', 'guru123');
+    const kurikulumNonaktif = await req('/api/monitor-kbm/nonaktif', {
+      method: 'POST', body: { jadwal_id: sB, tanggal: nextWeek, alasan: 'Rapat kurikulum sekolah' }
+    });
+    ok('Wakasek Kurikulum berhak menonaktifkan KBM', kurikulumNonaktif.status === 200, kurikulumNonaktif.body?.error);
+    await login('guru', 'guru123');
+    const guruNonaktif = await req('/api/monitor-kbm/nonaktif', {
+      method: 'POST', body: { jadwal_id: sA, tanggal: nextWeek, alasan: 'Permintaan guru' }
+    });
+    ok('guru biasa tidak berhak menonaktifkan KBM', guruNonaktif.status === 403, guruNonaktif.body?.error);
+    await login('admin', 'admin123');
+    const monitorPekanDepan = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${nextWeek}`);
+    const slotPekanDepan = (monitorPekanDepan.body.monitor_jadwal || []).find(x => Number(x.jadwal_id) === Number(sC));
+    ok('jadwal normal kembali aktif pada pekan berikutnya',
+      !!slotPekanDepan && slotPekanDepan.nonaktif === false && slotPekanDepan.status_label !== 'KBM tidak berlaku',
+      JSON.stringify(slotPekanDepan));
 
     /* ganti sC dengan tiga jam berurutan pada mapel/kelas/guru yang sama */
     r = await req(`/api/jadwal/slot/${sC}`, { method: 'DELETE' });

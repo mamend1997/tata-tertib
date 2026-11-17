@@ -399,6 +399,7 @@ module.exports = function mount(api) {
         db.prepare(`DELETE FROM absensi_siswa WHERE sesi_id IN (${ph})`).run(...sesiIds);
         db.prepare(`DELETE FROM absensi_sesi WHERE id IN (${ph})`).run(...sesiIds);
       }
+      db.prepare('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id IN (SELECT id FROM jadwal WHERE mapel_id=?)').run(id);
       db.prepare('DELETE FROM jadwal WHERE mapel_id=?').run(id);
       db.prepare('DELETE FROM guru_mapel WHERE mapel_id=?').run(id);
       db.prepare('DELETE FROM mapel WHERE id=?').run(id);
@@ -801,6 +802,7 @@ module.exports = function mount(api) {
       db.prepare(`DELETE FROM absensi_sesi WHERE id IN (${ph})`).run(...sesiIds);
     }
     db.prepare('DELETE FROM jadwal_tukar WHERE jadwal_id=?').run(Number(row.id));
+    db.prepare('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id=?').run(Number(row.id));
     db.prepare('DELETE FROM jadwal WHERE id=?').run(Number(row.id));
   };
   const hapusSlotJadwal = (rows, user, req, res, keterangan) => {
@@ -1023,7 +1025,10 @@ module.exports = function mount(api) {
     const hasil = { masuk: 0, dilewati: 0, mapelBaru: 0 };
     const cfg = dbm.jadwalConfig();
     db.transaction(() => {
-      if (mode === 'ganti') db.prepare('DELETE FROM jadwal WHERE ta_id=?').run(taId);
+      if (mode === 'ganti') {
+        db.prepare('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id IN (SELECT id FROM jadwal WHERE ta_id=?)').run(taId);
+        db.prepare('DELETE FROM jadwal WHERE ta_id=?').run(taId);
+      }
       for (const r of rows) {
         if (r.status === 'error') { hasil.dilewati++; continue; }
         let mapelId = r.mapel_id;
@@ -1737,6 +1742,16 @@ ${isi}
       selesai: list.every(a => a.selesai), group: list
     };
   };
+  const nonaktifKbmUntuk = (jadwalIds, tanggal) => {
+    const nonaktif = dbm.jadwalKbmNonaktifMap(tanggal);
+    return (jadwalIds || []).map(id => nonaktif.get(Number(id))).find(Boolean) || null;
+  };
+  const tolakNonaktifKbm = (res, jadwalIds, tanggal) => {
+    const row = nonaktifKbmUntuk(jadwalIds, tanggal);
+    if (!row) return false;
+    fail(res, 409, `KBM reguler pada slot ini dinonaktifkan: ${row.alasan}`, { kbm_nonaktif: true });
+    return true;
+  };
   get('/api/absensi-guru', (req, res, q) => {
     const user = guard(req, res, 'absensi_guru', 'view'); if (!user) return;
     const taId = taOf(q);
@@ -1763,6 +1778,8 @@ ${isi}
         if (coba.length) { semua = coba; taPakai = Number(id); break; }
       }
     }
+    const nonaktifKbm = dbm.jadwalKbmNonaktifMap(tanggal);
+    semua = semua.filter(r => !nonaktifKbm.has(Number(r.id)));
     const abs = db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?').all(tanggal, taPakai);
     const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")
       .all(tanggal).map(a => Number(a.jadwal_id)));
@@ -1903,9 +1920,10 @@ ${isi}
       const tanggal = isoAddDays(mulai, i);
       const hari = dbm.hariOf(tanggal);
       const tukarHari = dbm.tukarMap(tanggal);
+      const nonaktifKbm = dbm.jadwalKbmNonaktifMap(tanggal);
       const absMap = new Map(db.prepare('SELECT * FROM absensi_guru WHERE tanggal=?').all(tanggal)
         .map(a => [Number(a.jadwal_id), a]));
-      const jadwalHari = semua.filter(r => Number(r.hari) === hari);
+      const jadwalHari = semua.filter(r => Number(r.hari) === hari && !nonaktifKbm.has(Number(r.id)));
       const slots = jadwalHari.map(r => {
         const group = kelompokJadwal(r, jadwalHari, cfgHari);
         const tukar = tukarHari.get(Number(r.id)) || null;
@@ -2021,6 +2039,7 @@ ${isi}
     }
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(b)).filter(r => Number(r.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, cfg);
+    if (tolakNonaktifKbm(res, group.map(x => x.id), tanggal)) return;
     const w = jendelaKelompok(group, tanggal, cfg);
     if (!w.aktif) {
       return fail(res, 403, `Tombol absensi hanya aktif selama jam pelajaran berlangsung — ${w.alasan}`, { window: w });
@@ -2086,6 +2105,7 @@ ${isi}
     }
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(q)).filter(r => Number(r.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, dbm.jadwalConfig());
+    if (tolakNonaktifKbm(res, group.map(x => x.id), tanggal)) return;
     const alur = alurKelompok(group, tanggal);
     const sesi = alur.absensi_siswa.sesi_id
       ? db.prepare('SELECT token FROM absensi_sesi WHERE id=?').get(alur.absensi_siswa.sesi_id) : null;
@@ -2106,6 +2126,7 @@ ${isi}
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || '')) ? String(b.tanggal) : dbm.today();
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(b)).filter(r => Number(r.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, dbm.jadwalConfig());
+    if (tolakNonaktifKbm(res, group.map(x => x.id), tanggal)) return;
     const absMap = new Map(db.prepare(`SELECT * FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${group.map(() => '?').join(',')})`)
       .all(tanggal, ...group.map(x => Number(x.id))).map(a => [Number(a.jadwal_id), a]));
     const absList = group.map(x => absMap.get(Number(x.id))).filter(Boolean);
@@ -2195,6 +2216,7 @@ ${isi}
     if (Number(row.hari) !== dbm.hariOf(tanggal)) {
       return fail(res, 403, `Jadwal ini untuk hari ${dbm.HARI_LABEL[Number(row.hari)] || '-'}, bukan hari ini.`);
     }
+    if (tolakNonaktifKbm(res, [jadwalId], tanggal)) return;
     /* 3) kepemilikan slot — guru hanya boleh mengabsen slot miliknya
        (slot hasil TUKAR JADWAL menjadi milik guru pengganti pada tanggal itu) */
     const tukarIni = dbm.tukarAktif(row.id, tanggal);
@@ -3839,6 +3861,7 @@ ${isi}
     const tukarHari = dbm.tukarMap(tanggal);
     const sesiRows = db.prepare('SELECT * FROM absensi_sesi WHERE tanggal=?').all(tanggal);
     const sesiMap = new Map(sesiRows.map(s => [Number(s.jadwal_id), s]));
+    const nonaktifKbm = dbm.jadwalKbmNonaktifMap(tanggal);
     const hitung = new Map();
     if (sesiRows.length) {
       const ph = sesiRows.map(() => '?').join(',');
@@ -3850,6 +3873,7 @@ ${isi}
     }
     const terlihat = semua
       .filter(r => {
+        if (nonaktifKbm.has(Number(r.id))) return false;
         if (lihatSemua) return true;
         const t = tukarHari.get(Number(r.id));
         const guruEfektif = t ? Number(t.ke_guru) : Number(r.guru_id);
@@ -3927,6 +3951,7 @@ ${isi}
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf({}))
       .filter(x => Number(x.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, dbm.jadwalConfig());
+    if (tolakNonaktifKbm(res, group.map(x => x.id), tanggal)) return;
     const wSesi = dbm.absensiWindowKelompok(group, tanggal, dbm.jadwalConfig());
     if (wSesi.sesi && dbm.nowMenit() > dbm.jamMenit(wSesi.tutup)) {
       return fail(res, 403, `Sesi presensi sudah DITUTUP — ${wSesi.alasan}`, { terkunci: true });
@@ -3958,6 +3983,7 @@ ${isi}
     if (!sesi) return fail(res, 404, 'Sesi presensi belum dibuat untuk slot ini.');
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(sesi.jadwal_id));
     if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
+    if (tolakNonaktifKbm(res, [row.id], sesi.tanggal)) return;
     if (!sesiBolehKelola(user, row, sesi.tanggal)) return fail(res, 403, 'Anda tidak berhak membuka sesi presensi kelas ini.');
     if (!checkinHadirGuru(user, row, sesi.tanggal)) {
       return fail(res, 403, 'Lakukan Check-in Hadir pada Absensi Guru terlebih dahulu sebelum membuka presensi siswa.');
@@ -3978,6 +4004,7 @@ ${isi}
     if (!sesi) return fail(res, 404, 'Sesi presensi tidak ditemukan.');
     const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(sesi.jadwal_id));
     if (!row || !sesiBolehTulisPresensi(user, row, sesi.tanggal)) return fail(res, 403, 'Anda tidak berhak mengisi presensi kelas ini.');
+    if (tolakNonaktifKbm(res, [row.id], sesi.tanggal)) return;
     if (!checkinHadirGuru(user, row, sesi.tanggal)) {
       return fail(res, 403, 'Lakukan Check-in Hadir pada Absensi Guru terlebih dahulu sebelum mengisi presensi siswa.');
     }
@@ -4251,6 +4278,7 @@ ${isi}
   get('/api/public/presensi/:token', (req, res, q, params) => {
     const found = dbm.absensiSesiByToken(params.token);
     if (!found) return fail(res, 404, 'Tautan presensi tidak ditemukan atau sudah tidak berlaku.');
+    if (tolakNonaktifKbm(res, [found.sesi.jadwal_id], found.sesi.tanggal)) return;
     const cfg = dbm.jadwalConfig();
     if (!cfg.siswaAktif) return fail(res, 403, 'Pengisian presensi oleh ketua kelas sedang dinonaktifkan sekolah.');
     const detail = sesiDetail(req, found.sesi, { auth: false });
@@ -4260,6 +4288,7 @@ ${isi}
   post('/api/public/presensi/:token', async (req, res, q, params) => {
     const found = dbm.absensiSesiByToken(params.token);
     if (!found) return fail(res, 404, 'Tautan presensi tidak ditemukan atau sudah tidak berlaku.');
+    if (tolakNonaktifKbm(res, [found.sesi.jadwal_id], found.sesi.tanggal)) return;
     const cfg = dbm.jadwalConfig();
     if (!cfg.siswaAktif) return fail(res, 403, 'Pengisian presensi oleh ketua kelas sedang dinonaktifkan sekolah.');
     const detail = sesiDetail(req, found.sesi, { auth: false });
@@ -4392,6 +4421,7 @@ ${isi}
     const cfg = dbm.jadwalConfig();
     const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(q)).filter(x => Number(x.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, cfg);
+    if (tolakNonaktifKbm(res, group.map(x => x.id), tanggal)) return;
     const alurList = group.map(slot => ({ slot, alur: dbm.absensiAlur(slot.id, tanggal) }));
     if (alurList.some(x => x.alur.status !== 'hadir' || !x.alur.selesai)) {
       return fail(res, 409, 'Pratinjau hanya tersedia setelah absensi siswa, jurnal, dan dokumentasi wajib selesai.');
@@ -4446,6 +4476,78 @@ ${isi}
     });
   });
 
+  post('/api/monitor-kbm/nonaktif', async (req, res) => {
+    const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return;
+    const roles = dbm.userRoleList(user);
+    if (!roles.some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role))) {
+      return fail(res, 403, 'Hanya Admin, Kepala Sekolah, atau Wakasek Kurikulum yang dapat menonaktifkan KBM.');
+    }
+    const b = await readBody(req);
+    const jadwalId = Number(b.jadwal_id) || 0;
+    const tanggal = String(b.tanggal || '').slice(0, 10);
+    const alasan = String(b.alasan || '').trim();
+    const tanggalDate = new Date(`${tanggal}T12:00:00`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || Number.isNaN(tanggalDate.getTime())
+      || tanggalDate.toISOString().slice(0, 10) !== tanggal) {
+      return fail(res, 400, 'Tanggal matriks tidak valid.');
+    }
+    if (tanggal < dbm.today()) return fail(res, 400, 'KBM hanya dapat dinonaktifkan sebelum tanggal pembelajaran.');
+    if (alasan.length < 5 || alasan.length > 500) {
+      return fail(res, 400, 'Alasan penonaktifan wajib berisi 5–500 karakter.');
+    }
+    const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jadwalId);
+    if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
+    if (Number(row.hari) !== dbm.hariOf(tanggal)) {
+      return fail(res, 400, 'Tanggal yang dipilih tidak sesuai dengan hari jadwal mapel.');
+    }
+    if (dbm.kalenderNonaktif(tanggal)) {
+      return fail(res, 409, 'KBM reguler pada tanggal ini sudah dinonaktifkan melalui Kalender Akademik.');
+    }
+    const cfg = dbm.jadwalConfig();
+    const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(b)).filter(x => Number(x.hari) === Number(row.hari));
+    const group = kelompokJadwal(row, semua, cfg);
+    if (!group.length) return fail(res, 404, 'Rentang mapel pada jadwal ini tidak ditemukan.');
+    const ids = group.map(x => Number(x.id));
+    const inSql = ids.map(() => '?').join(',');
+    const waktu = dbm.absensiWindowKelompok(group, tanggal, cfg);
+    const mulai = waktu.sesi ? dbm.jamMenit(waktu.sesi.mulai) : null;
+    if (tanggal === dbm.today() && mulai !== null && dbm.nowMenit() >= mulai) {
+      return fail(res, 409, 'KBM tidak dapat dinonaktifkan karena rentang mapel sudah dimulai.');
+    }
+    if (db.prepare(`SELECT 1 FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${inSql}) LIMIT 1`)
+      .get(tanggal, ...ids)
+      || db.prepare(`SELECT 1 FROM absensi_guru_izin WHERE tanggal=? AND jadwal_id IN (${inSql}) LIMIT 1`)
+        .get(tanggal, ...ids)
+      || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${inSql}) LIMIT 1`)
+        .get(tanggal, ...ids)) {
+      return fail(res, 409, 'Rentang mapel sudah memiliki check-in atau sesi presensi sehingga tidak dapat dinonaktifkan.');
+    }
+    if (db.prepare(`SELECT 1 FROM jadwal_tukar WHERE tanggal=? AND jadwal_id IN (${inSql})
+      AND status IN ('pending','diterima') LIMIT 1`).get(tanggal, ...ids)) {
+      return fail(res, 409, 'Batalkan atau selesaikan pertukaran/penggantian jadwal sebelum menonaktifkan KBM.');
+    }
+    const nonaktifAda = dbm.jadwalKbmNonaktifMap(tanggal);
+    if (ids.some(id => nonaktifAda.has(id))) {
+      return fail(res, 409, 'Rentang mapel sudah dinonaktifkan.');
+    }
+    const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(Number(row.mapel_id)) || {};
+    const kelas = group[0].kelas_nama || '';
+    const insert = db.prepare(`INSERT INTO jadwal_kbm_nonaktif
+      (jadwal_id,tanggal,alasan,dibuat_oleh,dibuat_nama,created_at) VALUES(?,?,?,?,?,?)`);
+    db.transaction(() => {
+      for (const slot of group) {
+        insert.run(Number(slot.id), tanggal, alasan, Number(user.id) || 0, String(user.nama || ''), dbm.now());
+      }
+    })();
+    dbm.logAudit(user, 'UBAH', 'monitor_kbm',
+      `KBM dinonaktifkan sementara: ${mapel.nama || 'mapel'} ${kelas ? `kelas ${kelas}` : ''} `
+      + `(${waktu.sesi ? `${waktu.sesi.mulai}–${waktu.selesai}` : ''}, ${tanggal}) — ${alasan}`, ipOf(req));
+    json(res, 200, {
+      ok: true, tanggal, jadwal_ids: ids, alasan,
+      pesan: `KBM ${mapel.nama || 'mapel'} pada ${waktu.sesi ? `${waktu.sesi.mulai}–${waktu.selesai}` : tanggal} dinonaktifkan untuk tanggal ini saja.`
+    });
+  });
+
   get('/api/monitor-kbm', (req, res, q) => {
     const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return;
     const cfg = dbm.jadwalConfig();
@@ -4479,6 +4581,9 @@ ${isi}
       .map(a => [Number(a.jadwal_id), a]));
     const izinMap = new Map(db.prepare('SELECT * FROM absensi_guru_izin WHERE tanggal=?').all(tanggal)
       .map(a => [Number(a.jadwal_id), a]));
+    const nonaktifUtama = dbm.jadwalKbmNonaktifMap(tanggal);
+    const nonaktifMatriks = tanggalMatriks === tanggal
+      ? nonaktifUtama : dbm.jadwalKbmNonaktifMap(tanggalMatriks);
     const tukar = dbm.tukarMap(tanggal);
     const kal = dbm.kalenderOfDate(tanggal);
     const kbmLibur = !!(kal && Number(kal.nonaktif) === 1);
@@ -4538,7 +4643,7 @@ ${isi}
         diawasi: !!iz
       };
     };
-    const slot = semua.filter(r => !r.istirahat).map(r => jumlahkan(r));
+    const slot = semua.filter(r => !r.istirahat && !nonaktifUtama.has(Number(r.id))).map(r => jumlahkan(r));
     const absMapMatriks = tanggalMatriks === tanggal ? absMap
       : new Map(db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?').all(tanggalMatriks, taMatriks)
         .map(a => [Number(a.jadwal_id), a]));
@@ -4560,9 +4665,12 @@ ${isi}
       });
       for (const slot of group) {
         const x = jumlahkan(slot, tanggalMatriks, absMapMatriks, izinMapMatriks, tukarMatriks, kiniMatriks);
+        const pengecualian = nonaktifMatriks.get(Number(slot.id));
         monitorJadwal.push({
           ...x, group_ids: groupIds, preview_primary: Number(slot.id) === Number(group[0].id),
-          alur_selesai: alurSelesai, status_label: alurSelesai ? 'Selesai' : x.status_label
+          nonaktif: !!pengecualian, nonaktif_alasan: pengecualian?.alasan || '',
+          alur_selesai: alurSelesai && !pengecualian,
+          status_label: pengecualian ? 'KBM tidak berlaku' : (alurSelesai ? 'Selesai' : x.status_label)
         });
       }
     }
@@ -4646,6 +4754,8 @@ ${isi}
       tanggal_matriks: tanggalMatriks, tanggal_matriks_label: dbm.tanggalPanjang(tanggalMatriks),
       hari_matriks: hariMatriks, hari_matriks_label: dbm.HARI_LABEL[hariMatriks] || '', ta_matriks: taMatriks,
       kbm_libur: kbmLibur,
+      boleh_nonaktifkan: dbm.userRoleList(user)
+        .some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role)),
       kalender: kal ? {
         id: kal.id, kategori: kal.kategori, label: dbm.KALENDER_KATEGORI_LABEL[kal.kategori] || '',
         judul: kal.judul || '', keterangan: kal.keterangan || '', nonaktif: Number(kal.nonaktif)

@@ -118,12 +118,14 @@ module.exports = function mount(api) {
       const hari = dbm.hariOf(d);
       const slotsHari = slots.filter(s => Number(s.hari) === hari);
       const tukar = dbm.tukarMap(d);
+      const nonaktifKbm = dbm.jadwalKbmNonaktifMap(d);
       const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")
         .all(d).map(x => Number(x.jadwal_id)));
       for (const mapelHari of dbm.absensiMapelHari(slotsHari, tukar)) {
         const group = mapelHari.rows;
         const s = group[0];
         const ids = group.map(x => Number(x.id));
+        if (ids.some(id => nonaktifKbm.has(id))) continue;
         const t = tukar.get(Number(s.id));
         const effectiveGuruId = mapelHari.guru_id;
         const effectiveMapelId = mapelHari.mapel_id;

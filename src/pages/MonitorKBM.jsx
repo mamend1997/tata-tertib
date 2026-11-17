@@ -33,6 +33,9 @@ export default function MonitorKBM({ ctx }) {
   const [previewSlot, setPreviewSlot] = useState(null);
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [nonaktifTarget, setNonaktifTarget] = useState(null);
+  const [alasanNonaktif, setAlasanNonaktif] = useState('');
+  const [nonaktifBusy, setNonaktifBusy] = useState(false);
   const ta = filters?.ta || '';
 
   const load = useCallback((silent = false) => {
@@ -118,6 +121,37 @@ export default function MonitorKBM({ ctx }) {
   function tutupPratinjau() {
     setPreviewSlot(null);
     setPreviewData(null);
+  }
+  function bukaNonaktifkan(x) {
+    setNonaktifTarget(x);
+    setAlasanNonaktif('');
+  }
+  function tutupNonaktifkan() {
+    if (nonaktifBusy) return;
+    setNonaktifTarget(null);
+    setAlasanNonaktif('');
+  }
+  async function simpanNonaktifkan() {
+    if (!nonaktifTarget || alasanNonaktif.trim().length < 5) {
+      toast.err('Alasan penonaktifan wajib diisi minimal 5 karakter.');
+      return;
+    }
+    setNonaktifBusy(true);
+    try {
+      const r = await api('/api/monitor-kbm/nonaktif', {
+        method: 'POST',
+        body: {
+          jadwal_id: nonaktifTarget.jadwal_id,
+          tanggal: d?.tanggal_matriks || tanggalMatriks,
+          alasan: alasanNonaktif.trim()
+        }
+      });
+      toast.ok(r.pesan || 'KBM reguler dinonaktifkan untuk tanggal ini.');
+      setNonaktifTarget(null);
+      setAlasanNonaktif('');
+      load(true);
+    } catch (e) { toast.err(e.message); }
+    finally { setNonaktifBusy(false); }
   }
 
   return (
@@ -259,6 +293,12 @@ export default function MonitorKBM({ ctx }) {
                               {x.status_label}
                             </span>
                             {x.status_detail ? <span className="ml-1 text-[10px] capitalize text-slate-500">{x.status_detail}</span> : null}
+                            {x.nonaktif ? (
+                              <p className="mt-1 text-[10px] font-semibold text-amber-800"
+                                data-monitor-nonaktif-alasan={x.jadwal_id}>
+                                Alasan: {x.nonaktif_alasan || 'KBM reguler tidak berlaku pada tanggal ini.'}
+                              </p>
+                            ) : null}
                             {x.pengganti?.jenis === 'tukar' ? (
                               <p className="mt-1 text-[10px] font-semibold text-violet-700"
                                 data-monitor-tukar={x.jadwal_id}>
@@ -267,7 +307,14 @@ export default function MonitorKBM({ ctx }) {
                             ) : x.pengganti ? (
                               <p className="mt-1 text-[10px] font-semibold text-violet-700">Guru piket/pengganti</p>
                             ) : null}
-                            {x.alur_selesai && x.preview_primary ? (
+                            {d?.boleh_nonaktifkan && !x.nonaktif && x.preview_primary && x.fase === 'belum'
+                              && Number((x.kelas_ids || [])[0]) === Number(k.id) ? (
+                              <button type="button" className="btn-ghost btn-sm mt-2 text-amber-800"
+                                onClick={() => bukaNonaktifkan(x)} data-monitor-nonaktif={x.jadwal_id}>
+                                <UserX size={13} /> Nonaktifkan KBM
+                              </button>
+                            ) : null}
+                            {x.alur_selesai && x.preview_primary && !x.nonaktif ? (
                               <button type="button" className="btn-ghost btn-sm mt-2"
                                 onClick={() => bukaPratinjau(x)} data-monitor-preview={x.jadwal_id}
                                 data-monitor-preview-group={(x.group_ids || [x.jadwal_id]).join(',')}>
@@ -490,6 +537,32 @@ export default function MonitorKBM({ ctx }) {
             ))}
           </div>
         )}
+      </Modal>
+      <Modal open={!!nonaktifTarget} onClose={tutupNonaktifkan} title="Nonaktifkan KBM Reguler"
+        subtitle={nonaktifTarget
+          ? `${nonaktifTarget.mapel_nama || ''} · ${nonaktifTarget.kelas_nama || ''} · ${nonaktifTarget.jam || ''} · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`
+          : ''} closeOnBackdrop={!nonaktifBusy}
+        footer={
+          <>
+            <button type="button" className="btn-ghost" onClick={tutupNonaktifkan} disabled={nonaktifBusy}>Batal</button>
+            <button type="button" className="btn-primary" onClick={simpanNonaktifkan}
+              disabled={nonaktifBusy || alasanNonaktif.trim().length < 5} data-monitor-nonaktif-simpan>
+              {nonaktifBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+              Simpan Nonaktif
+            </button>
+          </>
+        }>
+        <div className="space-y-2">
+          <p className="text-[12px] text-slate-600">
+            Penonaktifan berlaku untuk seluruh rentang mapel ini pada tanggal yang dipilih. Jadwal mingguan tidak berubah dan aktif kembali pada pekan berikutnya.
+          </p>
+          <label className="block">
+            <span className="label">Alasan kegiatan / penonaktifan <b className="text-rose-500">*</b></span>
+            <textarea className="input min-h-24 w-full" value={alasanNonaktif}
+              onChange={e => setAlasanNonaktif(e.target.value)} minLength={5} maxLength={500}
+              placeholder="Contoh: Sosialisasi program sekolah" data-monitor-nonaktif-alasan-input />
+          </label>
+        </div>
       </Modal>
     </div>
   );

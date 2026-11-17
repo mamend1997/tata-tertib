@@ -112,9 +112,10 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
       const m2 = (await post('/api/mapel/save', { nama: 'Bahasa UI', kode: 'BINUI', guru_ids: [gB.id] })).id;
       const s1id = (await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: m1, guru_id: gA.id, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
       const s2id = (await post('/api/jadwal/slot', { hari, sesi: 2, mapel_id: m2, guru_id: gB.id, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
-      return { hari, hariLain, kelasId: kelas[0].id, guruA: gA.id, guruB: gB.id, m1, m2, s1id, s2id };
+      const s3id = (await post('/api/jadwal/slot', { hari: hariLain, sesi: 1, mapel_id: m1, guru_id: gA.id, kelas_ids: [kelas[1].id], abaikan: 1 })).id;
+      return { hari, hariLain, kelasId: kelas[0].id, guruA: gA.id, guruB: gB.id, m1, m2, s1id, s2id, s3id };
     }, { today: TODAY, sesi: sesiUmum, sesiKhusus, hari: HARI, hariLain: (HARI + 1) % 7 });
-    ok('data uji siap (2 hari aktif + sesi khusus)', !!setup.s1id && !!setup.s2id, JSON.stringify(setup).slice(0, 300));
+    ok('data uji siap (2 hari aktif + sesi khusus)', !!setup.s1id && !!setup.s2id && !!setup.s3id, JSON.stringify(setup).slice(0, 300));
 
     /* ================= 1. MATRIKS DINAMIS PER HARI ================= */
     console.log('\n== 1. MATRIKS JADWAL: SESI PER HARI & LABEL WAKTU ==');
@@ -241,6 +242,23 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
       matriksBesok.tanggal === TODAY && matriksBesok.tanggal_matriks === BESOK
       && !!matriksBesok.hari_matriks_label,
       JSON.stringify({ tanggal: matriksBesok.tanggal, tanggal_matriks: matriksBesok.tanggal_matriks }));
+    ok('tombol nonaktif tersedia untuk slot mapel yang belum dimulai',
+      await page.locator(`[data-monitor-nonaktif="${setup.s3id}"]`).count() === 1);
+    await page.locator(`[data-monitor-nonaktif="${setup.s3id}"]`).click();
+    await page.waitForSelector('[data-monitor-nonaktif-alasan-input]', { timeout: 10000 });
+    ok('alasan wajib diisi sebelum penonaktifan disimpan',
+      await page.locator('[data-monitor-nonaktif-simpan]').isDisabled());
+    await page.fill('[data-monitor-nonaktif-alasan-input]', 'Sosialisasi program sekolah');
+    await page.locator('[data-monitor-nonaktif-simpan]').click();
+    await page.waitForFunction(id => {
+      const row = document.querySelector(`[data-monitor-grid-status="${id}"]`);
+      return row && row.textContent.includes('KBM tidak berlaku');
+    }, setup.s3id, { timeout: 15000 });
+    ok('alasan tersimpan dan matriks menandai KBM tidak berlaku',
+      await page.locator(`[data-monitor-nonaktif-alasan="${setup.s3id}"]`).innerText()
+        === 'Alasan: Sosialisasi program sekolah');
+    ok('slot nonaktif tidak menyediakan tombol pratinjau',
+      await page.locator(`[data-monitor-preview="${setup.s3id}"]`).count() === 0);
     await page.fill('[data-monitor-grid-tanggal]', TODAY);
     await page.selectOption('[data-monitor-grid-mode]', 'kelas');
     ok('filter matriks per kelas tersedia', (await page.locator('[data-monitor-grid-kelas]').count()) === 1);
