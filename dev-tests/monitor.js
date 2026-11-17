@@ -193,6 +193,27 @@ const BULAN = TODAY.slice(0, 7);
     ok('jadwal normal kembali aktif pada pekan berikutnya',
       !!slotPekanDepan && slotPekanDepan.nonaktif === false && slotPekanDepan.status_label !== 'KBM tidak berlaku',
       JSON.stringify(slotPekanDepan));
+    const pekanBerikutnyaLagi = new Date(`${nextWeek}T12:00:00`);
+    pekanBerikutnyaLagi.setDate(pekanBerikutnyaLagi.getDate() + 7);
+    const tanggalMassal = `${pekanBerikutnyaLagi.getFullYear()}-${pad(pekanBerikutnyaLagi.getMonth() + 1)}-${pad(pekanBerikutnyaLagi.getDate())}`;
+    const massalGagal = await req('/api/monitor-kbm/nonaktif-masal', {
+      method: 'POST', body: { jadwal_ids: [sC, 999999], tanggal: tanggalMassal, alasan: 'Kegiatan sekolah' }
+    });
+    const cekMassalGagal = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${tanggalMassal}`);
+    ok('penonaktifan massal gagal seluruhnya bila ada slot tidak valid',
+      massalGagal.status === 404
+        && !(cekMassalGagal.body.monitor_jadwal || []).some(x => Number(x.jadwal_id) === Number(sC) && x.nonaktif),
+      massalGagal.body?.error);
+    const massalSukses = await req('/api/monitor-kbm/nonaktif-masal', {
+      method: 'POST', body: { jadwal_ids: [sA, sB], tanggal: tanggalMassal, alasan: 'Kegiatan sekolah bersama' }
+    });
+    const cekMassalSukses = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${tanggalMassal}`);
+    const slotMassal = [sA, sB].map(id => (cekMassalSukses.body.monitor_jadwal || [])
+      .find(x => Number(x.jadwal_id) === Number(id)));
+    ok('dua rentang mapel mendatang dapat dinonaktifkan sekaligus',
+      massalSukses.status === 200 && massalSukses.body.jumlah_mapel === 2
+        && slotMassal.every(x => x && x.nonaktif && x.nonaktif_alasan === 'Kegiatan sekolah bersama'),
+      JSON.stringify({ response: massalSukses.body, slots: slotMassal }));
 
     /* ganti sC dengan tiga jam berurutan pada mapel/kelas/guru yang sama */
     r = await req(`/api/jadwal/slot/${sC}`, { method: 'DELETE' });

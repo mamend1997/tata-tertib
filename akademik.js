@@ -4671,43 +4671,32 @@ ${isi}
     });
   });
 
-  post('/api/monitor-kbm/nonaktif', async (req, res) => {
-    const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return;
-    const roles = dbm.userRoleList(user);
-    if (!roles.some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role))) {
-      return fail(res, 403, 'Hanya Admin, Kepala Sekolah, atau Wakasek Kurikulum yang dapat menonaktifkan KBM.');
-    }
-    const b = await readBody(req);
-    const jadwalId = Number(b.jadwal_id) || 0;
-    const tanggal = String(b.tanggal || '').slice(0, 10);
-    const alasan = String(b.alasan || '').trim();
+  const siapkanNonaktifKbm = (jadwalId, tanggal, alasan, body) => {
     const tanggalDate = new Date(`${tanggal}T12:00:00`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal) || Number.isNaN(tanggalDate.getTime())
       || tanggalDate.toISOString().slice(0, 10) !== tanggal) {
-      return fail(res, 400, 'Tanggal matriks tidak valid.');
+      return { error: 'Tanggal matriks tidak valid.', status: 400 };
     }
-    if (tanggal < dbm.today()) return fail(res, 400, 'KBM hanya dapat dinonaktifkan sebelum tanggal pembelajaran.');
-    if (alasan.length < 5 || alasan.length > 500) {
-      return fail(res, 400, 'Alasan penonaktifan wajib berisi 5–500 karakter.');
-    }
-    const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jadwalId);
-    if (!row) return fail(res, 404, 'Slot jadwal tidak ditemukan.');
+    if (tanggal < dbm.today()) return { error: 'KBM hanya dapat dinonaktifkan sebelum tanggal pembelajaran.', status: 400 };
+    const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(jadwalId) || 0);
+    if (!row) return { error: 'Slot jadwal tidak ditemukan.', status: 404 };
     if (Number(row.hari) !== dbm.hariOf(tanggal)) {
-      return fail(res, 400, 'Tanggal yang dipilih tidak sesuai dengan hari jadwal mapel.');
+      return { error: 'Tanggal yang dipilih tidak sesuai dengan hari jadwal mapel.', status: 400 };
     }
     if (dbm.kalenderNonaktif(tanggal)) {
-      return fail(res, 409, 'KBM reguler pada tanggal ini sudah dinonaktifkan melalui Kalender Akademik.');
+      return { error: 'KBM reguler pada tanggal ini sudah dinonaktifkan melalui Kalender Akademik.', status: 409 };
     }
     const cfg = dbm.jadwalConfig();
-    const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(b)).filter(x => Number(x.hari) === Number(row.hari));
+    const semua = dbm.jadwalRows(Number(row.ta_id) || taOf(body || {}))
+      .filter(x => Number(x.hari) === Number(row.hari));
     const group = kelompokJadwal(row, semua, cfg);
-    if (!group.length) return fail(res, 404, 'Rentang mapel pada jadwal ini tidak ditemukan.');
+    if (!group.length) return { error: 'Rentang mapel pada jadwal ini tidak ditemukan.', status: 404 };
     const ids = group.map(x => Number(x.id));
     const inSql = ids.map(() => '?').join(',');
     const waktu = dbm.absensiWindowKelompok(group, tanggal, cfg);
     const mulai = waktu.sesi ? dbm.jamMenit(waktu.sesi.mulai) : null;
     if (tanggal === dbm.today() && mulai !== null && dbm.nowMenit() >= mulai) {
-      return fail(res, 409, 'KBM tidak dapat dinonaktifkan karena rentang mapel sudah dimulai.');
+      return { error: 'KBM tidak dapat dinonaktifkan karena rentang mapel sudah dimulai.', status: 409 };
     }
     if (db.prepare(`SELECT 1 FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${inSql}) LIMIT 1`)
       .get(tanggal, ...ids)
@@ -4715,32 +4704,92 @@ ${isi}
         .get(tanggal, ...ids)
       || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${inSql}) LIMIT 1`)
         .get(tanggal, ...ids)) {
-      return fail(res, 409, 'Rentang mapel sudah memiliki check-in atau sesi presensi sehingga tidak dapat dinonaktifkan.');
+      return { error: 'Rentang mapel sudah memiliki check-in atau sesi presensi sehingga tidak dapat dinonaktifkan.', status: 409 };
     }
     if (db.prepare(`SELECT 1 FROM jadwal_tukar WHERE tanggal=? AND jadwal_id IN (${inSql})
       AND status IN ('pending','diterima') LIMIT 1`).get(tanggal, ...ids)) {
-      return fail(res, 409, 'Batalkan atau selesaikan pertukaran/penggantian jadwal sebelum menonaktifkan KBM.');
+      return { error: 'Batalkan atau selesaikan pertukaran/penggantian jadwal sebelum menonaktifkan KBM.', status: 409 };
     }
     const nonaktifAda = dbm.jadwalKbmNonaktifMap(tanggal);
     if (ids.some(id => nonaktifAda.has(id))) {
-      return fail(res, 409, 'Rentang mapel sudah dinonaktifkan.');
+      return { error: 'Rentang mapel sudah dinonaktifkan.', status: 409 };
     }
-    const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(Number(row.mapel_id)) || {};
-    const kelas = group[0].kelas_nama || '';
+    return { row, group, ids, waktu };
+  };
+  const simpanNonaktifKbm = (user, req, tanggal, alasan, groups, massal) => {
     const insert = db.prepare(`INSERT INTO jadwal_kbm_nonaktif
       (jadwal_id,tanggal,alasan,dibuat_oleh,dibuat_nama,created_at) VALUES(?,?,?,?,?,?)`);
+    const now = dbm.now();
+    const seluruhIds = groups.flatMap(x => x.ids);
     db.transaction(() => {
-      for (const slot of group) {
-        insert.run(Number(slot.id), tanggal, alasan, Number(user.id) || 0, String(user.nama || ''), dbm.now());
+      for (const item of groups) {
+        for (const id of item.ids) {
+          insert.run(id, tanggal, alasan, Number(user.id) || 0, String(user.nama || ''), now);
+        }
       }
     })();
-    dbm.logAudit(user, 'UBAH', 'monitor_kbm',
-      `KBM dinonaktifkan sementara: ${mapel.nama || 'mapel'} ${kelas ? `kelas ${kelas}` : ''} `
-      + `(${waktu.sesi ? `${waktu.sesi.mulai}–${waktu.selesai}` : ''}, ${tanggal}) — ${alasan}`, ipOf(req));
-    json(res, 200, {
-      ok: true, tanggal, jadwal_ids: ids, alasan,
-      pesan: `KBM ${mapel.nama || 'mapel'} pada ${waktu.sesi ? `${waktu.sesi.mulai}–${waktu.selesai}` : tanggal} dinonaktifkan untuk tanggal ini saja.`
+    const ringkasan = groups.map(x => {
+      const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(Number(x.row.mapel_id)) || {};
+      return `${mapel.nama || 'mapel'}${x.group[0].kelas_nama ? ` kelas ${x.group[0].kelas_nama}` : ''}`;
     });
+    dbm.logAudit(user, 'UBAH', 'monitor_kbm',
+      `${massal ? `Nonaktifkan KBM massal (${groups.length} rentang)` : 'KBM dinonaktifkan sementara'}: `
+      + `${ringkasan.join('; ')} (${tanggal}) — ${alasan}`, ipOf(req));
+    return {
+      ok: true, tanggal, jadwal_ids: seluruhIds, jumlah_mapel: groups.length, alasan,
+      pesan: massal
+        ? `${groups.length} rentang mapel dinonaktifkan untuk ${dbm.tanggalPanjang(tanggal)}.`
+        : `KBM ${ringkasan[0] || 'mapel'} pada ${groups[0].waktu.sesi
+          ? `${groups[0].waktu.sesi.mulai}–${groups[0].waktu.selesai}` : tanggal} dinonaktifkan untuk tanggal ini saja.`
+    };
+  };
+  const otorisasiNonaktifKbm = (req, res) => {
+    const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return null;
+    const roles = dbm.userRoleList(user);
+    if (!roles.some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role))) {
+      fail(res, 403, 'Hanya Admin, Kepala Sekolah, atau Wakasek Kurikulum yang dapat menonaktifkan KBM.');
+      return null;
+    }
+    return user;
+  };
+
+  post('/api/monitor-kbm/nonaktif', async (req, res) => {
+    const user = otorisasiNonaktifKbm(req, res); if (!user) return;
+    const b = await readBody(req);
+    const tanggal = String(b.tanggal || '').slice(0, 10);
+    const alasan = String(b.alasan || '').trim();
+    if (alasan.length < 5 || alasan.length > 500) {
+      return fail(res, 400, 'Alasan penonaktifan wajib berisi 5–500 karakter.');
+    }
+    const siap = siapkanNonaktifKbm(b.jadwal_id, tanggal, alasan, b);
+    if (siap.error) return fail(res, siap.status, siap.error);
+    json(res, 200, simpanNonaktifKbm(user, req, tanggal, alasan, [siap], false));
+  });
+
+  post('/api/monitor-kbm/nonaktif-masal', async (req, res) => {
+    const user = otorisasiNonaktifKbm(req, res); if (!user) return;
+    const b = await readBody(req);
+    const tanggal = String(b.tanggal || '').slice(0, 10);
+    const alasan = String(b.alasan || '').trim();
+    const jadwalIds = [...new Set((Array.isArray(b.jadwal_ids) ? b.jadwal_ids : [])
+      .map(Number).filter(id => Number.isSafeInteger(id) && id > 0))];
+    if (!jadwalIds.length) return fail(res, 400, 'Pilih minimal satu slot mapel mendatang.');
+    if (jadwalIds.length > 100) return fail(res, 400, 'Maksimal 100 slot mapel dapat dinonaktifkan sekaligus.');
+    if (alasan.length < 5 || alasan.length > 500) {
+      return fail(res, 400, 'Alasan penonaktifan wajib berisi 5–500 karakter.');
+    }
+    const groups = [];
+    const seen = new Set();
+    for (const jadwalId of jadwalIds) {
+      const siap = siapkanNonaktifKbm(jadwalId, tanggal, alasan, b);
+      if (siap.error) return fail(res, siap.status, `${siap.error} (slot ${jadwalId})`);
+      if (siap.ids.some(id => seen.has(id))) {
+        return fail(res, 400, 'Pilih satu checkbox untuk setiap rentang mapel; terdapat rentang yang terpilih lebih dari sekali.');
+      }
+      siap.ids.forEach(id => seen.add(id));
+      groups.push(siap);
+    }
+    json(res, 200, simpanNonaktifKbm(user, req, tanggal, alasan, groups, true));
   });
 
   get('/api/monitor-kbm', (req, res, q) => {

@@ -36,6 +36,7 @@ export default function MonitorKBM({ ctx }) {
   const [nonaktifTarget, setNonaktifTarget] = useState(null);
   const [alasanNonaktif, setAlasanNonaktif] = useState('');
   const [nonaktifBusy, setNonaktifBusy] = useState(false);
+  const [nonaktifTerpilih, setNonaktifTerpilih] = useState([]);
   const ta = filters?.ta || '';
 
   const load = useCallback((silent = false) => {
@@ -85,6 +86,17 @@ export default function MonitorKBM({ ctx }) {
     .filter(x => gridMode !== 'guru' || !gridGuru || Number(x.guru_efektif_id) === Number(gridGuru))
     .sort((a, b) => String(a.mulai).localeCompare(String(b.mulai)) || Number(a.jadwal_id) - Number(b.jadwal_id)),
   [jadwalMonitor, gridMode, gridKelas, gridGuru]);
+  const tanggalGrid = d?.tanggal_matriks || tanggalMatriks;
+  const dapatPilihNonaktif = !!d?.boleh_nonaktifkan && tanggalGrid >= hariIni();
+  const slotNonaktifMendatang = useMemo(() => barisGrid.filter(x =>
+    dapatPilihNonaktif && !x.nonaktif && x.preview_primary && x.fase === 'belum'
+      && (x.kelas_ids || []).length > 0
+  ), [barisGrid, dapatPilihNonaktif]);
+  const selectedIds = new Set(slotNonaktifMendatang
+    .filter(x => nonaktifTerpilih.includes(Number(x.jadwal_id)))
+    .map(x => Number(x.jadwal_id)));
+  const semuaSlotTerpilih = slotNonaktifMendatang.length > 0
+    && slotNonaktifMendatang.every(x => selectedIds.has(Number(x.jadwal_id)));
 
   const kelasDenganStatus = useMemo(() => new Map(perKelas.map(k => [Number(k.kelas_id), k])), [perKelas]);
 
@@ -126,6 +138,16 @@ export default function MonitorKBM({ ctx }) {
     setNonaktifTarget(x);
     setAlasanNonaktif('');
   }
+  function bukaNonaktifkanMasal() {
+    const ids = slotNonaktifMendatang.filter(x => selectedIds.has(Number(x.jadwal_id)))
+      .map(x => Number(x.jadwal_id));
+    if (!ids.length) return;
+    setNonaktifTarget({
+      jadwal_ids: ids,
+      pilihan: slotNonaktifMendatang.filter(x => ids.includes(Number(x.jadwal_id)))
+    });
+    setAlasanNonaktif('');
+  }
   function tutupNonaktifkan() {
     if (nonaktifBusy) return;
     setNonaktifTarget(null);
@@ -138,10 +160,11 @@ export default function MonitorKBM({ ctx }) {
     }
     setNonaktifBusy(true);
     try {
-      const r = await api('/api/monitor-kbm/nonaktif', {
+      const massal = Array.isArray(nonaktifTarget.jadwal_ids);
+      const r = await api(massal ? '/api/monitor-kbm/nonaktif-masal' : '/api/monitor-kbm/nonaktif', {
         method: 'POST',
         body: {
-          jadwal_id: nonaktifTarget.jadwal_id,
+          ...(massal ? { jadwal_ids: nonaktifTarget.jadwal_ids } : { jadwal_id: nonaktifTarget.jadwal_id }),
           tanggal: d?.tanggal_matriks || tanggalMatriks,
           alasan: alasanNonaktif.trim()
         }
@@ -149,6 +172,7 @@ export default function MonitorKBM({ ctx }) {
       toast.ok(r.pesan || 'KBM reguler dinonaktifkan untuk tanggal ini.');
       setNonaktifTarget(null);
       setAlasanNonaktif('');
+      setNonaktifTerpilih([]);
       load(true);
     } catch (e) { toast.err(e.message); }
     finally { setNonaktifBusy(false); }
@@ -235,28 +259,52 @@ export default function MonitorKBM({ ctx }) {
         subtitle={`Status absensi diperbarui otomatis setiap ${REFRESH_MS / 1000} detik. Tanggal: ${tgl(d?.tanggal_matriks, { long: true })}`}
         right={<div className="flex flex-wrap gap-1.5">
           <input type="date" className="input !w-auto !py-1.5 text-[11.5px]" value={tanggalMatriks}
-            onChange={e => setTanggalMatriks(e.target.value)} aria-label="Tanggal matriks jadwal"
+            onChange={e => { setTanggalMatriks(e.target.value); setNonaktifTerpilih([]); }} aria-label="Tanggal matriks jadwal"
             title="Pilih hari untuk melihat matriks jadwal mengajar" data-monitor-grid-tanggal />
           <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridMode}
-            onChange={e => setGridMode(e.target.value)} data-monitor-grid-mode>
+            onChange={e => { setGridMode(e.target.value); setNonaktifTerpilih([]); }} data-monitor-grid-mode>
             <option value="semua">Semua kelas</option>
             <option value="kelas">Pilih kelas</option>
             <option value="guru">Per guru</option>
           </select>
           {gridMode === 'kelas' ? (
             <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridKelas}
-              onChange={e => setGridKelas(e.target.value)} data-monitor-grid-kelas>
+              onChange={e => { setGridKelas(e.target.value); setNonaktifTerpilih([]); }} data-monitor-grid-kelas>
               {kelasMonitor.map(k => <option key={k.id} value={k.id}>{k.nama}</option>)}
             </select>
           ) : null}
           {gridMode === 'guru' ? (
             <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridGuru}
-              onChange={e => setGridGuru(e.target.value)} data-monitor-grid-guru>
+              onChange={e => { setGridGuru(e.target.value); setNonaktifTerpilih([]); }} data-monitor-grid-guru>
               <option value="">Semua guru</option>
               {guruMonitor.map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
             </select>
           ) : null}
         </div>}>
+        {dapatPilihNonaktif ? (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2"
+            data-monitor-nonaktif-masal>
+            <label className="flex cursor-pointer items-center gap-2 text-[11.5px] font-semibold text-amber-900">
+              <input type="checkbox" className="h-4 w-4 accent-amber-600"
+                checked={semuaSlotTerpilih}
+                disabled={!slotNonaktifMendatang.length}
+                onChange={e => setNonaktifTerpilih(e.target.checked
+                  ? slotNonaktifMendatang.map(x => Number(x.jadwal_id)) : [])}
+                data-monitor-nonaktif-semua />
+              Pilih semua slot mapel yang akan datang
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-amber-800" data-monitor-nonaktif-count>
+                {selectedIds.size} dipilih · {slotNonaktifMendatang.length} tersedia
+              </span>
+              <button type="button" className="btn-sm bg-amber-600 text-white hover:bg-amber-700"
+                disabled={!selectedIds.size || nonaktifBusy}
+                onClick={bukaNonaktifkanMasal} data-monitor-nonaktif-masal-buka>
+                <UserX size={13} /> Nonaktifkan Terpilih
+              </button>
+            </div>
+          </div>
+        ) : null}
         {!barisGrid.length || !kolomKelas.length ? (
           <Empty icon={CalendarClock} title="Tidak ada jadwal untuk filter ini"
             desc="Pilih kelas atau guru lain, atau ubah tanggal monitoring." />
@@ -284,6 +332,8 @@ export default function MonitorKBM({ ctx }) {
                           : ['izin', 'akan datang'].includes(String(x.status_label).toLowerCase()) ? 'badge-pantau'
                             : ['alpha', 'belum check-in'].includes(String(x.status_label).toLowerCase()) ? 'badge-siaga'
                               : 'badge-netral';
+                      const bolehPilihNonaktif = dapatPilihNonaktif && !x.nonaktif && x.preview_primary
+                        && x.fase === 'belum' && Number((x.kelas_ids || [])[0]) === Number(k.id);
                       return (
                         <td key={k.id} className="text-center align-middle">
                           <div className="mx-auto max-w-[220px] rounded-lg border border-slate-200 bg-white p-2 text-center">
@@ -298,6 +348,17 @@ export default function MonitorKBM({ ctx }) {
                                 data-monitor-nonaktif-alasan={x.jadwal_id}>
                                 Alasan: {x.nonaktif_alasan || 'KBM reguler tidak berlaku pada tanggal ini.'}
                               </p>
+                            ) : null}
+                            {bolehPilihNonaktif ? (
+                              <label className="mt-2 flex cursor-pointer items-center justify-center gap-1.5 text-[10.5px] font-semibold text-amber-800">
+                                <input type="checkbox" className="h-4 w-4 accent-amber-600"
+                                  checked={selectedIds.has(Number(x.jadwal_id))}
+                                  onChange={e => setNonaktifTerpilih(previous => e.target.checked
+                                    ? [...new Set([...previous, Number(x.jadwal_id)])]
+                                    : previous.filter(id => Number(id) !== Number(x.jadwal_id)))}
+                                  data-monitor-nonaktif-pilih={x.jadwal_id} />
+                                Pilih untuk nonaktif massal
+                              </label>
                             ) : null}
                             {x.pengganti?.jenis === 'tukar' ? (
                               <p className="mt-1 text-[10px] font-semibold text-violet-700"
@@ -538,9 +599,12 @@ export default function MonitorKBM({ ctx }) {
           </div>
         )}
       </Modal>
-      <Modal open={!!nonaktifTarget} onClose={tutupNonaktifkan} title="Nonaktifkan KBM Reguler"
+      <Modal open={!!nonaktifTarget} onClose={tutupNonaktifkan}
+        title={Array.isArray(nonaktifTarget?.jadwal_ids) ? 'Nonaktifkan KBM Terpilih' : 'Nonaktifkan KBM Reguler'}
         subtitle={nonaktifTarget
-          ? `${nonaktifTarget.mapel_nama || ''} · ${nonaktifTarget.kelas_nama || ''} · ${nonaktifTarget.jam || ''} · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`
+          ? Array.isArray(nonaktifTarget.jadwal_ids)
+            ? `${nonaktifTarget.jadwal_ids.length} rentang mapel · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`
+            : `${nonaktifTarget.mapel_nama || ''} · ${nonaktifTarget.kelas_nama || ''} · ${nonaktifTarget.jam || ''} · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`
           : ''} closeOnBackdrop={!nonaktifBusy}
         footer={
           <>
@@ -554,8 +618,18 @@ export default function MonitorKBM({ ctx }) {
         }>
         <div className="space-y-2">
           <p className="text-[12px] text-slate-600">
-            Penonaktifan berlaku untuk seluruh rentang mapel ini pada tanggal yang dipilih. Jadwal mingguan tidak berubah dan aktif kembali pada pekan berikutnya.
+            {Array.isArray(nonaktifTarget?.jadwal_ids)
+              ? 'Penonaktifan berlaku untuk seluruh rentang mapel yang dipilih pada tanggal ini. Semua pilihan diproses bersama; jadwal mingguan tidak berubah.'
+              : 'Penonaktifan berlaku untuk seluruh rentang mapel ini pada tanggal yang dipilih. Jadwal mingguan tidak berubah dan aktif kembali pada pekan berikutnya.'}
           </p>
+          {Array.isArray(nonaktifTarget?.pilihan) ? (
+            <ul className="max-h-36 list-disc space-y-1 overflow-auto rounded-lg bg-slate-50 px-8 py-2 text-[11px] text-slate-600"
+              data-monitor-nonaktif-ringkasan>
+              {nonaktifTarget.pilihan.map(x => (
+                <li key={x.jadwal_id}>{x.mapel_nama} · {x.kelas_nama || '-'} · {x.jam || x.label_sesi}</li>
+              ))}
+            </ul>
+          ) : null}
           <label className="block">
             <span className="label">Alasan kegiatan / penonaktifan <b className="text-rose-500">*</b></span>
             <textarea className="input min-h-24 w-full" value={alasanNonaktif}

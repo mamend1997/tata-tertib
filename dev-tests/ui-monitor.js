@@ -51,6 +51,9 @@ const TODAY = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}-${pad(wib.getDate
 const besok = new Date(wib);
 besok.setDate(besok.getDate() + 1);
 const BESOK = `${besok.getFullYear()}-${pad(besok.getMonth() + 1)}-${pad(besok.getDate())}`;
+const PEKAN_DEPAN_DATE = new Date(besok);
+PEKAN_DEPAN_DATE.setDate(PEKAN_DEPAN_DATE.getDate() + 7);
+const PEKAN_DEPAN = `${PEKAN_DEPAN_DATE.getFullYear()}-${pad(PEKAN_DEPAN_DATE.getMonth() + 1)}-${pad(PEKAN_DEPAN_DATE.getDate())}`;
 const HARI = wib.getDay();
 const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((((m % 1440) + 1440) % 1440) % 60)}`;
 const cur = wib.getHours() * 60 + wib.getMinutes();
@@ -113,9 +116,10 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
       const s1id = (await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: m1, guru_id: gA.id, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
       const s2id = (await post('/api/jadwal/slot', { hari, sesi: 2, mapel_id: m2, guru_id: gB.id, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
       const s3id = (await post('/api/jadwal/slot', { hari: hariLain, sesi: 1, mapel_id: m1, guru_id: gA.id, kelas_ids: [kelas[1].id], abaikan: 1 })).id;
-      return { hari, hariLain, kelasId: kelas[0].id, guruA: gA.id, guruB: gB.id, m1, m2, s1id, s2id, s3id };
+      const s4id = (await post('/api/jadwal/slot', { hari: hariLain, sesi: 2, mapel_id: m2, guru_id: gB.id, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
+      return { hari, hariLain, kelasId: kelas[0].id, guruA: gA.id, guruB: gB.id, m1, m2, s1id, s2id, s3id, s4id };
     }, { today: TODAY, sesi: sesiUmum, sesiKhusus, hari: HARI, hariLain: (HARI + 1) % 7 });
-    ok('data uji siap (2 hari aktif + sesi khusus)', !!setup.s1id && !!setup.s2id && !!setup.s3id, JSON.stringify(setup).slice(0, 300));
+    ok('data uji siap (2 hari aktif + sesi khusus)', !!setup.s1id && !!setup.s2id && !!setup.s3id && !!setup.s4id, JSON.stringify(setup).slice(0, 300));
 
     /* ================= 1. MATRIKS DINAMIS PER HARI ================= */
     console.log('\n== 1. MATRIKS JADWAL: SESI PER HARI & LABEL WAKTU ==');
@@ -259,6 +263,29 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
         === 'Alasan: Sosialisasi program sekolah');
     ok('slot nonaktif tidak menyediakan tombol pratinjau',
       await page.locator(`[data-monitor-preview="${setup.s3id}"]`).count() === 0);
+    await page.fill('[data-monitor-grid-tanggal]', PEKAN_DEPAN);
+    await page.waitForSelector(`[data-monitor-nonaktif-pilih="${setup.s3id}"]`, { timeout: 10000 });
+    ok('checkbox penonaktifan hanya tampil pada slot mapel mendatang',
+      await page.locator(`[data-monitor-nonaktif-pilih="${setup.s3id}"]`).count() === 1
+        && await page.locator(`[data-monitor-nonaktif-pilih="${setup.s4id}"]`).count() === 1
+        && await page.locator(`[data-monitor-nonaktif-pilih="${setup.s1id}"]`).count() === 0);
+    await page.locator('[data-monitor-nonaktif-semua]').check();
+    ok('Pilih semua menandai slot mendatang yang tersedia',
+      await page.locator(`[data-monitor-nonaktif-pilih="${setup.s3id}"]`).isChecked()
+        && await page.locator(`[data-monitor-nonaktif-pilih="${setup.s4id}"]`).isChecked());
+    await page.locator('[data-monitor-nonaktif-masal-buka]').click();
+    await page.waitForSelector('[data-monitor-nonaktif-ringkasan]', { timeout: 10000 });
+    ok('dialog massal menampilkan jumlah dan ringkasan mapel terpilih',
+      await page.locator('[data-monitor-nonaktif-ringkasan] li').count() === 2);
+    await page.fill('[data-monitor-nonaktif-alasan-input]', 'Kegiatan sekolah bersama');
+    await page.locator('[data-monitor-nonaktif-simpan]').click();
+    await page.waitForFunction(ids => ids.every(id => {
+      const el = document.querySelector(`[data-monitor-grid-status="${id}"]`);
+      return el && el.textContent.includes('KBM tidak berlaku');
+    }), [setup.s3id, setup.s4id], { timeout: 15000 });
+    ok('penonaktifan massal tersimpan untuk semua mapel yang dipilih',
+      await page.locator(`[data-monitor-nonaktif-alasan="${setup.s3id}"]`).count() === 1
+        && await page.locator(`[data-monitor-nonaktif-alasan="${setup.s4id}"]`).count() === 1);
     await page.fill('[data-monitor-grid-tanggal]', TODAY);
     await page.selectOption('[data-monitor-grid-mode]', 'kelas');
     ok('filter matriks per kelas tersedia', (await page.locator('[data-monitor-grid-kelas]').count()) === 1);
