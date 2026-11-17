@@ -381,39 +381,39 @@ async function stopServer() {
     ok('sesi yang sudah diabsen tidak dapat ditukar lagi', r.status === 409 || r.status === 403, r.body?.error);
 
     if (HARI >= 1 && HARI <= 5) {
-      console.log('\n== 4. TUKAR LINTAS HARI (IZIN/SAKIT) ==');
+      console.log('\n== 4. TUKAR HARI INI KE HARI BERIKUTNYA (IZIN/SAKIT) ==');
       const addDate = n => {
         const d = new Date(`${TODAY}T12:00:00Z`);
         d.setUTCDate(d.getUTCDate() + n);
         return d.toISOString().slice(0, 10);
       };
-      const TGL_A = addDate(1), TGL_B = addDate(2);
-      const HARI_A = (HARI + 1) % 7, HARI_B = (HARI + 2) % 7;
+      const TGL_TUJUAN = addDate(1);
+      const HARI_TUJUAN = (HARI + 1) % 7;
       await login('admin', 'admin123');
-      r = await req('/api/jadwal/pengaturan', { method: 'POST', body: cfgBody({ hari: [HARI, HARI_A, HARI_B] }) });
-      ok('hari jadwal dua hari mendatang diaktifkan', r.status === 200, r.body?.error);
+      r = await req('/api/jadwal/pengaturan', { method: 'POST', body: cfgBody({ hari: [HARI, HARI_TUJUAN] }) });
+      ok('hari jadwal tujuan minggu ini diaktifkan', r.status === 200, r.body?.error);
       const buatSlot = async (hari, sesi, mapelId, guruId) => req('/api/jadwal/slot', {
-        method: 'POST', body: { hari, sesi, mapel_id: mapelId, guru_id: guruId, kelas_ids: [K1], abaikan: 1 }
+        method: 'POST', body: { hari, sesi, mapel_id: mapelId, guru_id: guruId, kelas_ids: [K2], abaikan: 1 }
       });
-      const a1 = await buatSlot(HARI_A, 1, mA, gA);
-      const a2 = await buatSlot(HARI_A, 2, mA, gA);
-      const b1 = await buatSlot(HARI_B, 3, mB, gB);
-      const b2 = await buatSlot(HARI_B, 4, mB, gB);
+      const a1 = await buatSlot(HARI, 1, mC, gC);
+      const a2 = await buatSlot(HARI, 2, mC, gC);
+      const b1 = await buatSlot(HARI_TUJUAN, 3, mB, gB);
+      const b2 = await buatSlot(HARI_TUJUAN, 4, mB, gB);
       ok('slot lintas hari dibuat dengan jumlah jam seimbang',
         [a1, a2, b1, b2].every(x => x.status === 200 && x.body.id),
         JSON.stringify([a1.body?.error, a2.body?.error, b1.body?.error, b2.body?.error]));
-      await login('gurua', 'guru123');
-      r = await req(`/api/tukar-jadwal/kandidat?jadwal_id=${a1.body.id}&tanggal=${TGL_A}&alasan_jenis=izin`);
+      await login('guruc', 'guru123');
+      r = await req(`/api/tukar-jadwal/kandidat?jadwal_id=${a1.body.id}&tanggal=${TODAY}&alasan_jenis=izin`);
       const kLintas = (r.body.kandidat || []).find(k => Number(k.id) === Number(gB));
-      const pasanganLintas = (kLintas?.mapel || []).find(m => m.tanggal === TGL_B && Number(m.jadwal_id) === Number(b1.body.id));
+      const pasanganLintas = (kLintas?.mapel || []).find(m => m.tanggal === TGL_TUJUAN && Number(m.jadwal_id) === Number(b1.body.id));
       ok('guru pasangan lintas hari hanya ditawarkan pada kelas dan jumlah slot yang sama',
         r.status === 200 && !!pasanganLintas, JSON.stringify(kLintas?.mapel || []));
       r = await req('/api/tukar-jadwal', { method: 'POST', body: {
-        jadwal_id: a1.body.id, tanggal: TGL_A, ke_guru: gB,
-        pasangan_jadwal_id: b1.body.id, pasangan_tanggal: TGL_B,
+        jadwal_id: a1.body.id, tanggal: TODAY, ke_guru: gB,
+        pasangan_jadwal_id: b1.body.id, pasangan_tanggal: TGL_TUJUAN,
         alasan_jenis: 'izin', alasan: 'izin'
       } });
-      ok('pengajuan Izin lintas hari tersimpan sebagai pertukaran', r.status === 200, r.body?.error);
+      ok('pengajuan Izin dari hari ini ke jadwal hari berikutnya tersimpan', r.status === 200, r.body?.error);
       const lintasId = r.body.id;
       await login('gurub', 'guru123');
       r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: lintasId, aksi: 'terima' } });
@@ -422,7 +422,7 @@ async function stopServer() {
       const swapRows = persisted.prepare('SELECT jadwal_id,tanggal,alasan,alasan_jenis,status FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
         .all(lintasId);
       const attendanceRows = persisted.prepare('SELECT id FROM absensi_guru WHERE tanggal IN (?,?) AND jadwal_id IN (?,?,?,?)')
-        .all(TGL_A, TGL_B, a1.body.id, a2.body.id, b1.body.id, b2.body.id);
+        .all(TODAY, TGL_TUJUAN, a1.body.id, a2.body.id, b1.body.id, b2.body.id);
       persisted.close();
       ok('pertukaran sakit/izin tidak menambah status sakit/izin/alfa ke rekap absensi',
         swapRows.length === 4 && swapRows.every(x => x.status === 'diterima' && x.alasan_jenis === 'izin')

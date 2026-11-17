@@ -282,7 +282,7 @@ export default function AbsensiGuru({ ctx }) {
                           <button type="button" className="btn-ghost btn-sm"
                             onClick={() => setTukarSlot({ ...sl, id: sl.jadwal_id, tanggal: h.tanggal })}
                             data-tukar-hari={sl.jadwal_id}>
-                            <Repeat size={12} /> Rencana Sakit/Izin &amp; Tukar Hari
+                            <Repeat size={12} /> Rencana Tukar Jadwal
                           </button>
                         ) : null}
                       </div>
@@ -600,14 +600,17 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
   const [mapelId, setMapelId] = useState('');
   const [alasan, setAlasan] = useState('');
   const [alasanJenis, setAlasanJenis] = useState('lainnya');
+  const [modeTukar, setModeTukar] = useState('hari_sama');
   const [busy, setBusy] = useState(false);
-  const lintasHari = tanggal > hariIni();
+  const lintasHari = modeTukar === 'lintas_hari';
 
   useEffect(() => {
     if (!open || !slot?.id) return;
     setLoading(true); setData(null); setGuruId(''); setMapelId(''); setAlasan('');
-    setAlasanJenis(lintasHari ? 'sakit' : 'lainnya');
-  }, [open, slot?.id, tanggal, lintasHari]);
+    const defaultMode = tanggal > hariIni() ? 'lintas_hari' : 'hari_sama';
+    setModeTukar(defaultMode);
+    setAlasanJenis(defaultMode === 'lintas_hari' ? 'sakit' : 'lainnya');
+  }, [open, slot?.id, tanggal]);
 
   useEffect(() => {
     if (!open || !slot?.id) return;
@@ -655,6 +658,14 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
     finally { setBusy(false); }
   }
 
+  function ubahMode(mode) {
+    setModeTukar(mode);
+    setAlasanJenis(mode === 'lintas_hari' ? 'sakit' : 'lainnya');
+    setGuruId('');
+    setMapelId('');
+    setAlasan('');
+  }
+
   return (
     <Modal open={open} onClose={onClose} title="Tukar Jadwal Mengajar" size="lg"
       subtitle={data?.slot ? `${data.slot.mapel_nama} · ${data.slot.kelas_nama} · sesi ${data.slot.sesi} · ${data.slot.jam}` : ''}
@@ -667,13 +678,33 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
       </>}>
       {loading ? <Spinner label="Mencari jadwal pasangan pada kelas ini…" /> : !data ? null : (
         <div className="space-y-3" data-modal-tukar>
+          {tanggal >= hariIni() ? (
+            <Field label="Jenis Pertukaran">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button type="button" onClick={() => ubahMode('hari_sama')}
+                  className={cx('btn justify-center', !lintasHari
+                    ? 'border-violet-300 bg-violet-100 text-violet-900'
+                    : 'border-slate-200 bg-white text-slate-600')}
+                  data-tukar-mode="hari-sama">
+                  <Repeat size={14} /> Jadwal pada hari yang sama
+                </button>
+                <button type="button" onClick={() => ubahMode('lintas_hari')}
+                  className={cx('btn justify-center', lintasHari
+                    ? 'border-violet-300 bg-violet-100 text-violet-900'
+                    : 'border-slate-200 bg-white text-slate-600')}
+                  data-tukar-mode="hari-berbeda">
+                  <CalendarDays size={14} /> Jadwal di hari lain
+                </button>
+              </div>
+            </Field>
+          ) : null}
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-[12px] text-slate-600">
             <p><b>Sesi:</b> {data.slot.mapel_nama} ({data.slot.mapel_kode || '-'}) · sesi {data.slot.sesi} · {data.slot.jam}</p>
             <p><b>Kelas:</b> {data.slot.kelas_nama || '-'}</p>
             <p><b>Tanggal:</b> {data.tanggal} · <b>Guru pengampu:</b> {data.slot.guru_nama}</p>
             <p className="mt-1 text-[11.5px] italic text-slate-500">
               {lintasHari
-                ? 'Pertukaran sakit/izin memasangkan dua sesi pada kelas dan jumlah jam yang sama di tanggal berbeda dalam minggu berjalan. Alasan ini bukan catatan absensi.'
+                ? 'Pilih jadwal pasangan pada tanggal setelah jadwal asal dan masih dalam minggu ini. Alasan wajib Sakit atau Izin, tetapi tidak dicatat sebagai status absensi.'
                 : 'Pertukaran memasangkan slot pada kelas dan hari yang sama yang belum dimulai. Guru tujuan tidak perlu Check-in. Alasan harus menjelaskan kendala mengajar, bukan Izin atau Sakit.'}
             </p>
           </div>
@@ -697,7 +728,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 
           <Field label="Guru Tujuan" required
             hint={lintasHari
-              ? 'Guru tujuan harus memiliki slot pada tanggal berbeda di minggu ini, untuk kelas dan jumlah jam yang sama.'
+              ? 'Guru tujuan harus memiliki slot pada tanggal setelah jadwal asal, di kelas yang sama dan dengan jumlah jam yang sama.'
               : 'Guru tujuan tidak perlu Check-in, tetapi jam slot pasangannya hari ini belum boleh dimulai.'}>
             <select className="input" value={guruId} onChange={e => setGuruId(e.target.value)} data-pilih-guru-tukar>
               <option value="">— pilih guru —</option>
@@ -711,7 +742,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           {!kandidat.length ? (
             <Alert tone="warn" title="Belum ada jadwal pasangan yang tersedia di kelas ini">
               {lintasHari
-                ? 'Pastikan ada guru lain dengan slot pada tanggal mendatang di minggu ini, pada kelas dan jumlah jam yang sama.'
+                ? 'Pastikan ada guru lain dengan slot pada tanggal setelah jadwal asal, di minggu ini, pada kelas dan jumlah jam yang sama.'
                 : 'Slot pasangan harus pada kelas yang sama, jumlah jamnya sama, belum dimulai, dan belum dibuka/diisi absensinya.'}
             </Alert>
           ) : null}

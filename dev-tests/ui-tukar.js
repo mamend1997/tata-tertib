@@ -128,6 +128,14 @@ const ok = (name, cond, extra) => {
     await card.locator('[data-tukar]').click();
     await page.waitForSelector('[data-modal-tukar]', { timeout: 15000 });
     ok('modal Tukar Jadwal terbuka', true);
+    ok('pilihan pertukaran lintas hari tersedia pada jadwal hari ini',
+      await page.locator('[data-tukar-mode="hari-berbeda"]').count() === 1);
+    await page.click('[data-tukar-mode="hari-berbeda"]');
+    await page.waitForSelector('[data-alasan-tukar-jenis="izin"]', { timeout: 15000 });
+    ok('mode hari berbeda menampilkan pilihan alasan Izin/Sakit',
+      await page.locator('[data-alasan-tukar-jenis]').count() === 2);
+    await page.click('[data-tukar-mode="hari-sama"]');
+    await page.waitForSelector(`[data-pilih-guru-tukar] option[value="${setup.gB}"]`, { state: 'attached', timeout: 15000 });
     const opsiGuru = await page.locator('[data-pilih-guru-tukar] option').allTextContents();
     ok('guru yang mengampu kelas sama muncul (Guru Pengganti B)', opsiGuru.some(t => /Guru Pengganti B/.test(t)), JSON.stringify(opsiGuru));
     ok('guru kelas lain TIDAK muncul di pilihan', !opsiGuru.some(t => /Guru Kelas Lain C/.test(t)), JSON.stringify(opsiGuru));

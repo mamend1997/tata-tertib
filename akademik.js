@@ -2362,6 +2362,10 @@ ${isi}
     const m = mingguTukar(dbm.today());
     return String(tanggal) > dbm.today() && String(tanggal) <= m.akhir;
   };
+  const tanggalTukarMingguIni = (tanggal) => {
+    const m = mingguTukar(dbm.today());
+    return String(tanggal) >= dbm.today() && String(tanggal) <= m.akhir;
+  };
 
   /** guru pemilik sesi pada tanggal tertentu (mempertimbangkan tukar diterima) */
   const guruPemilik = (row, tanggal) => {
@@ -2438,9 +2442,9 @@ ${isi}
       .sort((a, b) => String(a.nama).localeCompare(String(b.nama)));
   }
 
-  /** Pasangan lintas hari: hanya tanggal mendatang pada minggu berjalan, kelas dan durasi harus sama. */
+  /** Pasangan lintas hari: tanggal tujuan harus lebih akhir dalam minggu berjalan, kelas dan durasi sama. */
   function kandidatLintasTukar(row, tanggal) {
-    if (!tanggalTukarMendatang(tanggal)) return [];
+    if (!tanggalTukarMingguIni(tanggal)) return [];
     const taId = Number(row.ta_id) || taOf({});
     const keyKelas = kelasKey(row);
     const semua = dbm.jadwalRows(taId);
@@ -2454,7 +2458,7 @@ ${isi}
     for (let d = new Date(awal); d <= akhir; d.setUTCDate(d.getUTCDate() + 1)) {
       const tanggalTarget = d.toISOString().slice(0, 10);
       const hariTarget = d.getUTCDay();
-      if (tanggalTarget <= dbm.today() || tanggalTarget === tanggal || tanggalTarget > minggu.akhir) continue;
+      if (tanggalTarget <= tanggal || tanggalTarget > minggu.akhir) continue;
       const slotsTarget = semua.filter(x => Number(x.hari) === hariTarget);
       const guruIds = [...new Set(slotsTarget.filter(x => Number(x.guru_id) !== pemilik && kelasKey(x) === keyKelas)
         .map(x => Number(x.guru_id)).filter(Boolean))];
@@ -2518,11 +2522,11 @@ ${isi}
     if (pemilik !== Number(user.id)) {
       return { error: 'Hanya guru pemilik sesi ini yang dapat mengajukan tukar jadwal.', status: 403 };
     }
-    if (alasanJenis === 'lainnya' && tanggal !== dbm.today()) {
-      return { error: 'Tukar jadwal biasa hanya dapat diajukan untuk sesi hari ini.', status: 403 };
+    if (alasanJenis === 'lainnya' && !tanggalTukarMingguIni(tanggal)) {
+      return { error: 'Tukar pada tanggal yang sama hanya dapat diajukan untuk hari ini atau hari mendatang dalam minggu ini.', status: 403 };
     }
-    if (alasanJenis !== 'lainnya' && !tanggalTukarMendatang(tanggal)) {
-      return { error: 'Tukar karena sakit/izin hanya dapat diajukan untuk tanggal mendatang dalam minggu berjalan.', status: 403 };
+    if (alasanJenis !== 'lainnya' && !tanggalTukarMingguIni(tanggal)) {
+      return { error: 'Tukar karena sakit/izin hanya dapat diajukan untuk hari ini atau hari mendatang dalam minggu berjalan.', status: 403 };
     }
     if (Number(row.hari) !== dbm.hariOf(tanggal)) {
       return { error: `Slot ini untuk hari ${dbm.HARI_LABEL[Number(row.hari)] || '-'}, bukan hari ini.`, status: 403 };
@@ -2629,8 +2633,8 @@ ${isi}
       return fail(res, 400, 'Tukar pada hari yang sama hanya dapat memasangkan sesi pada tanggal yang sama.');
     }
     if (alasanJenis !== 'lainnya'
-      && (targetTanggal === tanggal || !tanggalTukarMendatang(targetTanggal) || !tanggalTukarMendatang(tanggal))) {
-      return fail(res, 403, 'Tukar sakit/izin harus memasangkan dua tanggal mendatang yang berbeda dalam minggu berjalan.');
+      && (targetTanggal <= tanggal || !tanggalTukarMendatang(targetTanggal) || !tanggalTukarMingguIni(tanggal))) {
+      return fail(res, 403, 'Tukar sakit/izin hanya dapat menggeser jadwal sumber ke tanggal yang lebih akhir dalam minggu berjalan.');
     }
     const sourceIds = groupAsal.map(x => Number(x.id));
     const targetIds = groupTujuan.map(x => Number(x.id));
@@ -2741,12 +2745,20 @@ ${isi}
       if (!slotPasangan.length) return fail(res, 409, 'Slot permintaan tukar jadwal tidak ditemukan.');
       const alasanJenis = String(t.alasan_jenis || 'lainnya');
       const tanggalUnik = [...new Set(slotPasangan.map(x => x.tanggal))];
-      if (alasanJenis === 'lainnya' && (tanggalUnik.length !== 1 || tanggalUnik[0] !== dbm.today())) {
-        return fail(res, 409, 'Tukar pada hari yang sama hanya dapat diterima pada tanggal sesi berlangsung.');
+      const barisPermintaan = db.prepare(`SELECT jadwal_id,tanggal,dari_guru FROM jadwal_tukar
+        WHERE COALESCE(permintaan_id,id)=?`).all(permintaanId);
+      const tanggalSumber = [...new Set(barisPermintaan
+        .filter(x => Number(x.dari_guru) === Number(t.dari_guru)).map(x => String(x.tanggal).slice(0, 10)))];
+      const tanggalTujuan = [...new Set(barisPermintaan
+        .filter(x => Number(x.dari_guru) === Number(t.ke_guru)).map(x => String(x.tanggal).slice(0, 10)))];
+      if (alasanJenis === 'lainnya' && (tanggalUnik.length !== 1 || !tanggalTukarMingguIni(tanggalUnik[0]))) {
+        return fail(res, 409, 'Tukar pada tanggal yang sama hanya dapat diterima hari ini atau pada hari mendatang dalam minggu ini.');
       }
       if (alasanJenis !== 'lainnya'
-        && (tanggalUnik.length !== 2 || slotPasangan.some(x => !tanggalTukarMendatang(x.tanggal)))) {
-        return fail(res, 409, 'Permintaan Sakit/Izin harus tetap berada pada dua tanggal mendatang dalam minggu berjalan.');
+        && (tanggalUnik.length !== 2 || tanggalSumber.length !== 1 || tanggalTujuan.length !== 1
+          || !tanggalTukarMingguIni(tanggalSumber[0]) || !tanggalTukarMendatang(tanggalTujuan[0])
+          || tanggalTujuan[0] <= tanggalSumber[0])) {
+        return fail(res, 409, 'Permintaan Sakit/Izin hanya dapat menggeser jadwal sumber ke tanggal yang lebih akhir dalam minggu berjalan.');
       }
       const cfgTukar = dbm.jadwalConfig();
       const targetSlotIds = new Set(db.prepare(`SELECT jadwal_id FROM jadwal_tukar
@@ -2793,8 +2805,8 @@ ${isi}
           }
         }
       }
-      if (alasanJenis === 'lainnya' && !semuaTerlibat.every(s => Number(s.hari) === dbm.hariOf(dbm.today()))) {
-        return fail(res, 409, 'Kedua slot tukar hari yang sama harus berada pada jadwal hari ini.');
+      if (alasanJenis === 'lainnya' && !semuaTerlibat.every(s => Number(s.hari) === dbm.hariOf(tanggalUnik[0]))) {
+        return fail(res, 409, 'Kedua slot tukar hari yang sama harus berada pada hari dan tanggal pilihan.');
       }
     }
     db.transaction(() => {
