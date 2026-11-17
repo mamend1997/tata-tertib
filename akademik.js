@@ -803,6 +803,7 @@ module.exports = function mount(api) {
     }
     db.prepare('DELETE FROM jadwal_tukar WHERE jadwal_id=?').run(Number(row.id));
     db.prepare('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id=?').run(Number(row.id));
+    db.prepare('DELETE FROM jadwal_mapel_histori WHERE jadwal_id=?').run(Number(row.id));
     db.prepare('DELETE FROM jadwal WHERE id=?').run(Number(row.id));
   };
   const hapusSlotJadwal = (rows, user, req, res, keterangan) => {
@@ -1792,6 +1793,8 @@ ${isi}
     const tukarHari = dbm.tukarMap(tanggal);
     const guruEfektifOf = (r) => dbm.tukarGuruEfektif(r, tanggal, tukarHari);
     const tukarOf = (r) => tukarHari.get(Number(r.id)) || null;
+    const mapelGuruIds = new Set(db.prepare('SELECT mapel_id FROM guru_mapel WHERE guru_id=?')
+      .all(Number(user.id)).map(x => Number(x.mapel_id)));
     const mapRow = (r) => {
       const group = kelompokJadwal(r, semua, cfg);
       const w = jendelaKelompok(group, tanggal, cfg);
@@ -1842,7 +1845,9 @@ ${isi}
         /* tombol "Tukar Jadwal" hanya untuk guru pemilik sesi pada hari ini dan
            masih SEBELUM jam pelajaran berakhir */
         bisa_tukar: !!(milikSaya && !a && w.sesi && Number(r.hari) === dbm.hariOf(tanggal)
-          && tanggal === dbm.today() && !tukar && dbm.nowMenit() <= dbm.jamMenit(w.tutup))
+          && tanggal === dbm.today() && !tukar && dbm.nowMenit() <= dbm.jamMenit(w.tutup)),
+        bisa_tukar_mapel: !!(Number(r.guru_id) === Number(user.id) && mapelGuruIds.size > 1
+          && !a && !tukar)
       };
     };
     const jadwalGuru = semua.filter(r => !targetGuru || guruEfektifOf(r) === Number(targetGuru)).map(mapRow);
@@ -1915,6 +1920,8 @@ ${isi}
       }
     }
     const cfgHari = dbm.jadwalConfig();
+    const mapelGuruIds = new Set(db.prepare('SELECT mapel_id FROM guru_mapel WHERE guru_id=?')
+      .all(Number(user.id)).map(x => Number(x.mapel_id)));
     const hasil = [];
     for (let i = 0; i < jumlahHari; i++) {
       const tanggal = isoAddDays(mulai, i);
@@ -1990,6 +1997,8 @@ ${isi}
           bisa_tukar: !!w.aktif && !groupAbs.length && !tukar && guruEfektif === Number(user.id),
           bisa_rencana_tukar: !hariIni && tanggalTukarMendatang(tanggal)
             && guruEfektif === Number(user.id) && !tukar && !groupAbs.length,
+          bisa_tukar_mapel: Number(r.guru_id) === Number(user.id) && mapelGuruIds.size > 1
+            && !tukar && !groupAbs.length,
           bisa_jurnal: !!a && !!w.aktif && dbm.can(user, 'absensi_guru', 'write')
             && (guruEfektif === Number(user.id) || isAdmin(user))
         };
@@ -2394,6 +2403,192 @@ ${isi}
     const m = mingguTukar(dbm.today());
     return String(tanggal) >= dbm.today() && String(tanggal) <= m.akhir;
   };
+  const tanggalTukarMapelValid = (tanggal) => String(tanggal) >= dbm.today()
+    && String(tanggal) <= isoAddDays(dbm.today(), 7);
+  const tanggalHariDalamMinggu = (tanggal, hari) => {
+    const m = mingguTukar(tanggal);
+    return isoAddDays(m.awal, (Number(hari) + 6) % 7);
+  };
+  const mapelGroupInfo = (group, tanggal, cfg) => {
+    const pertama = group[0];
+    const range = dbm.absensiRentangSesi(group, cfg);
+    return {
+      jadwal_id: Number(pertama.id), group_ids: group.map(x => Number(x.id)),
+      mapel_id: Number(pertama.mapel_id) || 0, mapel_nama: pertama.mapel_nama || '',
+      mapel_kode: pertama.mapel_kode || '', hari: Number(pertama.hari),
+      hari_label: dbm.HARI_LABEL[Number(pertama.hari)] || '',
+      sesi: range.label_sesi || `Sesi ${pertama.sesi}`, jam: range.jam,
+      tanggal: tanggal || '', tanggal_label: tanggal ? dbm.tanggalPanjang(tanggal) : '',
+      kelas_nama: pertama.kelas_nama || ''
+    };
+  };
+  function kandidatTukarMapel(userId, jadwalId, tanggal) {
+    const raw = db.prepare('SELECT ta_id FROM jadwal WHERE id=?').get(Number(jadwalId) || 0);
+    if (!raw) return { error: 'Slot jadwal tidak ditemukan.', status: 404 };
+    const semua = dbm.jadwalRows(Number(raw.ta_id) || taOf({}));
+    const source = semua.find(x => Number(x.id) === Number(jadwalId));
+    if (!source || Number(source.guru_id) !== Number(userId)) return { error: 'Slot ini bukan jadwal milik akun Anda.', status: 403 };
+    const cfg = dbm.jadwalConfig();
+    const slotsByDay = semua.filter(x => Number(x.hari) === Number(source.hari));
+    const sourceGroup = dbm.absensiKelompok(source, slotsByDay, cfg);
+    const sourceIds = new Set(sourceGroup.map(x => Number(x.id)));
+    const sourceDate = TUKAR_TGL(tanggal);
+    const sourceInfo = mapelGroupInfo(sourceGroup, sourceDate, cfg);
+    const diajar = new Set(db.prepare('SELECT mapel_id FROM guru_mapel WHERE guru_id=?')
+      .all(Number(userId)).map(x => Number(x.mapel_id)));
+    const sourceValid = diajar.has(Number(source.mapel_id));
+    const groupSeen = new Set();
+    const candidates = [];
+    for (const slot of semua.filter(x => Number(x.guru_id) === Number(userId))) {
+      const group = dbm.absensiKelompok(slot, semua.filter(x => Number(x.hari) === Number(slot.hari)), cfg);
+      const ids = group.map(x => Number(x.id));
+      const key = ids.slice().sort((a, b) => a - b).join(',');
+      if (!key || groupSeen.has(key) || ids.some(id => sourceIds.has(id))
+        || ids.length !== sourceGroup.length || Number(slot.mapel_id) === Number(source.mapel_id)
+        || !diajar.has(Number(slot.mapel_id))) continue;
+      groupSeen.add(key);
+      candidates.push({ group, info: mapelGroupInfo(group, '', cfg) });
+    }
+
+    const temporary = [];
+    const permanent = [];
+    const hasConflictingSwap = (ids, dates) => {
+      const ph = ids.map(() => '?').join(',');
+      if (!ph) return true;
+      const active = dates
+        ? db.prepare(`SELECT 1 FROM jadwal_tukar WHERE jadwal_id IN (${ph}) AND tanggal IN (?,?)
+            AND status IN ('pending','diterima') LIMIT 1`).get(...ids, dates[0], dates[1])
+        : db.prepare(`SELECT 1 FROM jadwal_tukar WHERE jadwal_id IN (${ph})
+            AND status IN ('pending','diterima') LIMIT 1`).get(...ids);
+      return !!active;
+    };
+    const hasAttendance = (ids, date) => {
+      const ph = ids.map(() => '?').join(',');
+      return !!(db.prepare(`SELECT 1 FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`).get(date, ...ids)
+        || db.prepare(`SELECT 1 FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${ph}) LIMIT 1`).get(date, ...ids));
+    };
+    const groupAvailable = (group, date) => {
+      const ids = group.map(x => Number(x.id));
+      if (hasAttendance(ids, date) || ids.some(id => dbm.jadwalKbmNonaktifMap(date).has(id))
+        || dbm.kalenderNonaktif(date)) return false;
+      const window = jendelaKelompok(group, date, cfg);
+      const mulai = window.sesi ? dbm.jamMenit(window.sesi.mulai) : null;
+      return !!window.sesi && !window.nonaktif && window.hariOk
+        && (date !== dbm.today() || (mulai !== null && dbm.nowMenit() < mulai));
+    };
+
+    if (sourceValid) {
+      for (const candidate of candidates) {
+        const ids = candidate.info.group_ids;
+        const infoTetap = { ...candidate.info };
+        if (!hasConflictingSwap([...sourceIds, ...ids], null)) permanent.push(infoTetap);
+        const targetDate = tanggalHariDalamMinggu(sourceDate, candidate.info.hari);
+        const tanggalSourceValid = tanggalTukarMapelValid(sourceDate);
+        if (tanggalSourceValid && targetDate > sourceDate
+          && groupAvailable(sourceGroup, sourceDate) && groupAvailable(candidate.group, targetDate)
+          && !hasConflictingSwap([...sourceIds, ...ids], [sourceDate, targetDate])) {
+          temporary.push({ ...candidate.info, tanggal: targetDate, tanggal_label: dbm.tanggalPanjang(targetDate) });
+        }
+      }
+    }
+    return {
+      source: sourceInfo,
+      sementara: temporary.sort((a, b) => a.tanggal.localeCompare(b.tanggal) || a.jam.localeCompare(b.jam)),
+      tetap: permanent.sort((a, b) => a.hari - b.hari || a.jam.localeCompare(b.jam))
+    };
+  }
+
+  get('/api/tukar-mapel/kandidat', (req, res, q) => {
+    const user = guard(req, res, 'absensi_guru', 'view'); if (!user) return;
+    const hasil = kandidatTukarMapel(user.id, Number(q.jadwal_id) || 0, TUKAR_TGL(q.tanggal));
+    if (hasil.error) return fail(res, hasil.status || 400, hasil.error);
+    json(res, 200, { ok: true, ...hasil });
+  });
+
+  post('/api/tukar-mapel', async (req, res) => {
+    const user = guard(req, res, 'absensi_guru', 'write'); if (!user) return;
+    const b = await readBody(req);
+    const mode = String(b.mode || '').toLowerCase();
+    if (!['sementara', 'tetap'].includes(mode)) return fail(res, 400, 'Pilih tukar sementara atau tukar tetap.');
+    const jadwalId = Number(b.jadwal_id) || 0;
+    const targetJadwalId = Number(b.pasangan_jadwal_id) || 0;
+    const tanggal = TUKAR_TGL(b.tanggal);
+    const kandidat = kandidatTukarMapel(user.id, jadwalId, tanggal);
+    if (kandidat.error) return fail(res, kandidat.status || 400, kandidat.error);
+    const opsi = mode === 'sementara' ? kandidat.sementara : kandidat.tetap;
+    const target = opsi.find(x => Number(x.jadwal_id) === targetJadwalId);
+    if (!target) {
+      return fail(res, 409, mode === 'sementara'
+        ? 'Jadwal tujuan sementara tidak tersedia pada pekan dan tanggal tersebut.'
+        : 'Jadwal tujuan tetap tidak tersedia atau sudah terlibat pertukaran aktif.');
+    }
+    const raw = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jadwalId);
+    const taId = Number(raw.ta_id) || taOf({});
+    const semua = dbm.jadwalRows(taId);
+    const source = semua.find(x => Number(x.id) === jadwalId);
+    const targetRow = semua.find(x => Number(x.id) === targetJadwalId);
+    if (!source || !targetRow) return fail(res, 404, 'Sebagian slot jadwal sudah tidak tersedia.');
+    const cfg = dbm.jadwalConfig();
+    const sourceGroup = dbm.absensiKelompok(source, semua.filter(x => Number(x.hari) === Number(source.hari)), cfg);
+    const targetGroup = dbm.absensiKelompok(targetRow, semua.filter(x => Number(x.hari) === Number(targetRow.hari)), cfg);
+    if (sourceGroup.length !== targetGroup.length
+      || sourceGroup.some(x => Number(x.guru_id) !== Number(user.id))
+      || targetGroup.some(x => Number(x.guru_id) !== Number(user.id))
+      || Number(source.mapel_id) === Number(targetRow.mapel_id)) {
+      return fail(res, 409, 'Pertukaran harus memakai dua mapel berbeda milik Anda dengan jumlah jam yang sama.');
+    }
+    const sourceIds = sourceGroup.map(x => Number(x.id));
+    const targetIds = targetGroup.map(x => Number(x.id));
+    const now = dbm.now();
+    if (mode === 'sementara') {
+      const sourceDate = tanggal;
+      const targetDate = target.tanggal;
+      const createdIds = [];
+      let rootId = 0;
+      db.transaction(() => {
+        const simpan = (group, date, mapelId) => group.forEach(slot => {
+          const result = db.prepare(`INSERT INTO jadwal_tukar
+            (jadwal_id,tanggal,ta_id,dari_guru,ke_guru,mapel_id,alasan,alasan_jenis,status,jenis,
+              dibuat_oleh,dibuat_nama,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,'Tukar mapel sementara','lainnya','diterima','mapel',?,?,?,?)`)
+            .run(Number(slot.id), date, Number(slot.ta_id) || taId, Number(user.id), Number(user.id),
+              Number(mapelId), Number(user.id), user.nama || '', now, now);
+          const id = Number(result.lastInsertRowid);
+          createdIds.push(id);
+          if (!rootId && Number(slot.id) === jadwalId && date === sourceDate) rootId = id;
+        });
+        simpan(sourceGroup, sourceDate, Number(targetRow.mapel_id));
+        simpan(targetGroup, targetDate, Number(source.mapel_id));
+        db.prepare(`UPDATE jadwal_tukar SET permintaan_id=? WHERE id IN (${createdIds.map(() => '?').join(',')})`)
+          .run(rootId, ...createdIds);
+      })();
+      dbm.logAudit(user, 'UBAH', 'absensi_guru',
+        `Tukar mapel sementara ${source.mapel_nama || '-'} ↔ ${target.mapel_nama || '-'} (${sourceDate} / ${targetDate})`, ipOf(req));
+      return json(res, 200, {
+        ok: true, mode, tanggal: sourceDate, tanggal_tujuan: targetDate,
+        pesan: `Mapel ditukar sementara pada ${dbm.HARI_LABEL[Number(source.hari)]} dan ${dbm.HARI_LABEL[Number(targetRow.hari)]}. Minggu berikutnya jadwal kembali seperti semula.`
+      });
+    }
+
+    db.transaction(() => {
+      for (let i = 0; i < sourceGroup.length; i++) {
+        const a = sourceGroup[i], bSlot = targetGroup[i];
+        db.prepare(`INSERT INTO jadwal_mapel_histori(jadwal_id,mapel_id,berlaku_mulai,oleh,created_at)
+          VALUES(?,?,?,?,?)`).run(Number(a.id), Number(a.mapel_id) || 0, dbm.today(), Number(user.id), now);
+        db.prepare(`INSERT INTO jadwal_mapel_histori(jadwal_id,mapel_id,berlaku_mulai,oleh,created_at)
+          VALUES(?,?,?,?,?)`).run(Number(bSlot.id), Number(bSlot.mapel_id) || 0, dbm.today(), Number(user.id), now);
+        db.prepare('UPDATE jadwal SET mapel_id=?,updated_at=? WHERE id=?')
+          .run(Number(bSlot.mapel_id), now, Number(a.id));
+        db.prepare('UPDATE jadwal SET mapel_id=?,updated_at=? WHERE id=?')
+          .run(Number(a.mapel_id), now, Number(bSlot.id));
+      }
+    })();
+    dbm.logAudit(user, 'UBAH', 'jadwal',
+      `Tukar mapel tetap ${source.mapel_nama || '-'} ↔ ${target.mapel_nama || '-'} pada jadwal guru ${user.nama || user.id}`, ipOf(req));
+    json(res, 200, {
+      ok: true, mode, pesan: `Jadwal rutin ${source.mapel_nama || 'mapel'} dan ${target.mapel_nama || 'mapel'} berhasil ditukar. Perubahan terlihat pada menu Jadwal dan Matriks.`
+    });
+  });
 
   /** guru pemilik sesi pada tanggal tertentu (mempertimbangkan tukar diterima) */
   const guruPemilik = (row, tanggal) => {
@@ -2953,7 +3148,7 @@ ${isi}
 
   /* keputusan pembatalan hanya dapat dilakukan admin, kepala sekolah, atau wakasek kurikulum */
   post('/api/tukar-jadwal/pembatalan/putus', async (req, res) => {
-    const user = guard(req, res, 'dashboard', 'view'); if (!user) return;
+    const user = guard(req, res, 'guru_pengganti', 'write'); if (!user) return;
     const roles = dbm.userRoleList(user);
     if (!roles.some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role))) {
       return fail(res, 403, 'Hanya Admin, Kepala Sekolah, atau Wakasek Kurikulum yang dapat memutus permintaan pembatalan.');

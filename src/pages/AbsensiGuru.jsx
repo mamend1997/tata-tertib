@@ -42,6 +42,7 @@ export default function AbsensiGuru({ ctx }) {
   const [waBusy, setWaBusy] = useState(false);
   const [waInfo, setWaInfo] = useState(null);
   const [tukarSlot, setTukarSlot] = useState(null);   // slot untuk modal tukar jadwal
+  const [tukarMapelSlot, setTukarMapelSlot] = useState(null);
   const [tukarBusy, setTukarBusy] = useState(0);
   /* JADWAL MENGAJAR SAYA (hari ini + hari berikutnya) + hitung mundur */
   const [agenda, setAgenda] = useState(null);
@@ -255,6 +256,7 @@ export default function AbsensiGuru({ ctx }) {
                           <span className="block truncate text-[11px] text-slate-500">
                             {sl.kelas_nama}{sl.tukar ? ` · pengganti ${sl.tukar.dari_nama ? `dari ${sl.tukar.dari_nama}` : ''}` : ''}
                             {agendaSemua && bukanMilik ? ` · ${sl.guru_efektif_nama || 'guru lain'}` : ''}
+                            {sl.tukar?.jenis === 'mapel' ? ' · mapel ditukar sementara' : ''}
                           </span>
                         </span>
                         <span className={cx('badge shrink-0',
@@ -293,6 +295,13 @@ export default function AbsensiGuru({ ctx }) {
                             onClick={() => setTukarSlot({ ...sl, id: sl.jadwal_id, tanggal: h.tanggal })}
                             data-tukar-hari={sl.jadwal_id}>
                             <Repeat size={12} /> Rencana Tukar Jadwal
+                          </button>
+                        ) : null}
+                        {sl.bisa_tukar_mapel ? (
+                          <button type="button" className="btn-ghost btn-sm"
+                            onClick={() => setTukarMapelSlot({ slot: { ...sl, id: sl.jadwal_id }, tanggal: h.tanggal })}
+                            data-tukar-mapel-agenda={sl.jadwal_id}>
+                            <Repeat size={12} /> Tukar Mapel
                           </button>
                         ) : null}
                       </div>
@@ -402,7 +411,9 @@ export default function AbsensiGuru({ ctx }) {
                   {j.tukar ? (
                     <p className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-violet-50 px-2 py-1.5 text-[11px] font-semibold text-violet-800" data-tukar-aktif={j.id}>
                       <Repeat size={12} />
-                      {j.tukar.jenis === 'penugasan'
+                      {j.tukar.jenis === 'mapel'
+                        ? <>Mapel ini ditukar sementara · jadwal rutin tetap</>
+                        : j.tukar.jenis === 'penugasan'
                         ? <>Slot ditugaskan kepada <b>{j.tukar.ke_nama}</b>. Absensi siswa dan jurnal diisi melalui menu Guru Piket & Pengganti.</>
                         : Number(j.tukar.ke_guru) === Number(data?.saya?.id)
                         ? <>Sesi pengganti dari <b>{j.tukar.dari_nama}</b> (tukar jadwal pekan ini)</>
@@ -421,6 +432,13 @@ export default function AbsensiGuru({ ctx }) {
                           : 'Tukar jadwal hanya dapat diajukan sebelum check-in pada hari sesi ini')}
                       data-tukar={j.id}>
                       <Repeat size={13} /> Tukar Jadwal
+                    </button>
+                  ) : null}
+                  {j.bisa_tukar_mapel ? (
+                    <button type="button" className="btn btn-sm mt-1.5 w-full justify-center border border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
+                      onClick={() => setTukarMapelSlot({ slot: j, tanggal })}
+                      data-tukar-mapel={j.id}>
+                      <Repeat size={13} /> Tukar Mapel
                     </button>
                   ) : null}
                 </div>
@@ -565,6 +583,11 @@ export default function AbsensiGuru({ ctx }) {
 
       <ModalTukar open={!!tukarSlot} slot={tukarSlot} tanggal={tukarSlot?.tanggal || tanggal}
         onClose={() => setTukarSlot(null)} onSaved={() => { setTukarSlot(null); load(); }} />
+
+      <ModalTukarMapel open={!!tukarMapelSlot} slot={tukarMapelSlot?.slot}
+        tanggal={tukarMapelSlot?.tanggal || tanggal}
+        onClose={() => setTukarMapelSlot(null)}
+        onSaved={() => { setTukarMapelSlot(null); load(); loadAgenda(); }} />
 
       <Modal open={waOpen} onClose={() => setWaOpen(false)} title="Rekap Absensi Guru via WhatsApp" size="md"
         subtitle={waInfo ? 'Pratinjau pesan yang akan dikirim ke Kepala Sekolah & Wakasek Kurikulum.' : ''}
@@ -869,6 +892,120 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           </p>
         </div>
       )}
+    </Modal>
+  );
+}
+
+function ModalTukarMapel({ open, slot, tanggal, onClose, onSaved }) {
+  const toast = useToast();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState('sementara');
+  const [targetId, setTargetId] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || !slot?.id) return;
+    let active = true;
+    setData(null);
+    setTargetId('');
+    setMode('sementara');
+    setLoading(true);
+    api(`/api/tukar-mapel/kandidat?jadwal_id=${slot.id}&tanggal=${tanggal}`)
+      .then(r => { if (active) setData(r); })
+      .catch(e => { if (active) toast.err(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [open, slot?.id, tanggal]);
+
+  const opsi = mode === 'sementara' ? (data?.sementara || []) : (data?.tetap || []);
+  useEffect(() => {
+    if (!opsi.length) { setTargetId(''); return; }
+    if (!opsi.some(x => String(x.jadwal_id) === targetId)) {
+      setTargetId(String(opsi[0].jadwal_id));
+    }
+  }, [mode, data, targetId]);
+  const terpilih = opsi.find(x => String(x.jadwal_id) === targetId) || null;
+
+  async function simpan() {
+    if (!terpilih) return toast.err('Pilih jadwal mapel tujuan.');
+    if (mode === 'tetap'
+      && !window.confirm('Tukar tetap akan mengubah jadwal rutin dan tampil pada menu Jadwal/Matriks. Lanjutkan?')) return;
+    setBusy(true);
+    try {
+      const r = await api('/api/tukar-mapel', {
+        method: 'POST',
+        body: { jadwal_id: slot.id, tanggal, pasangan_jadwal_id: terpilih.jadwal_id, mode }
+      });
+      toast.ok(r.pesan || 'Posisi mata pelajaran berhasil ditukar.');
+      onSaved?.();
+    } catch (e) { toast.err(e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Tukar Mapel" size="md"
+      subtitle={data?.source
+        ? `${data.source.mapel_nama} · ${data.source.hari_label} · ${data.source.sesi} · ${data.source.jam}`
+        : ''}
+      footer={<>
+        <button className="btn-ghost" onClick={onClose}>Batal</button>
+        <button className="btn-primary" disabled={busy || loading || !terpilih}
+          onClick={simpan} data-simpan-tukar-mapel>
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Repeat size={15} />}
+          Simpan Tukar Mapel
+        </button>
+      </>}>
+      {loading && !data ? <Spinner label="Memuat jadwal mapel Anda…" /> : data ? (
+        <div className="space-y-3" data-modal-tukar-mapel>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button type="button" onClick={() => setMode('sementara')}
+              className={cx('btn justify-center', mode === 'sementara'
+                ? 'border-indigo-300 bg-indigo-100 text-indigo-900'
+                : 'border-slate-200 bg-white text-slate-600')}
+              data-mode-tukar-mapel="sementara">
+              <CalendarClock size={14} /> Tukar Sementara
+            </button>
+            <button type="button" onClick={() => setMode('tetap')}
+              className={cx('btn justify-center', mode === 'tetap'
+                ? 'border-indigo-300 bg-indigo-100 text-indigo-900'
+                : 'border-slate-200 bg-white text-slate-600')}
+              data-mode-tukar-mapel="tetap">
+              <CalendarDays size={14} /> Tukar Tetap
+            </button>
+          </div>
+          <p className="rounded-xl bg-indigo-50 px-3 py-2 text-[11.5px] text-indigo-900">
+            {mode === 'sementara'
+              ? `Berlaku pada ${data.source?.tanggal_label || tanggal} dan tanggal tujuan yang dipilih. Minggu berikutnya jadwal kembali seperti semula.`
+              : 'Mengubah jadwal rutin mulai sekarang. Perubahan terlihat pada menu Jadwal dan Matriks; rekap sebelum hari ini tetap memakai mapel sebelumnya.'}
+          </p>
+          <Field label="Jadwal mapel tujuan" required
+            hint="Hanya menampilkan mapel lain yang juga diampu akun Anda dan memiliki jumlah jam yang sama.">
+            <select className="input" value={targetId} disabled={loading || !opsi.length}
+              onChange={e => setTargetId(e.target.value)} data-pilih-tukar-mapel>
+              <option value="">— pilih mapel dan jadwal tujuan —</option>
+              {opsi.map(x => (
+                <option key={x.jadwal_id} value={x.jadwal_id}>
+                  {x.mapel_nama} · {x.hari_label}{x.tanggal ? ` ${x.tanggal}` : ''} · {x.sesi} · {x.jam}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {terpilih ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-3 text-[12px] text-slate-600">
+              <p><b>Mapel asal:</b> {data.source?.mapel_nama} · {data.source?.hari_label} · {data.source?.sesi} · {data.source?.jam}</p>
+              <p className="mt-1"><b>Mapel tujuan:</b> {terpilih.mapel_nama} · {terpilih.hari_label}
+                {terpilih.tanggal ? ` · ${terpilih.tanggal_label}` : ''} · {terpilih.sesi} · {terpilih.jam}</p>
+            </div>
+          ) : (
+            <Alert tone="warn" title={mode === 'sementara' ? 'Tidak ada jadwal sementara yang tersedia' : 'Tidak ada mapel tujuan'}>
+              {mode === 'sementara'
+                ? 'Pilih jadwal asal yang belum berlangsung dan memiliki mapel lain pada hari setelahnya di pekan yang sama.'
+                : 'Akun Anda perlu memiliki setidaknya dua mapel terjadwal dengan jumlah jam yang sama.'}
+            </Alert>
+          )}
+        </div>
+      ) : null}
     </Modal>
   );
 }

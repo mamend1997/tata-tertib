@@ -116,7 +116,12 @@ module.exports = function mount(api) {
     for (let d = r.dari; d <= akhir; d = addDays(d, 1)) {
       if (parseISO(d).getTime() - parseISO(r.dari).getTime() > 400 * 86400000) break;
       const hari = dbm.hariOf(d);
-      const slotsHari = slots.filter(s => Number(s.hari) === hari);
+      const slotsHari = slots.filter(s => Number(s.hari) === hari).map(s => {
+        const mapelId = dbm.jadwalMapelPada(s.id, d, s.mapel_id);
+        if (mapelId === Number(s.mapel_id)) return s;
+        const mapel = db.prepare('SELECT nama,kode FROM mapel WHERE id=?').get(mapelId) || {};
+        return { ...s, mapel_id: mapelId, mapel_nama: mapel.nama || '', mapel_kode: mapel.kode || '' };
+      });
       const tukar = dbm.tukarMap(d);
       const nonaktifKbm = dbm.jadwalKbmNonaktifMap(d);
       const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")

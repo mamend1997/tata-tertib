@@ -538,11 +538,14 @@ async function stopServer() {
       });
       ok('guru tujuan juga dapat meminta pembatalan pertukaran',
         r.status === 200 && r.body.status === 'pending', r.body?.error);
+      const izinDashboardWakasek = new Database(DB);
+      izinDashboardWakasek.prepare("UPDATE permissions SET allowed=0 WHERE role='wakasek_kurikulum' AND feature='dashboard' AND action='view'").run();
+      izinDashboardWakasek.close();
       await login('wakasek', 'guru123');
       r = await req('/api/tukar-jadwal/pembatalan/putus', {
         method: 'POST', body: { id: lintasId, aksi: 'setujui' }
       });
-      ok('Wakasek Kurikulum dapat menyetujui pembatalan',
+      ok('Wakasek Kurikulum dapat menyetujui pembatalan tanpa izin Dashboard',
         r.status === 200 && r.body.status === 'batal', r.body?.error);
       const dibatalkanDb = new Database(DB);
       const statusSetelahSetuju = dibatalkanDb.prepare(`SELECT DISTINCT status FROM jadwal_tukar

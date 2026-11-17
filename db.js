@@ -240,6 +240,19 @@ CREATE TABLE IF NOT EXISTS jadwal_kbm_nonaktif (
 CREATE INDEX IF NOT EXISTS idx_jadwal_kbm_nonaktif_tanggal ON jadwal_kbm_nonaktif(tanggal, jadwal_id);
 `;
 
+const JADWAL_MAPEL_HISTORI_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS jadwal_mapel_histori (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  jadwal_id INTEGER NOT NULL,
+  mapel_id INTEGER,
+  berlaku_mulai TEXT NOT NULL,
+  oleh INTEGER,
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_jadwal_mapel_histori_tanggal
+  ON jadwal_mapel_histori(jadwal_id, berlaku_mulai, id);
+`;
+
 /* REKAM KETIDAKHADIRAN GURU pada satu slot/tanggal (Sakit/Izin/Alpha).
    Dipisah dari absensi_guru karena absensi_guru hanya boleh satu baris per
    (jadwal,tanggal): bila kurikulum menunjuk GURU PENGGANTI, baris ketidakhadiran
@@ -715,6 +728,7 @@ function runMigrations() {
     /* permintaan tukar jadwal mengajar (temporer per tanggal) */
     db.exec(TUKAR_SCHEMA_SQL);
     db.exec(JADWAL_KBM_NONAKTIF_SCHEMA_SQL);
+    db.exec(JADWAL_MAPEL_HISTORI_SCHEMA_SQL);
     /* kolom penunjukan pengganti (DB sekolah yang sudah berjalan) */
     ensureColumn('jadwal_tukar', 'jenis', "TEXT DEFAULT 'tukar'");
     ensureColumn('jadwal_tukar', 'dibuat_oleh', 'INTEGER');
@@ -758,6 +772,7 @@ function runMigrations() {
     /* permintaan tukar yang menunjuk slot jadwal yang sudah tidak ada */
     db.exec('DELETE FROM jadwal_tukar WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
     db.exec('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
+    db.exec('DELETE FROM jadwal_mapel_histori WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
     db.exec('DELETE FROM absensi_guru_abaikan WHERE jadwal_id NOT IN (SELECT id FROM jadwal)');
     /* ABSENSI YATIM: slot jadwal yang DIHAPUS meninggalkan baris absensi guru
        (termasuk ALFA otomatis) & rekam izin yang tidak punya jadwal lagi.
@@ -1817,6 +1832,7 @@ function tahunDelete(id, user, opts = {}) {
       hapus += db.prepare('DELETE FROM absensi_guru WHERE ta_id=?').run(n).changes;
       hapus += db.prepare('DELETE FROM jadwal_tukar WHERE ta_id=? OR jadwal_id IN (SELECT id FROM jadwal WHERE ta_id=?)').run(n, n).changes;
       hapus += db.prepare('DELETE FROM jadwal_kbm_nonaktif WHERE jadwal_id IN (SELECT id FROM jadwal WHERE ta_id=?)').run(n).changes;
+      hapus += db.prepare('DELETE FROM jadwal_mapel_histori WHERE jadwal_id IN (SELECT id FROM jadwal WHERE ta_id=?)').run(n).changes;
       hapus += db.prepare('DELETE FROM jadwal WHERE ta_id=?').run(n).changes;
       /* siswa & kelas milik tahun pelajaran ini */
       hapus += db.prepare('DELETE FROM siswa WHERE tahun_ajaran_id=?').run(n).changes;
@@ -4176,6 +4192,14 @@ function jadwalRows(taId) {
     };
   });
 }
+/** Mata pelajaran efektif pada tanggal tertentu, untuk menjaga label rekap lampau
+ * setelah mapel pada jadwal rutin ditukar secara tetap. */
+function jadwalMapelPada(jadwalId, tanggal, fallbackMapelId) {
+  const perubahan = db.prepare(`SELECT mapel_id FROM jadwal_mapel_histori
+    WHERE jadwal_id=? AND berlaku_mulai>? ORDER BY berlaku_mulai,id LIMIT 1`)
+    .get(Number(jadwalId) || 0, String(tanggal || today()).slice(0, 10));
+  return perubahan ? Number(perubahan.mapel_id) || 0 : Number(fallbackMapelId) || 0;
+}
 /**
  * ============ TUKAR JADWAL MENGAJAR ANTAR GURU (temporer) ============
  * Satu permintaan memasangkan dua slot mapel pada tanggal tersebut. Bila guru
@@ -4230,12 +4254,14 @@ function dekorTukar(r) {
 function tukarMasuk(guruId, { status } = {}) {
   const st = status ? String(status) : 'pending';
   return db.prepare(`${TUKAR_SELECT} WHERE t.ke_guru=? AND t.status=?
+    AND COALESCE(t.jenis,'tukar')<>'mapel'
     AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id) ORDER BY t.tanggal DESC, t.id DESC`)
     .all(Number(guruId) || 0, st).map(dekorTukar);
 }
 /** riwayat permintaan yang DIAJUKAN seorang guru (semua status) */
 function tukarKeluar(guruId, limit = 30) {
   return db.prepare(`${TUKAR_SELECT} WHERE t.dari_guru=?
+    AND COALESCE(t.jenis,'tukar')<>'mapel'
     AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id)
     ORDER BY t.tanggal DESC, t.id DESC LIMIT ?`)
     .all(Number(guruId) || 0, Math.max(1, Number(limit) || 30)).map(dekorTukar);
@@ -4244,6 +4270,7 @@ function tukarKeluar(guruId, limit = 30) {
 function tukarTerlibat(guruId, limit = 30) {
   const id = Number(guruId) || 0;
   return db.prepare(`${TUKAR_SELECT} WHERE t.status='diterima' AND (t.dari_guru=? OR t.ke_guru=?)
+    AND COALESCE(t.jenis,'tukar')<>'mapel'
     AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id)
     ORDER BY t.tanggal DESC,t.id DESC LIMIT ?`)
     .all(id, id, Math.max(1, Number(limit) || 30)).map(dekorTukar);
@@ -4688,7 +4715,12 @@ function absensiGuruRekap(tanggal, taId) {
   const tgl = String(tanggal || today()).slice(0, 10);
   const hari = hariOf(tgl);
   const cfg = jadwalConfig();
-  const slots = jadwalRows(taId).filter(r => Number(r.hari) === hari);
+  const slots = jadwalRows(taId).filter(r => Number(r.hari) === hari).map(r => {
+    const mapelId = jadwalMapelPada(r.id, tgl, r.mapel_id);
+    if (mapelId === Number(r.mapel_id)) return r;
+    const mapel = db.prepare('SELECT nama,kode FROM mapel WHERE id=?').get(mapelId) || {};
+    return { ...r, mapel_id: mapelId, mapel_nama: mapel.nama || '', mapel_kode: mapel.kode || '' };
+  });
   const abs = db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?')
     .all(tgl, Number(taId) || 0);
   const absMap = new Map(abs.map(a => [Number(a.jadwal_id), a]));
@@ -4891,6 +4923,7 @@ module.exports = {
   KALENDER_WARNA_DEFAULT, kalenderWarna, kalenderSemester, kalenderSemesterOf, kalenderRentang,
   tukarOf, tukarAktif, tukarMap, tukarGuruEfektif, tukarMasuk, tukarKeluar,
   tukarTerlibat, tukarPembatalanMasuk, TUKAR_SCHEMA_SQL,
+  jadwalMapelPada, JADWAL_MAPEL_HISTORI_SCHEMA_SQL,
   pencatatOf, pencatatSudah, pencatatAdd, PENCATAT_SCHEMA_SQL, IZIN_SCHEMA_SQL,
   waFill, waTemplateAlfa, waTemplateIzin, waLogAdd, waSudahKirim,
   BOTTOM_NAV_DEFAULT, BOTTOM_NAV_MAX, bottomNavConfig, bottomNavFor, setBottomNav,
