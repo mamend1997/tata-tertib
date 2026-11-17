@@ -661,6 +661,9 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
     if (!guruId) return toast.err('Pilih guru pengganti terlebih dahulu.');
     if (!lintasHari && alasan.trim().length < 5) return toast.err('Alasan tukar wajib diisi minimal 5 karakter.');
     if (lintasHari && !['izin', 'sakit'].includes(alasanJenis)) return toast.err('Pilih alasan Izin atau Sakit.');
+    if (lintasHari && alasan.trim().length < 5) {
+      return toast.err(`Keterangan ${alasanJenis === 'izin' ? 'izin' : 'sakit'} wajib diisi minimal 5 karakter.`);
+    }
     setBusy(true);
     try {
       const r = await api('/api/tukar-jadwal', {
@@ -670,7 +673,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           pasangan_jadwal_id: lintasHari ? Number(mapelTerpilih?.jadwal_id) || 0 : undefined,
           pasangan_tanggal: lintasHari ? mapelTerpilih?.tanggal : tanggal,
           alasan_jenis: lintasHari ? alasanJenis : 'lainnya',
-          alasan: lintasHari ? alasanJenis : alasan
+          alasan
         }
       });
       toast.ok(r.pesan || 'Permintaan tukar jadwal dikirim.');
@@ -732,10 +735,10 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           </div>
 
           {lintasHari ? (
-            <Field label="Alasan pertukaran lintas hari" required>
+            <Field label="Jenis alasan pertukaran" required>
               <div className="grid grid-cols-2 gap-2">
                 {['izin', 'sakit'].map(jenis => (
-                  <button type="button" key={jenis} onClick={() => setAlasanJenis(jenis)}
+                  <button type="button" key={jenis} onClick={() => { setAlasanJenis(jenis); setAlasan(''); }}
                     className={cx('btn justify-center', alasanJenis === jenis
                       ? 'border-violet-300 bg-violet-100 text-violet-900'
                       : 'border-slate-200 bg-white text-slate-600')}
@@ -745,6 +748,14 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
                   </button>
                 ))}
               </div>
+            </Field>
+          ) : null}
+          {lintasHari ? (
+            <Field label={alasanJenis === 'izin' ? 'Keterangan Izin' : 'Keterangan Sakit'} required
+              hint="Keterangan wajib diisi minimal 5 karakter dan tidak dicatat sebagai status absensi.">
+              <textarea className="input" rows={3} value={alasan} onChange={e => setAlasan(e.target.value)}
+                placeholder={alasanJenis === 'izin' ? 'Jelaskan keperluan izin…' : 'Jelaskan alasan sakit…'}
+                data-alasan-tukar-lintas />
             </Field>
           ) : null}
 

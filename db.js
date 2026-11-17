@@ -2616,52 +2616,76 @@ function semesterOf(iso) {
 /**
  * Sinkronisasi status absensi siswa (Alpha / Bolos) menjadi catatan pelanggaran
  * di Buku Poin. Dipanggil setiap kali presensi disimpan (guru, wali kelas,
- * ketua kelas, maupun admin). Idempoten: satu baris absensi = satu catatan.
+ * ketua kelas, maupun admin). Maksimal satu catatan per siswa/tanggal.
  * Status yang dikoreksi menjadi Hadir/Sakit/Izin menghapus catatan otomatis.
  */
 function absensiPoinSync(sesi, pencatat, pencatatRole, userId) {
   if (!sesi || !sesi.id) return { dibuat: 0, diperbarui: 0, dihapus: 0 };
   const cfg = absensiPoinConfig();
-  const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(Number(sesi.mapel_id)) || {};
   const rows = db.prepare(`SELECT a.*, s.nama AS siswa_nama, k.nama AS kelas_nama
     FROM absensi_siswa a LEFT JOIN siswa s ON s.id=a.siswa_id LEFT JOIN kelas k ON k.id=a.kelas_id
     WHERE a.sesi_id=?`).all(Number(sesi.id));
-  const jam = (() => {
-    try {
-      const j = db.prepare('SELECT sesi,hari FROM jadwal WHERE id=?').get(Number(sesi.jadwal_id)) || {};
-      const s = sesiOfHari(null, j.hari).find(x => Number(x.idx) === Number(j.sesi));
-      return s ? s.mulai : '';
-    } catch (e) { return ''; }
-  })();
   let dibuat = 0, diperbarui = 0, dihapus = 0;
+  const diproses = new Set();
   db.transaction(() => {
     for (const r of rows) {
-      const ada = db.prepare("SELECT * FROM kejadian WHERE sumber='absensi' AND ref_id=?").get(Number(r.id));
-      const alfa = r.status === 'A', bolos = r.status === 'B';
-      if (!alfa && !bolos) {
-        if (ada) { db.prepare('DELETE FROM kejadian WHERE id=?').run(ada.id); dihapus++; }
+      const key = `${Number(r.siswa_id)}|${String(sesi.tanggal)}`;
+      if (diproses.has(key)) continue;
+      diproses.add(key);
+      const terkait = db.prepare(`SELECT a.*, k.nama AS kelas_nama, j.sesi, j.hari,
+          COALESCE(s.mapel_id,j.mapel_id) AS mapel_id, COALESCE(s.ta_id,j.ta_id) AS ta_id
+        FROM absensi_siswa a
+        LEFT JOIN absensi_sesi s ON s.id=a.sesi_id
+        LEFT JOIN jadwal j ON j.id=COALESCE(s.jadwal_id,a.jadwal_id)
+        LEFT JOIN kelas k ON k.id=a.kelas_id
+        WHERE a.siswa_id=? AND a.tanggal=?
+        ORDER BY a.id`).all(Number(r.siswa_id), String(sesi.tanggal));
+      const tidakHadir = terkait.filter(x => x.status === 'A' || x.status === 'B');
+      const sasaran = tidakHadir.find(x => x.status === 'B') || tidakHadir[0] || null;
+      const kejadian = db.prepare(`SELECT * FROM kejadian
+        WHERE sumber='absensi' AND siswa_id=? AND tanggal=? ORDER BY id`)
+        .all(Number(r.siswa_id), String(sesi.tanggal));
+      if (!sasaran) {
+        if (kejadian.length) {
+          db.prepare(`DELETE FROM kejadian WHERE id IN (${kejadian.map(() => '?').join(',')})`)
+            .run(...kejadian.map(x => Number(x.id)));
+          dihapus += kejadian.length;
+        }
         continue;
       }
-      if (!cfg.aktif) continue;
+      const alfa = sasaran.status === 'A';
       const kat = alfa ? cfg.alfa : cfg.bolos;
-      if (!kat.id || !kat.aktif) continue;
+      const mapelId = Number(sasaran.mapel_id) || Number(sesi.mapel_id);
+      const mapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(mapelId) || {};
+      const ada = kejadian.find(x => Number(x.ref_id) === Number(sasaran.id)) || kejadian[0] || null;
+      const duplikat = kejadian.filter(x => !ada || Number(x.id) !== Number(ada.id));
+      if (duplikat.length) {
+        db.prepare(`DELETE FROM kejadian WHERE id IN (${duplikat.map(() => '?').join(',')})`)
+          .run(...duplikat.map(x => Number(x.id)));
+        dihapus += duplikat.length;
+      }
+      if (!cfg.aktif || !kat.id || !kat.aktif) continue;
+      const jadwal = db.prepare('SELECT sesi,hari FROM jadwal WHERE id=?')
+        .get(Number(sasaran.jadwal_id || sesi.jadwal_id)) || {};
+      const jam = sesiOfHari(null, jadwal.hari).find(x => Number(x.idx) === Number(jadwal.sesi))?.mulai || '';
       const label = alfa ? 'Alpha' : 'Bolos';
       const ket = `Otomatis dari Absensi ${mapel.nama || 'Mata Pelajaran'} tanggal ${tanggalPanjang(sesi.tanggal)}`
         + ` - Status: ${label}`
-        + (r.kelas_nama ? ` · Kelas ${r.kelas_nama}` : '')
+        + (sasaran.kelas_nama ? ` · Kelas ${sasaran.kelas_nama}` : '')
         + (pencatat ? ` · Pencatat: ${pencatat}` : '');
       const judul = `${label} — ${mapel.nama || 'Mata Pelajaran'}`;
-      const taId = Number(sesi.ta_id) || (tahunAktif() || {}).id || null;
+      const taId = Number(sasaran.ta_id) || Number(sesi.ta_id) || (tahunAktif() || {}).id || null;
       const sem = semesterOf(sesi.tanggal);
       if (ada) {
-        db.prepare(`UPDATE kejadian SET kategori_id=?,judul=?,jenis='pelanggaran',poin=?,tanggal=?,jam=?,keterangan=?,ta_id=?,semester=?,oleh=?,oleh_nama=? WHERE id=?`)
-          .run(kat.id, judul, kat.poin, sesi.tanggal, jam, ket, taId, sem, userId || null, pencatat || ada.oleh_nama || '', ada.id);
+        db.prepare(`UPDATE kejadian SET siswa_id=?,kategori_id=?,judul=?,jenis='pelanggaran',poin=?,tanggal=?,jam=?,keterangan=?,ta_id=?,semester=?,oleh=?,oleh_nama=?,ref_id=? WHERE id=?`)
+          .run(Number(sasaran.siswa_id), kat.id, judul, kat.poin, sesi.tanggal, jam, ket, taId, sem,
+            userId || null, pencatat || ada.oleh_nama || '', Number(sasaran.id), ada.id);
         diperbarui++;
       } else {
         db.prepare(`INSERT INTO kejadian(siswa_id,kategori_id,judul,jenis,poin,tanggal,jam,keterangan,bukti_url,ta_id,semester,oleh,oleh_nama,created_at,sumber,ref_id)
           VALUES(?,?,?,?,?,?,?,?,'',?,?,?,?,?,?,?)`)
-          .run(Number(r.siswa_id), kat.id, judul, 'pelanggaran', kat.poin, sesi.tanggal, jam, ket,
-            taId, sem, userId || null, pencatat || '', now(), 'absensi', Number(r.id));
+          .run(Number(sasaran.siswa_id), kat.id, judul, 'pelanggaran', kat.poin, sesi.tanggal, jam, ket,
+            taId, sem, userId || null, pencatat || '', now(), 'absensi', Number(sasaran.id));
         dibuat++;
       }
     }
@@ -4455,11 +4479,18 @@ function absensiAlur(jadwalId, tanggal) {
   const jadwal = db.prepare('SELECT * FROM jadwal WHERE id=?').get(jid) || {};
   const kelasIds = jadwalKelasIds(jadwal);
   const total = kelasIds.length ? siswaOfKelas(kelasIds).length : 0;
-  const sesi = db.prepare('SELECT id FROM absensi_sesi WHERE jadwal_id=? AND tanggal=?').get(jid, tgl);
+  const cfg = jadwalConfig();
+  const semua = jadwalRows(Number(jadwal.ta_id) || 0).filter(x => Number(x.hari) === Number(jadwal.hari));
+  const group = jadwal.id ? absensiKelompok(jadwal, semua, cfg) : [jadwal];
+  const groupIds = group.map(x => Number(x.id)).filter(Boolean);
+  const sesiRows = groupIds.length
+    ? db.prepare(`SELECT id,jadwal_id FROM absensi_sesi WHERE tanggal=? AND jadwal_id IN (${groupIds.map(() => '?').join(',')})`)
+      .all(tgl, ...groupIds)
+    : [];
+  const sesi = sesiRows.find(x => Number(x.jadwal_id) === Number(group[0] && group[0].id)) || sesiRows[0] || null;
   const terisi = sesi
     ? db.prepare('SELECT COUNT(*) c FROM absensi_siswa WHERE sesi_id=?').get(Number(sesi.id)).c
     : 0;
-  const cfg = jadwalConfig();
   const jurnalTeks = row ? String(row.materi || '').trim() : '';
   const jurnalLengkap = !!row && row.status !== 'hadir'
     ? true                                   // izin/sakit tidak wajib jurnal
@@ -4512,6 +4543,8 @@ function autoAlfaGuru(tanggal) {
   /* TUKAR JADWAL: slot yang sudah ditukar untuk tanggal ini menjadi tanggung
      jawab guru pengganti — guru asli tidak boleh tercatat ALFA. */
   const tukar = tukarMap(tgl);
+  const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")
+    .all(tgl).map(row => Number(row.jadwal_id)));
   const guruEfektif = (r) => {
     const t = tukar.get(Number(r.id));
     return t ? Number(t.ke_guru) : Number(r.guru_id);
@@ -4530,6 +4563,17 @@ function autoAlfaGuru(tanggal) {
       const tutup = jamMenit(w.tutup);
       if (tutup === null || kini <= tutup) continue;   // jendela masih berjalan / belum mulai
       const ids = items.map(x => Number(x.id));
+      if (ids.some(id => pendingTukar.has(id))) {
+        const autoRows = db.prepare(`SELECT id,validasi FROM absensi_guru
+          WHERE tanggal=? AND status='alpha' AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
+          .all(tgl, ...ids);
+        for (const row of autoRows) {
+          if (/"auto"\s*:\s*true/.test(String(row.validasi || ''))) {
+            db.prepare('DELETE FROM absensi_guru WHERE id=?').run(Number(row.id));
+          }
+        }
+        continue;
+      }
       const diabaikan = new Set(db.prepare(`SELECT jadwal_id FROM absensi_guru_abaikan
         WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`).all(tgl, ...ids)
         .map(row => Number(row.jadwal_id)));
@@ -4553,6 +4597,7 @@ function autoAlfaGuru(tanggal) {
        jam pelajaran berakhir → status diturunkan menjadi alpha (terkunci). */
     for (const items of kelompok.values()) {
       const ids = items.map(x => Number(x.id));
+      if (ids.some(id => pendingTukar.has(id))) continue;
       const rows = db.prepare(`SELECT * FROM absensi_guru WHERE tanggal=? AND jadwal_id IN (${ids.map(() => '?').join(',')})`)
         .all(tgl, ...ids);
       if (!rows.some(row => row.status === 'hadir') || rows.every(row => String(row.validasi || '').includes('"auto":true'))) continue;
@@ -4596,6 +4641,8 @@ function absensiGuruRekap(tanggal, taId) {
   const diabaikan = new Set(db.prepare('SELECT jadwal_id FROM absensi_guru_abaikan WHERE tanggal=?').all(tgl)
     .map(row => Number(row.jadwal_id)));
   const tukar = tukarMap(tgl);
+  const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")
+    .all(tgl).map(row => Number(row.jadwal_id)));
   const guru = new Map();
   for (const mapelHari of absensiMapelHari(slots, tukar)) {
     const group = mapelHari.rows;
@@ -4616,7 +4663,10 @@ function absensiGuruRekap(tanggal, taId) {
       guru_id: gid, nama: guruNama || ('Guru #' + gid), nip: guruNip || '',
       jadwal: 0, hadir: 0, izin: 0, sakit: 0, alpha: 0, belum: 0, slots: []
     };
-    const absGroup = ids.map(id => absMap.get(id)).filter(Boolean);
+    const pending = ids.some(id => pendingTukar.has(id));
+    const absGroup = ids.map(id => absMap.get(id)).filter(Boolean)
+      .filter(row => !(pending && row.status === 'alpha' && /"auto"\s*:\s*true/.test(String(row.validasi || ''))));
+    if (pending && !absGroup.length) continue;
     if (!absGroup.length && ids.every(id => diabaikan.has(id))) continue;
     entry.jadwal++;
     const a = absGroup[0] || null;

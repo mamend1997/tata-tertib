@@ -118,6 +118,8 @@ module.exports = function mount(api) {
       const hari = dbm.hariOf(d);
       const slotsHari = slots.filter(s => Number(s.hari) === hari);
       const tukar = dbm.tukarMap(d);
+      const pendingTukar = new Set(db.prepare("SELECT jadwal_id FROM jadwal_tukar WHERE tanggal=? AND status='pending'")
+        .all(d).map(x => Number(x.jadwal_id)));
       for (const mapelHari of dbm.absensiMapelHari(slotsHari, tukar)) {
         const group = mapelHari.rows;
         const s = group[0];
@@ -126,8 +128,11 @@ module.exports = function mount(api) {
         const effectiveGuruId = mapelHari.guru_id;
         const effectiveMapelId = mapelHari.mapel_id;
         const effectiveMapel = db.prepare('SELECT nama FROM mapel WHERE id=?').get(effectiveMapelId) || {};
-        const records = ids.map(id => absMap.get(`${id}|${d}`)).filter(Boolean);
+        const sedangMenunggu = ids.some(id => pendingTukar.has(id));
+        const records = ids.map(id => absMap.get(`${id}|${d}`)).filter(Boolean)
+          .filter(a => !(sedangMenunggu && a.status === 'alpha' && /"auto"\s*:\s*true/.test(String(a.validasi || ''))));
         const absences = ids.map(id => izinMap.get(`${id}|${d}`)).filter(Boolean);
+        if (sedangMenunggu && !records.length && !absences.length) continue;
         if (!records.length && !absences.length && ids.every(id => riwayatDiabaikan.has(`${id}|${d}`))) continue;
         if (!records.length && !absences.length && dbm.kalenderNonaktif(d)) continue;
         const waktu = dbm.absensiRentangSesi(group, cfg);
@@ -334,9 +339,30 @@ module.exports = function mount(api) {
 
   function siswaRekap(opt = {}) {
     const data = siswaQuery(opt);
+    const prioritas = { H: 0, S: 1, I: 1, A: 2, B: 3 };
+    const perMapelHari = new Map();
+    for (const row of data.rows) {
+      const key = `${row.tanggal}|${row.siswa_id}|${row.kelas_id || 0}|${row.mapel_id || 0}`;
+      const current = perMapelHari.get(key);
+      if (!current) {
+        perMapelHari.set(key, { ...row, ids: [Number(row.id)] });
+        continue;
+      }
+      current.ids.push(Number(row.id));
+      if ((prioritas[row.status] || 0) > (prioritas[current.status] || 0)) {
+        current.status = row.status;
+        current.keterangan = row.keterangan || current.keterangan;
+        current.oleh_nama = row.oleh_nama || current.oleh_nama;
+        current.pencatat = row.pencatat || current.pencatat;
+        current.sesi = Math.min(Number(current.sesi) || 0, Number(row.sesi) || 0);
+      } else if (!current.keterangan && row.keterangan) {
+        current.keterangan = row.keterangan;
+      }
+    }
+    const rows = [...perMapelHari.values()];
     const perSiswa = new Map();
     const perMapel = new Map();
-    for (const a of data.rows) {
+    for (const a of rows) {
       const key = Number(a.siswa_id);
       const o = perSiswa.get(key) || {
         siswa_id: key, nama: a.siswa_nama, nisn: a.nisn || '', nis: a.nis || '',
@@ -381,7 +407,7 @@ module.exports = function mount(api) {
       ? (perSiswa.get(Number(data.siswaId)) ? siswa : [])
       : siswa;
     return {
-      ...data, rows: cap(data.rows), siswa: siswaFiltered,
+      ...data, rows: cap(rows), jumlah_baris_asli: data.rows.length, siswa: siswaFiltered,
       mapel_ringkas: [...perMapel.values()].sort((a, b) => a.nama.localeCompare(b.nama)),
       total,
       kelas_list: kelasListAll(),

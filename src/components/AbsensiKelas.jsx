@@ -100,7 +100,7 @@ export default function AbsensiKelas({ detail, simpan, readOnly, tglLabel, mode 
         <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-orange-600">Absensi Siswa per Mata Pelajaran</p>
         <h3 className="mt-1 text-[18px] font-extrabold leading-tight text-slate-800">{kelasNama || '-'}</h3>
         <p className="mt-1 text-[12.5px] font-semibold text-slate-600">
-          {detail?.mapel?.nama} · {detail?.jadwal?.hari_label} {detail?.jadwal?.jam}
+          {detail?.mapel?.nama} · {detail?.jadwal?.hari_label} {detail?.jadwal?.label_sesi ? `${detail.jadwal.label_sesi} · ` : ''}{detail?.jadwal?.jam}
           {detail?.guru?.nama ? ` · ${detail.guru.nama}` : ''}
         </p>
         <p className="text-[11.5px] text-slate-500">{tglLabel || detail?.tanggal_label} · {siswa.length} siswa</p>

@@ -123,12 +123,14 @@ export default function AbsensiSiswa({ ctx }) {
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {jadwal.map(j => (
-                    <div key={j.id} className="rounded-xl border border-slate-200 p-3" data-sesi-jadwal={j.id}>
+                    <div key={j.id} className="rounded-xl border border-slate-200 p-3"
+                      data-sesi-jadwal={j.id} data-sesi-group={(j.group_ids || [j.id]).join(',')}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate text-[13.5px] font-bold text-slate-800">{j.mapel_nama || '-'}</p>
                           <p className="truncate text-[11.5px] text-slate-500">
-                            {j.kelas_nama} · {j.jam}
+                            {j.kelas_nama} · {j.label_sesi ? `${j.label_sesi} · ` : ''}{j.jam}
+                            {j.group_ids?.length > 1 ? ` · ${j.group_ids.length} jam pelajaran` : ''}
                             {data?.lihat_semua && !j.tukar && j.guru_nama ? ` · ${j.guru_nama}` : ''}
                             {j.tukar ? ` · pengganti ${j.tukar.ke_nama}` : ''}
                           </p>
@@ -301,11 +303,11 @@ function RekapPresensi({ ctx, rekap, filter, setFilter, tanggal, onLoad }) {
               </div>
             ))}
           </div>
-          <Card title="Rekap per Siswa" subtitle={`${rekap.jumlah} catatan presensi pada rentang tanggal terpilih`}
+          <Card title="Rekap per Siswa" subtitle={`${rekap.jumlah} catatan presensi per mapel/hari pada rentang tanggal terpilih`}
             right={<span className="chip">{rekap.dari} → {rekap.sampai}</span>}>
             <div className="tbl-wrap max-h-[460px]">
               <table className="tbl">
-                <thead><tr><th>Nama Siswa</th><th>Kelas</th><th className="text-center">Sesi</th><th className="text-center">H</th><th className="text-center">S</th><th className="text-center">I</th><th className="text-center">A</th><th className="text-center">B</th><th className="text-center">% Hadir</th></tr></thead>
+                <thead><tr><th>Nama Siswa</th><th>Kelas</th><th className="text-center">Mapel / Hari</th><th className="text-center">H</th><th className="text-center">S</th><th className="text-center">I</th><th className="text-center">A</th><th className="text-center">B</th><th className="text-center">% Hadir</th></tr></thead>
                 <tbody>
                   {(rekap.per_siswa || []).map(s => (
                     <tr key={s.siswa_id}>

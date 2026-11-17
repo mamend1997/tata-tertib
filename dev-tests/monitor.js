@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const Database = require('better-sqlite3');
 
 const DB = path.join(os.tmpdir(), 'stt-mon-' + Date.now() + '.sqlite');
 const SAAS = path.join(os.tmpdir(), 'stt-mon-saas-' + Date.now() + '.sqlite');
@@ -226,6 +227,58 @@ const BULAN = TODAY.slice(0, 7);
       JSON.stringify(preview.body).slice(0, 400));
     ok('persentase jurnal naik (20%)', Number(r.body.stats.persen_jurnal) === 20, String(r.body.stats.persen_jurnal));
     ok('guru yang check-in tercatat hadir', Number(r.body.stats.hadir) >= 1, JSON.stringify(r.body.stats.hadir));
+
+    const groupAttendanceDb = new Database(DB);
+    groupAttendanceDb.prepare(`UPDATE absensi_guru SET status='hadir',materi='',catatan='',foto_url=NULL
+      WHERE tanggal=? AND jadwal_id IN (${groupSlots.map(() => '?').join(',')})`)
+      .run(TODAY, ...groupSlots);
+    groupAttendanceDb.close();
+    const daftarMapelAdmin = await req('/api/absensi-siswa?tanggal=' + TODAY);
+    const grupMapel = (daftarMapelAdmin.body.jadwal || []).filter(x =>
+      groupSlots.map(Number).every(id => (x.group_ids || []).map(Number).includes(id)));
+    ok('tiga jam mapel yang sama ditampilkan sebagai satu sesi absensi',
+      grupMapel.length === 1 && (grupMapel[0].group_ids || []).length === 3,
+      JSON.stringify(daftarMapelAdmin.body.jadwal?.map(x => ({ id: x.id, group: x.group_ids }))));
+    await login('gurumonitorc', 'guru123');
+    r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: groupSlots[0], tanggal: TODAY } });
+    const sesiRentang = Number(r.body?.sesi?.id) || 0;
+    ok('sesi tunggal mencakup rentang tiga jam mapel',
+      r.status === 200 && (r.body.sesi.group_ids || []).length === 3
+        && /Jam ke-1–3/.test(r.body.jadwal?.label_sesi || ''),
+      JSON.stringify({ status: r.status, jadwal: r.body?.jadwal, sesi: r.body?.sesi }));
+    const siswaRentang = r.body?.siswa || [];
+    r = await req('/api/absensi-siswa/simpan', {
+      method: 'POST', body: { sesi_id: sesiRentang, items: siswaRentang.map(x => ({ siswa_id: x.id, status: 'H' })) }
+    });
+    ok('presensi rentang mapel tersimpan satu kali', r.status === 200 && r.body.tersimpan === siswaRentang.length, r.body?.error);
+    r = await req('/api/absensi-guru/jurnal', {
+      method: 'POST', body: { jadwal_id: groupSlots[0], tanggal: TODAY, materi: 'Materi rentang mapel tiga jam' }
+    });
+    ok('jurnal & dokumentasi diisi sekali untuk rentang mapel', r.status === 200 && (r.body.group_ids || []).length === 3, r.body?.error);
+    await login('admin', 'admin123');
+    const previewRentang = await req(`/api/monitor-kbm/pratinjau?jadwal_id=${groupSlots[1]}&tanggal=${TODAY}`);
+    const slotRentang = previewRentang.body.slots?.[0];
+    ok('pratinjau KBM menampilkan satu kartu absensi untuk rentang mapel',
+      previewRentang.status === 200 && previewRentang.body.slots.length === 1
+        && (slotRentang.group_ids || []).length === 3
+        && slotRentang.absensi_siswa.length === siswaRentang.length
+        && slotRentang.jurnal.materi === 'Materi rentang mapel tiga jam',
+      JSON.stringify(previewRentang.body).slice(0, 500));
+    const monitorRentang = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${TODAY}`);
+    const barisRentangSelesai = (monitorRentang.body.monitor_jadwal || [])
+      .filter(x => (x.group_ids || []).length === 3 && x.alur_selesai);
+    ok('monitoring menyediakan satu tombol pratinjau untuk satu rentang mapel',
+      barisRentangSelesai.length === 3 && barisRentangSelesai.filter(x => x.preview_primary).length === 1,
+      JSON.stringify(barisRentangSelesai.map(x => ({ id: x.jadwal_id, primary: x.preview_primary }))));
+    const hitungSesiRentang = new Database(DB);
+    const jumlahSesiRentang = hitungSesiRentang.prepare(`SELECT COUNT(*) c FROM absensi_sesi
+      WHERE tanggal=? AND jadwal_id IN (${groupSlots.map(() => '?').join(',')})`).get(TODAY, ...groupSlots).c;
+    const jumlahBarisRentang = hitungSesiRentang.prepare('SELECT COUNT(*) c FROM absensi_siswa WHERE sesi_id=?')
+      .get(sesiRentang).c;
+    hitungSesiRentang.close();
+    ok('rekam absensi siswa tersimpan satu kali untuk tiga jam berurutan',
+      Number(jumlahSesiRentang) === 1 && Number(jumlahBarisRentang) === siswaRentang.length,
+      JSON.stringify({ sesi: jumlahSesiRentang, siswa: jumlahBarisRentang }));
 
     /* guru berhalangan + pengganti */
     await login('guruumum', 'guruumum123');

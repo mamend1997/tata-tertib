@@ -335,10 +335,15 @@ function HapusRiwayatSiswa({ data, loading, kelasList, pilih, setPilih, fHapus, 
   const [konfirm, setKonfirm] = useState(null);
   const [busy, setBusy] = useState(false);
   const rows = data?.rows || [];
-  const semuaId = rows.map(r => Number(r.id));
+  const idsOf = (row) => (Array.isArray(row.ids) && row.ids.length ? row.ids : [row.id]).map(Number);
+  const semuaId = rows.flatMap(idsOf);
   const semuaTerpilih = semuaId.length > 0 && semuaId.every(id => pilih.includes(id));
 
-  const toggle = (id) => setPilih(list => list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
+  const toggleRow = (row) => {
+    const ids = idsOf(row);
+    const allSelected = ids.every(id => pilih.includes(id));
+    setPilih(list => allSelected ? list.filter(id => !ids.includes(id)) : [...new Set([...list, ...ids])]);
+  };
   const toggleSemua = () => setPilih(semuaTerpilih ? [] : semuaId);
 
   async function jalankan(pin) {
@@ -423,10 +428,10 @@ function HapusRiwayatSiswa({ data, loading, kelasList, pilih, setPilih, fHapus, 
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr key={r.id} className={cx(pilih.includes(Number(r.id)) && 'bg-orange-50/50')}>
+                  <tr key={r.id} className={cx(idsOf(r).every(id => pilih.includes(id)) && 'bg-orange-50/50')}>
                     <td className="c">
                       <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-600"
-                        checked={pilih.includes(Number(r.id))} onChange={() => toggle(Number(r.id))}
+                        checked={idsOf(r).every(id => pilih.includes(id))} onChange={() => toggleRow(r)}
                         data-pilih={r.id} />
                     </td>
                     <td className="c">{i + 1}</td>

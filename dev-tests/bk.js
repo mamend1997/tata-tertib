@@ -133,8 +133,12 @@ const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     ok('status Alpha pada sesi yang sama tetap dapat dikoreksi/disimpan', sameSessionAlpha.status === 200, JSON.stringify(sameSessionAlpha.body));
 
     const fixtureDb = new Database(DB);
+    const sesiLain = Number(fixtureDb.prepare(`INSERT INTO absensi_sesi
+      (jadwal_id,tanggal,token,ta_id,mapel_id,guru_id,kelas_ids,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(999999, TODAY, `bk-mapel-lain-${TODAY}`, 1, 999999, guruId,
+        JSON.stringify([siswa1.kelas_id]), '2025-01-01', '2025-01-01').lastInsertRowid);
     fixtureDb.prepare(`INSERT INTO absensi_siswa(sesi_id,jadwal_id,tanggal,siswa_id,kelas_id,status)
-      VALUES(?,?,?,?,?,'B')`).run(999999, jadwalId, TODAY, siswa1.id, siswa1.kelas_id);
+      VALUES(?,?,?,?,?,'B')`).run(sesiLain, 999999, TODAY, siswa1.id, siswa1.kelas_id);
     let duplicateAlpha = await req('/api/absensi-siswa/simpan', {
       method: 'POST', body: { sesi_id: sesiId, items: [{ siswa_id: siswa1.id, status: 'A' }] }
     });
@@ -145,7 +149,8 @@ const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     });
     ok('Bolos ditolak bila siswa sudah Alpha/Bolos di mapel lain pada hari yang sama',
       duplicateBolos.status === 409 && duplicateBolos.body.duplikat_harian?.[0]?.status === 'B', JSON.stringify(duplicateBolos.body));
-    fixtureDb.prepare('DELETE FROM absensi_siswa WHERE sesi_id=?').run(999999);
+    fixtureDb.prepare('DELETE FROM absensi_siswa WHERE sesi_id=?').run(sesiLain);
+    fixtureDb.prepare('DELETE FROM absensi_sesi WHERE id=?').run(sesiLain);
     fixtureDb.close();
 
     /* koreksi status → catatan otomatis dihapus */
@@ -156,6 +161,59 @@ const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     ok('koreksi presensi melaporkan penghapusan poin', r.status === 200 && r.body.poin.dihapus >= 1, JSON.stringify(r.body.poin));
     r = await req('/api/siswa/' + siswa1.id);
     ok('catatan Alpha otomatis ikut dibatalkan', !(r.body.riwayat || []).some(x => x.sumber === 'absensi'));
+
+    const mapelKedua = await req('/api/mapel/save', {
+      method: 'POST', body: { nama: 'Bahasa Inggris', kode: 'BING' }
+    });
+    const mapelKeduaId = mapelKedua.body.id;
+    const mapelKetiga = await req('/api/mapel/save', {
+      method: 'POST', body: { nama: 'Biologi', kode: 'BIO' }
+    });
+    const mapelKetigaId = mapelKetiga.body.id;
+    ok('mapel berbeda tersedia untuk uji deduplikasi harian',
+      mapelKedua.status === 200 && !!mapelKeduaId && mapelKetiga.status === 200 && !!mapelKetigaId);
+    const pointDb = new Database(DB);
+    const buatSesiFixture = (jadwalId, token, idMapel) => Number(pointDb.prepare(`INSERT INTO absensi_sesi
+      (jadwal_id,tanggal,token,ta_id,mapel_id,guru_id,kelas_ids,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(jadwalId, TODAY, token, 1, idMapel, guruId,
+        JSON.stringify([siswa1.kelas_id]), '2025-01-01', '2025-01-01').lastInsertRowid);
+    const sesiMapelKedua = buatSesiFixture(999998, `bk-mapel-bolos-${TODAY}`, mapelKeduaId);
+    const sesiMapelKetiga = buatSesiFixture(999997, `bk-mapel-alfa-${TODAY}`, mapelKetigaId);
+    pointDb.prepare(`INSERT INTO absensi_siswa(sesi_id,jadwal_id,tanggal,siswa_id,kelas_id,status)
+      VALUES(?,?,?,?,?,'B')`).run(sesiMapelKedua, 999998, TODAY, siswa1.id, siswa1.kelas_id);
+    pointDb.prepare(`INSERT INTO absensi_siswa(sesi_id,jadwal_id,tanggal,siswa_id,kelas_id,status)
+      VALUES(?,?,?,?,?,'A')`).run(sesiMapelKetiga, 999997, TODAY, siswa1.id, siswa1.kelas_id);
+    r = await req('/api/absensi-siswa/simpan', {
+      method: 'POST', body: { sesi_id: sesiId, items: [{ siswa_id: siswa1.id, status: 'H' }] }
+    });
+    const poinSamaMapel = pointDb.prepare(`SELECT COUNT(*) c, MAX(k.auto_key) kategori
+      FROM kejadian e LEFT JOIN kategori k ON k.id=e.kategori_id
+      WHERE e.siswa_id=? AND e.tanggal=? AND e.sumber='absensi'`).get(siswa1.id, TODAY);
+    ok('Alpha/Bolos lintas mapel pada hari yang sama menjadi satu poin Bolos',
+      r.status === 200 && Number(poinSamaMapel.c) === 1 && poinSamaMapel.kategori === 'absensi_bolos',
+      JSON.stringify({ status: r.status, poin: poinSamaMapel }));
+    const rekapDuaMapel = await req(`/api/rekap/absensi-siswa?periode=harian&tanggal=${TODAY}&mode=siswa&siswa=${siswa1.id}`);
+    ok('rekap tetap memisahkan kehadiran tiap mapel pada hari yang sama',
+      rekapDuaMapel.status === 200 && rekapDuaMapel.body.rows.length === 3
+        && rekapDuaMapel.body.rows.every(x => (x.ids || []).length === 1)
+        && rekapDuaMapel.body.siswa[0]?.total === 3
+        && rekapDuaMapel.body.siswa[0]?.A === 1
+        && rekapDuaMapel.body.siswa[0]?.B === 1,
+      JSON.stringify(rekapDuaMapel.body));
+    pointDb.prepare("UPDATE absensi_siswa SET status='H' WHERE sesi_id=? AND siswa_id=?")
+      .run(sesiMapelKedua, siswa1.id);
+    pointDb.prepare("UPDATE absensi_siswa SET status='H' WHERE sesi_id=? AND siswa_id=?")
+      .run(sesiMapelKetiga, siswa1.id);
+    r = await req('/api/absensi-siswa/simpan', {
+      method: 'POST', body: { sesi_id: sesiId, items: [{ siswa_id: siswa1.id, status: 'H' }] }
+    });
+    const poinSetelahKoreksi = pointDb.prepare("SELECT COUNT(*) c FROM kejadian WHERE siswa_id=? AND tanggal=? AND sumber='absensi'")
+      .get(siswa1.id, TODAY).c;
+    ok('poin otomatis dihapus setelah semua mapel dikoreksi hadir',
+      r.status === 200 && Number(poinSetelahKoreksi) === 0, String(poinSetelahKoreksi));
+    pointDb.prepare('DELETE FROM absensi_siswa WHERE sesi_id IN (?,?)').run(sesiMapelKedua, sesiMapelKetiga);
+    pointDb.prepare('DELETE FROM absensi_sesi WHERE id IN (?,?)').run(sesiMapelKedua, sesiMapelKetiga);
+    pointDb.close();
 
     /* ================= REKAP ABSENSI ================= */
     console.log('\n== REKAP ABSENSI GURU & SISWA ==');

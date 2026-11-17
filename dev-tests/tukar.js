@@ -411,10 +411,42 @@ async function stopServer() {
       r = await req('/api/tukar-jadwal', { method: 'POST', body: {
         jadwal_id: a1.body.id, tanggal: TODAY, ke_guru: gB,
         pasangan_jadwal_id: b1.body.id, pasangan_tanggal: TGL_TUJUAN,
-        alasan_jenis: 'izin', alasan: 'izin'
+        alasan_jenis: 'izin'
+      } });
+      ok('pengajuan Izin tanpa keterangan wajib ditolak', r.status === 400 && /keterangan izin wajib/i.test(r.body?.error || ''), r.body?.error);
+      r = await req('/api/tukar-jadwal', { method: 'POST', body: {
+        jadwal_id: a1.body.id, tanggal: TODAY, ke_guru: gB,
+        pasangan_jadwal_id: b1.body.id, pasangan_tanggal: TGL_TUJUAN,
+        alasan_jenis: 'sakit'
+      } });
+      ok('pengajuan Sakit tanpa keterangan wajib ditolak', r.status === 400 && /keterangan sakit wajib/i.test(r.body?.error || ''), r.body?.error);
+      const keteranganTukar = 'Ada keperluan keluarga penting';
+      r = await req('/api/tukar-jadwal', { method: 'POST', body: {
+        jadwal_id: a1.body.id, tanggal: TODAY, ke_guru: gB,
+        pasangan_jadwal_id: b1.body.id, pasangan_tanggal: TGL_TUJUAN,
+        alasan_jenis: 'izin', alasan: keteranganTukar
       } });
       ok('pengajuan Izin dari hari ini ke jadwal hari berikutnya tersimpan', r.status === 200, r.body?.error);
       const lintasId = r.body.id;
+      const pendingDb = new Database(DB);
+      const insertAutoAlpha = pendingDb.prepare(`INSERT INTO absensi_guru
+        (jadwal_id,tanggal,guru_id,ta_id,status,materi,catatan,validasi,created_at,updated_at)
+        VALUES(?,?,?,?,'alpha','','Otomatis ALFA uji',?,?,?)`);
+      for (const [id, date] of [[a1.body.id, TODAY], [a2.body.id, TODAY],
+        [b1.body.id, TGL_TUJUAN], [b2.body.id, TGL_TUJUAN]]) {
+        const jadwal = pendingDb.prepare('SELECT guru_id,ta_id FROM jadwal WHERE id=?').get(id);
+        insertAutoAlpha.run(id, date, jadwal.guru_id, jadwal.ta_id,
+          JSON.stringify({ auto: true, alasan: 'Uji alfa sintetis saat permintaan menunggu' }), new Date().toISOString(), new Date().toISOString());
+      }
+      pendingDb.close();
+      await login('admin', 'admin123');
+      r = await req(`/api/rekap/absensi-guru?periode=harian&tanggal=${TODAY}`);
+      const idsTukarPending = new Set([a1.body.id, a2.body.id, b1.body.id, b2.body.id].map(Number));
+      const rekapPending = (r.body.rows || []).filter(x => (x.jadwal_ids || [x.jadwal_id])
+        .some(id => idsTukarPending.has(Number(id))));
+      ok('rekap tidak menampilkan alfa otomatis ganda saat pertukaran masih menunggu',
+        rekapPending.length === 0 || rekapPending.every(x => x.status !== 'alpha'),
+        JSON.stringify(rekapPending));
       await login('gurub', 'guru123');
       r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: lintasId, aksi: 'terima' } });
       ok('guru tujuan menerima pertukaran lintas hari', r.status === 200 && r.body.status === 'diterima', r.body?.error);
@@ -441,7 +473,8 @@ async function stopServer() {
         .all(TODAY, TGL_TUJUAN, a1.body.id, a2.body.id, b1.body.id, b2.body.id);
       persisted.close();
       ok('pertukaran sakit/izin tidak menambah status sakit/izin/alfa ke rekap absensi',
-        swapRows.length === 4 && swapRows.every(x => x.status === 'diterima' && x.alasan_jenis === 'izin')
+        swapRows.length === 4 && swapRows.every(x => x.status === 'diterima' && x.alasan_jenis === 'izin'
+          && x.alasan === `Izin: ${keteranganTukar}`)
           && attendanceRows.length === 0,
         JSON.stringify({ swaps: swapRows, absensi: attendanceRows }));
     }

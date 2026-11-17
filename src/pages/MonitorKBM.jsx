@@ -267,9 +267,10 @@ export default function MonitorKBM({ ctx }) {
                             ) : x.pengganti ? (
                               <p className="mt-1 text-[10px] font-semibold text-violet-700">Guru piket/pengganti</p>
                             ) : null}
-                            {x.alur_selesai ? (
+                            {x.alur_selesai && x.preview_primary ? (
                               <button type="button" className="btn-ghost btn-sm mt-2"
-                                onClick={() => bukaPratinjau(x)} data-monitor-preview={x.jadwal_id}>
+                                onClick={() => bukaPratinjau(x)} data-monitor-preview={x.jadwal_id}
+                                data-monitor-preview-group={(x.group_ids || [x.jadwal_id]).join(',')}>
                                 <Eye size={13} /> Pratinjau
                               </button>
                             ) : null}

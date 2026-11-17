@@ -143,6 +143,13 @@ const ok = (name, cond, extra) => {
     await page.click('[data-alasan-tukar-jenis="izin"]');
     ok('memilih Izin/Sakit tidak memicu loading ulang',
       await page.getByText('Mencari jadwal pasangan pada kelas ini…').count() === 0);
+    ok('mode hari berbeda menampilkan field keterangan izin wajib',
+      await page.locator('[data-alasan-tukar-lintas]').count() === 1
+      && await page.getByText('Keterangan Izin').count() === 1);
+    await page.click('[data-alasan-tukar-jenis="sakit"]');
+    ok('field keterangan berubah menjadi Keterangan Sakit',
+      await page.getByText('Keterangan Sakit').count() === 1);
+    await page.click('[data-alasan-tukar-jenis="izin"]');
     await page.waitForSelector(`[data-pilih-tanggal-tukar] option[value="${setup.tanggalBesok}"]`,
       { state: 'attached', timeout: 15000 });
     const tanggalTukar = await page.locator('[data-pilih-tanggal-tukar] option').evaluateAll(options =>
@@ -154,6 +161,13 @@ const ok = (name, cond, extra) => {
       { state: 'attached', timeout: 15000 });
     ok('guru tujuan baru ditampilkan setelah hari tujuan dipilih',
       (await page.locator('[data-pilih-guru-tukar] option').allTextContents()).some(t => /Guru Pengganti B/.test(t)));
+    await page.selectOption('[data-pilih-guru-tukar]', String(setup.gB));
+    await page.waitForTimeout(300);
+    await page.click('[data-kirim-tukar]');
+    await page.waitForSelector('text=Keterangan izin wajib diisi minimal 5 karakter.', { timeout: 5000 });
+    ok('pengajuan Izin tanpa keterangan ditolak sebelum dikirim',
+      await page.locator('[data-modal-tukar]').count() === 1);
+    await page.fill('[data-alasan-tukar-lintas]', 'Ada keperluan keluarga penting');
     await page.click('[data-tukar-mode="hari-sama"]');
     ok('kembali ke pertukaran hari sama tanpa animasi loading',
       await page.locator('[data-modal-tukar]').count() === 1
