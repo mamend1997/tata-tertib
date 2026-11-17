@@ -1859,6 +1859,7 @@ ${isi}
       /* permintaan tukar jadwal: masuk (harus dijawab) & riwayat yang saya ajukan */
       tukar_masuk: dbm.tukarMasuk(user.id),
       tukar_keluar: dbm.tukarKeluar(user.id, 20),
+      tukar_terlibat: dbm.tukarTerlibat(user.id, 30),
       status_list: dbm.ABSENSI_GURU_STATUS,
       auto_alpha: { aktif: String(dbm.getSetting('absensi_auto_alpha', '1')) === '1', dibuat: auto.dibuat || 0 },
       wa: { aktif: cfg.waAktif ? 1 : 0, jam: cfg.waJam, kepsek: cfg.kepsekWa, wakasek: cfg.wakasekWa, terakhir: cfg.waTerakhir }
@@ -2857,6 +2858,108 @@ ${isi}
         ? `Permintaan diterima — jadwal ${dari.nama || 'guru'} dan ${ke.nama || 'guru'} saling bertukar mapel pada pekan ini; pekan berikutnya kembali normal.`
         : status === 'ditolak' ? 'Permintaan tukar jadwal ditolak. Jadwal tetap seperti semula.'
           : 'Permintaan tukar jadwal dibatalkan.'
+    });
+  });
+
+  function slotTukarSudahDimulai(permintaanId) {
+    const slots = db.prepare(`SELECT DISTINCT jadwal_id,tanggal FROM jadwal_tukar
+      WHERE COALESCE(permintaan_id,id)=?`).all(Number(permintaanId));
+    const cfg = dbm.jadwalConfig();
+    for (const slot of slots) {
+      const tanggal = String(slot.tanggal || '').slice(0, 10);
+      if (tanggal < dbm.today()) return 'Tanggal pertukaran sudah terlewat dan tidak dapat dibatalkan.';
+      const absensi = db.prepare('SELECT status,validasi FROM absensi_guru WHERE jadwal_id=? AND tanggal=?')
+        .all(Number(slot.jadwal_id), tanggal)
+        .some(a => !(a.status === 'alpha' && /"auto"\s*:\s*true/.test(String(a.validasi || ''))));
+      if (absensi || db.prepare('SELECT 1 FROM absensi_sesi WHERE jadwal_id=? AND tanggal=? LIMIT 1')
+        .get(Number(slot.jadwal_id), tanggal)) {
+        return 'Pertukaran tidak dapat dibatalkan karena salah satu sesi sudah mulai diabsen.';
+      }
+      if (tanggal === dbm.today()) {
+        const row = db.prepare('SELECT * FROM jadwal WHERE id=?').get(Number(slot.jadwal_id));
+        const window = row ? dbm.absensiWindow(row, tanggal, cfg) : null;
+        if (!window || !window.sesi || dbm.nowMenit() > dbm.jamMenit(window.tutup)) {
+          return 'Pertukaran tidak dapat dibatalkan setelah jam salah satu sesi berakhir.';
+        }
+      }
+    }
+    return '';
+  }
+
+  /* guru pengaju atau guru tujuan dapat meminta pembatalan pertukaran aktif;
+     jadwal baru kembali seperti semula setelah disetujui pihak sekolah. */
+  post('/api/tukar-jadwal/pembatalan', async (req, res) => {
+    const user = guard(req, res, 'absensi_guru', 'view'); if (!user) return;
+    const b = await readBody(req);
+    const selected = db.prepare('SELECT * FROM jadwal_tukar WHERE id=?').get(Number(b.id) || 0);
+    if (!selected) return fail(res, 404, 'Pertukaran jadwal tidak ditemukan.');
+    const permintaanId = Number(selected.permintaan_id) || Number(selected.id);
+    const root = db.prepare('SELECT * FROM jadwal_tukar WHERE id=?').get(permintaanId);
+    if (!root || root.status !== 'diterima' || String(root.jenis || 'tukar') !== 'tukar') {
+      return fail(res, 409, 'Hanya pertukaran guru yang sudah disetujui yang dapat dimintakan pembatalan.');
+    }
+    const group = db.prepare(`SELECT dari_guru,ke_guru FROM jadwal_tukar
+      WHERE COALESCE(permintaan_id,id)=?`).all(permintaanId);
+    if (!group.some(x => Number(x.dari_guru) === Number(user.id) || Number(x.ke_guru) === Number(user.id))) {
+      return fail(res, 403, 'Hanya guru yang terlibat dalam pertukaran ini yang dapat meminta pembatalan.');
+    }
+    if (root.pembatalan_status === 'pending') {
+      return fail(res, 409, 'Permintaan pembatalan pertukaran ini masih menunggu persetujuan sekolah.');
+    }
+    const terkunci = slotTukarSudahDimulai(permintaanId);
+    if (terkunci) return fail(res, 409, terkunci);
+    db.prepare(`UPDATE jadwal_tukar SET pembatalan_status='pending',pembatalan_oleh=?,pembatalan_nama=?,
+      pembatalan_diminta_at=?,pembatalan_diputus_at=NULL,pembatalan_diputus_oleh=NULL,
+      pembatalan_diputus_nama=NULL,pembatalan_catatan='' WHERE id=?`)
+      .run(Number(user.id), user.nama || '', dbm.now(), permintaanId);
+    dbm.logAudit(user, 'TAMBAH', 'absensi_guru',
+      `Meminta pembatalan pertukaran jadwal #${permintaanId}`, ipOf(req));
+    json(res, 200, {
+      ok: true, status: 'pending',
+      pesan: 'Permintaan pembatalan dikirim. Pertukaran tetap berlaku sampai disetujui pihak sekolah.'
+    });
+  });
+
+  /* keputusan pembatalan hanya dapat dilakukan admin, kepala sekolah, atau wakasek kurikulum */
+  post('/api/tukar-jadwal/pembatalan/putus', async (req, res) => {
+    const user = guard(req, res, 'dashboard', 'view'); if (!user) return;
+    const roles = dbm.userRoleList(user);
+    if (!roles.some(role => ['admin', 'kepala_sekolah', 'wakasek_kurikulum'].includes(role))) {
+      return fail(res, 403, 'Hanya Admin, Kepala Sekolah, atau Wakasek Kurikulum yang dapat memutus permintaan pembatalan.');
+    }
+    const b = await readBody(req);
+    const id = Number(b.id) || 0;
+    const aksi = String(b.aksi || '').toLowerCase();
+    if (!['setujui', 'tolak'].includes(aksi)) return fail(res, 400, 'Pilih setujui atau tolak pembatalan.');
+    const root = db.prepare('SELECT * FROM jadwal_tukar WHERE id=?').get(id);
+    if (!root) return fail(res, 404, 'Pertukaran jadwal tidak ditemukan.');
+    if (root.status !== 'diterima' || root.pembatalan_status !== 'pending') {
+      return fail(res, 409, 'Permintaan pembatalan ini sudah tidak menunggu keputusan.');
+    }
+    const catatan = String(b.catatan || '').trim().slice(0, 240);
+    if (aksi === 'setujui') {
+      const terkunci = slotTukarSudahDimulai(id);
+      if (terkunci) return fail(res, 409, terkunci);
+    }
+    db.transaction(() => {
+      if (aksi === 'setujui') {
+        db.prepare(`UPDATE jadwal_tukar SET status='batal',catatan_putus=?,diputus_at=?,diputus_oleh=?,
+          diputus_nama=?,updated_at=? WHERE COALESCE(permintaan_id,id)=? AND status='diterima'`)
+          .run(`Pembatalan pertukaran disetujui oleh ${user.nama || 'pihak sekolah'}`,
+            dbm.now(), Number(user.id), user.nama || '', dbm.now(), id);
+      }
+      db.prepare(`UPDATE jadwal_tukar SET pembatalan_status=?,pembatalan_diputus_at=?,
+        pembatalan_diputus_oleh=?,pembatalan_diputus_nama=?,pembatalan_catatan=? WHERE id=?`)
+        .run(aksi === 'setujui' ? 'disetujui' : 'ditolak', dbm.now(), Number(user.id),
+          user.nama || '', catatan, id);
+    })();
+    dbm.logAudit(user, 'UBAH', 'absensi_guru',
+      `${aksi === 'setujui' ? 'Menyetujui' : 'Menolak'} pembatalan pertukaran jadwal #${id}`, ipOf(req));
+    json(res, 200, {
+      ok: true, status: aksi === 'setujui' ? 'batal' : 'diterima',
+      pesan: aksi === 'setujui'
+        ? 'Pembatalan disetujui. Jadwal kembali ke guru dan mata pelajaran semula.'
+        : 'Permintaan pembatalan ditolak. Pertukaran tetap berlaku.'
     });
   });
 

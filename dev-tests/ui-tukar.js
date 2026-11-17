@@ -37,6 +37,7 @@ const ok = (name, cond, extra) => {
   const page = await browser.newPage({ viewport: { width: 1400, height: 950 } });
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
+  page.on('dialog', dialog => dialog.accept());
 
   const login = async (username, password) => {
     try { await page.context().clearCookies(); } catch (e) { /* abaikan */ }
@@ -196,7 +197,9 @@ const ok = (name, cond, extra) => {
     await page.waitForTimeout(1500);
     ok('sesi pengganti masuk ke daftar check-in guru B',
       await page.locator(`[data-slot-absensi="${setup.slotA}"]`).count() === 1);
-    ok('kartu menandai sesi pengganti (tukar jadwal)', await page.locator(`[data-tukar-aktif="${setup.slotA}"]`).count() === 1);
+    const kartuSlotDitukar = page.locator(`[data-slot-absensi="${setup.slotA}"]`);
+    ok('kartu menandai sesi pengganti (tukar jadwal)',
+      await kartuSlotDitukar.locator('[data-tukar-aktif]').count() === 1, await kartuSlotDitukar.innerText());
 
     /* ---------------- 4. guru asli tidak lagi memiliki sesi ---------------- */
     await login('gurua', 'guru123');
@@ -212,7 +215,32 @@ const ok = (name, cond, extra) => {
     await page.waitForTimeout(1500);
     ok('dashboard guru B tanpa error (permintaan sudah dijawab)', await page.locator('[data-tukar-card]').count() === 0);
 
-    /* ---------------- 6. mobile 390px ---------------- */
+    /* ---------------- 6. permintaan pembatalan perlu persetujuan sekolah ---------------- */
+    await page.goto(BASE + '/#/absensi_guru', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('[data-tbl-tukar-aktif]', { timeout: 15000 });
+    const btnBatalTukar = page.locator('[data-tukar-ajukan-batal]').first();
+    const permintaanBatalId = await btnBatalTukar.getAttribute('data-tukar-ajukan-batal');
+    ok('guru tujuan melihat tombol Ajukan Batal Tukar', !!permintaanBatalId);
+    await btnBatalTukar.click();
+    await page.waitForSelector('text=Menunggu persetujuan sekolah', { timeout: 10000 });
+    ok('klik tombol mengajukan pembatalan tanpa langsung mengubah jadwal',
+      await page.locator(`[data-tukar-riwayat-aktif="${permintaanBatalId}"]`).count() === 1);
+    await login('admin', 'admin123');
+    await page.goto(BASE + '/#/dashboard', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(`[data-tukar-pembatalan="${permintaanBatalId}"]`, { timeout: 15000 });
+    ok('permintaan tampil pada dashboard Admin', true);
+    await page.locator(`[data-pembatalan-setuju="${permintaanBatalId}"]`).click();
+    await page.waitForFunction(id => !document.querySelector(`[data-tukar-pembatalan="${id}"]`), permintaanBatalId, { timeout: 15000 });
+    const jadwalKembali = await page.evaluate(async jadwalId => {
+      const r = await fetch('/api/absensi-guru', { credentials: 'same-origin' });
+      const data = await r.json();
+      return (data.jadwal_hari || []).find(j => Number(j.id) === Number(jadwalId));
+    }, setup.slotA);
+    ok('Admin menyetujui pembatalan dan slot kembali ke guru asal',
+      !!jadwalKembali && Number(jadwalKembali.guru_efektif_id) === Number(setup.gA),
+      JSON.stringify(jadwalKembali && { guru: jadwalKembali.guru_efektif_id, mapel: jadwalKembali.mapel_id }));
+
+    /* ---------------- 7. mobile 390px ---------------- */
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(BASE + '/#/absensi_guru', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);

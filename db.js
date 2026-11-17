@@ -217,6 +217,9 @@ CREATE TABLE IF NOT EXISTS jadwal_tukar (
   dibuat_oleh INTEGER, dibuat_nama TEXT,
   permintaan_id INTEGER,
   catatan_putus TEXT, diputus_at TEXT, diputus_oleh INTEGER, diputus_nama TEXT,
+  pembatalan_status TEXT, pembatalan_oleh INTEGER, pembatalan_nama TEXT,
+  pembatalan_diminta_at TEXT, pembatalan_diputus_at TEXT,
+  pembatalan_diputus_oleh INTEGER, pembatalan_diputus_nama TEXT, pembatalan_catatan TEXT,
   created_at TEXT, updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tukar_slot ON jadwal_tukar(jadwal_id, tanggal, status);
@@ -703,6 +706,14 @@ function runMigrations() {
     ensureColumn('jadwal_tukar', 'dibuat_nama', 'TEXT');
     ensureColumn('jadwal_tukar', 'permintaan_id', 'INTEGER');
     ensureColumn('jadwal_tukar', 'alasan_jenis', "TEXT DEFAULT 'lainnya'");
+    ensureColumn('jadwal_tukar', 'pembatalan_status', 'TEXT');
+    ensureColumn('jadwal_tukar', 'pembatalan_oleh', 'INTEGER');
+    ensureColumn('jadwal_tukar', 'pembatalan_nama', 'TEXT');
+    ensureColumn('jadwal_tukar', 'pembatalan_diminta_at', 'TEXT');
+    ensureColumn('jadwal_tukar', 'pembatalan_diputus_at', 'TEXT');
+    ensureColumn('jadwal_tukar', 'pembatalan_diputus_oleh', 'INTEGER');
+    ensureColumn('jadwal_tukar', 'pembatalan_diputus_nama', 'TEXT');
+    ensureColumn('jadwal_tukar', 'pembatalan_catatan', 'TEXT');
     /* log undangan/pesan otomatis (alfa siswa, izin guru) — penanda dedupe */
     ensureColumn('wa_log', 'ref', 'TEXT');
     ensureColumn('wa_log', 'modul', 'TEXT');
@@ -4155,12 +4166,15 @@ function jadwalRows(taId) {
  * berikutnya (termasuk pekan berikutnya) tetap memakai jadwal induk.
  */
 const TUKAR_SELECT = `SELECT t.*, d.nama AS dari_nama, d.nip AS dari_nip, k.nama AS ke_nama, k.nip AS ke_nip,
-    m.nama AS mapel_nama, m.kode AS mapel_kode, j.hari, j.sesi, j.kelas_ids, j.ta_id AS jadwal_ta
+    m.nama AS mapel_nama, m.kode AS mapel_kode, j.hari, j.sesi, j.kelas_ids, j.ta_id AS jadwal_ta,
+    p.pembatalan_status, p.pembatalan_oleh, p.pembatalan_nama, p.pembatalan_diminta_at,
+    p.pembatalan_diputus_at, p.pembatalan_diputus_oleh, p.pembatalan_diputus_nama, p.pembatalan_catatan
   FROM jadwal_tukar t
   LEFT JOIN users d ON d.id=t.dari_guru
   LEFT JOIN users k ON k.id=t.ke_guru
   LEFT JOIN mapel m ON m.id=t.mapel_id
-  LEFT JOIN jadwal j ON j.id=t.jadwal_id`;
+  LEFT JOIN jadwal j ON j.id=t.jadwal_id
+  LEFT JOIN jadwal_tukar p ON p.id=COALESCE(t.permintaan_id,t.id)`;
 const tglOf = v => String(v || today()).slice(0, 10);
 
 /** semua permintaan tukar untuk satu slot pada satu tanggal (terbaru dulu) */
@@ -4208,6 +4222,21 @@ function tukarKeluar(guruId, limit = 30) {
     AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id)
     ORDER BY t.tanggal DESC, t.id DESC LIMIT ?`)
     .all(Number(guruId) || 0, Math.max(1, Number(limit) || 30)).map(dekorTukar);
+}
+/** pertukaran aktif yang melibatkan salah satu dari dua guru */
+function tukarTerlibat(guruId, limit = 30) {
+  const id = Number(guruId) || 0;
+  return db.prepare(`${TUKAR_SELECT} WHERE t.status='diterima' AND (t.dari_guru=? OR t.ke_guru=?)
+    AND (t.permintaan_id IS NULL OR t.permintaan_id=t.id)
+    ORDER BY t.tanggal DESC,t.id DESC LIMIT ?`)
+    .all(id, id, Math.max(1, Number(limit) || 30)).map(dekorTukar);
+}
+/** permintaan pembatalan aktif untuk ditampilkan ke admin/kepala sekolah/kurikulum */
+function tukarPembatalanMasuk(limit = 50) {
+  return db.prepare(`${TUKAR_SELECT} WHERE t.id=COALESCE(t.permintaan_id,t.id)
+    AND t.status='diterima' AND p.pembatalan_status='pending'
+    ORDER BY p.pembatalan_diminta_at,p.id LIMIT ?`)
+    .all(Math.max(1, Number(limit) || 50)).map(dekorTukar);
 }
 
 /**
@@ -4832,7 +4861,8 @@ module.exports = {
   KALENDER_KATEGORI, KALENDER_KATEGORI_LABEL, kalenderRows, kalenderMap, kalenderOfDate,
   kalenderNonaktif, kalenderSave, kalenderDelete, KURIKULUM_SCHEMA_SQL,
   KALENDER_WARNA_DEFAULT, kalenderWarna, kalenderSemester, kalenderSemesterOf, kalenderRentang,
-  tukarOf, tukarAktif, tukarMap, tukarGuruEfektif, tukarMasuk, tukarKeluar, TUKAR_SCHEMA_SQL,
+  tukarOf, tukarAktif, tukarMap, tukarGuruEfektif, tukarMasuk, tukarKeluar,
+  tukarTerlibat, tukarPembatalanMasuk, TUKAR_SCHEMA_SQL,
   pencatatOf, pencatatSudah, pencatatAdd, PENCATAT_SCHEMA_SQL, IZIN_SCHEMA_SQL,
   waFill, waTemplateAlfa, waTemplateIzin, waLogAdd, waSudahKirim,
   BOTTOM_NAV_DEFAULT, BOTTOM_NAV_MAX, bottomNavConfig, bottomNavFor, setBottomNav,

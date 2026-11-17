@@ -98,7 +98,9 @@ async function stopServer() {
     const gA = await mkUser('Guru Pengampu A', 'gurua', ['guru']);
     const gB = await mkUser('Guru Pengganti B', 'gurub', ['guru']);
     const gC = await mkUser('Guru Kelas Lain C', 'guruc', ['guru']);
-    ok('3 akun guru uji dibuat', !!gA && !!gB && !!gC, JSON.stringify([gA, gB, gC]));
+    const wakasek = await mkUser('Wakasek Kurikulum Uji', 'wakasek', ['wakasek_kurikulum']);
+    ok('akun guru & wakasek uji dibuat', !!gA && !!gB && !!gC && !!wakasek,
+      JSON.stringify([gA, gB, gC, wakasek]));
 
     let r = await req('/api/jadwal/pengaturan', { method: 'POST', body: cfgBody() });
     ok('pengaturan jadwal disimpan', r.status === 200, r.body?.error);
@@ -477,6 +479,81 @@ async function stopServer() {
           && x.alasan === `Izin: ${keteranganTukar}`)
           && attendanceRows.length === 0,
         JSON.stringify({ swaps: swapRows, absensi: attendanceRows }));
+
+      await login('guruc', 'guru123');
+      r = await req('/api/tukar-jadwal/pembatalan', {
+        method: 'POST', body: { id: lintasId }
+      });
+      ok('guru pengaju dapat meminta pembatalan pertukaran yang disetujui',
+        r.status === 200 && r.body.status === 'pending', r.body?.error);
+      const tetapPendingDb = new Database(DB);
+      const statusTetapPending = tetapPendingDb.prepare(`SELECT DISTINCT status FROM jadwal_tukar
+        WHERE COALESCE(permintaan_id,id)=?`).all(lintasId).map(x => x.status);
+      tetapPendingDb.close();
+      ok('pertukaran tetap berlaku selama pembatalan menunggu keputusan',
+        statusTetapPending.length === 1 && statusTetapPending[0] === 'diterima',
+        JSON.stringify(statusTetapPending));
+
+      await login('gurub', 'guru123');
+      r = await req('/api/tukar-jadwal/pembatalan', {
+        method: 'POST', body: { id: lintasId }
+      });
+      ok('permintaan pembatalan ganda ditolak saat masih menunggu',
+        r.status === 409 && /menunggu persetujuan/i.test(r.body?.error || ''), r.body?.error);
+      r = await req('/api/tukar-jadwal/pembatalan/putus', {
+        method: 'POST', body: { id: lintasId, aksi: 'setujui' }
+      });
+      ok('guru tidak dapat memutus permintaan pembatalan', r.status === 403, r.body?.error);
+
+      for (const [akun, nama, password] of [
+        ['admin', 'admin', 'admin123'], ['kepsek', 'kepala', 'kepsek123'], ['wakasek', 'wakasek', 'guru123']
+      ]) {
+        await login(akun, password);
+        r = await req('/api/dashboard');
+        ok(`${nama} melihat permintaan pembatalan di dashboard`,
+          (r.body.tukar_pembatalan_masuk || []).some(x => Number(x.id) === Number(lintasId)),
+          JSON.stringify(r.body.tukar_pembatalan_masuk));
+      }
+
+      await login('admin', 'admin123');
+      r = await req('/api/tukar-jadwal/pembatalan/putus', {
+        method: 'POST', body: { id: lintasId, aksi: 'tolak' }
+      });
+      ok('sekolah dapat menolak pembatalan tanpa mengubah pertukaran aktif',
+        r.status === 200 && r.body.status === 'diterima', r.body?.error);
+      const tetapAktifDb = new Database(DB);
+      const barisSetelahTolak = tetapAktifDb.prepare(`SELECT status,pembatalan_status FROM jadwal_tukar
+        WHERE id=?`).get(lintasId);
+      tetapAktifDb.close();
+      ok('penolakan pembatalan menyisakan jadwal tukar aktif',
+        barisSetelahTolak?.status === 'diterima' && barisSetelahTolak?.pembatalan_status === 'ditolak',
+        JSON.stringify(barisSetelahTolak));
+
+      await login('gurub', 'guru123');
+      r = await req('/api/tukar-jadwal/pembatalan', {
+        method: 'POST', body: { id: lintasId }
+      });
+      ok('guru tujuan juga dapat meminta pembatalan pertukaran',
+        r.status === 200 && r.body.status === 'pending', r.body?.error);
+      await login('wakasek', 'guru123');
+      r = await req('/api/tukar-jadwal/pembatalan/putus', {
+        method: 'POST', body: { id: lintasId, aksi: 'setujui' }
+      });
+      ok('Wakasek Kurikulum dapat menyetujui pembatalan',
+        r.status === 200 && r.body.status === 'batal', r.body?.error);
+      const dibatalkanDb = new Database(DB);
+      const statusSetelahSetuju = dibatalkanDb.prepare(`SELECT DISTINCT status FROM jadwal_tukar
+        WHERE COALESCE(permintaan_id,id)=?`).all(lintasId).map(x => x.status);
+      dibatalkanDb.close();
+      ok('persetujuan membatalkan seluruh slot pertukaran dua arah',
+        statusSetelahSetuju.length === 1 && statusSetelahSetuju[0] === 'batal', JSON.stringify(statusSetelahSetuju));
+      await login('guruc', 'guru123');
+      r = await req(`/api/absensi-guru?tanggal=${TODAY}`);
+      const asalKembali = (r.body.jadwal || []).find(x => Number(x.id) === Number(a1.body.id));
+      ok('setelah disetujui, jadwal kembali kepada guru dan mapel semula',
+        !!asalKembali && Number(asalKembali.guru_efektif_id) === Number(gC)
+          && Number(asalKembali.mapel_id) === Number(mC),
+        JSON.stringify(asalKembali && { guru: asalKembali.guru_efektif_id, mapel: asalKembali.mapel_id }));
     }
 
     /* RBAC: pengguna tanpa izin absensi_guru tidak boleh mengajukan */

@@ -138,6 +138,16 @@ export default function AbsensiGuru({ ctx }) {
     } catch (e) { toast.err(e.message); }
     finally { setTukarBusy(0); }
   }
+  async function mintaBatalTukar(row) {
+    if (!window.confirm('Ajukan pembatalan pertukaran ini? Jadwal tetap bertukar sampai disetujui Admin, Kepala Sekolah, atau Wakasek Kurikulum.')) return;
+    setTukarBusy(row.id);
+    try {
+      const r = await api('/api/tukar-jadwal/pembatalan', { method: 'POST', body: { id: row.id } });
+      toast.ok(r.pesan || 'Permintaan pembatalan dikirim.');
+      load();
+    } catch (e) { toast.err(e.message); }
+    finally { setTukarBusy(0); }
+  }
   async function kirimWa() {
     setWaBusy(true);
     try {
@@ -476,6 +486,43 @@ export default function AbsensiGuru({ ctx }) {
                           <button className="btn-ghost btn-sm" disabled={tukarBusy === t.id}
                             onClick={() => putusTukar(t, 'batal')} data-tukar-batal={t.id}>Batalkan</button>
                         ) : <span className="text-slate-400">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+        {(data?.tukar_terlibat || []).length ? (
+          <div className="mt-3">
+            <p className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wide text-slate-400">Pertukaran Aktif</p>
+            <div className="tbl-wrap max-h-[240px]">
+              <table className="tbl" data-tbl-tukar-aktif>
+                <thead><tr><th>Tanggal</th><th>Mapel</th><th>Kelas</th><th>Guru</th><th>Status Pembatalan</th><th>Aksi</th></tr></thead>
+                <tbody>
+                  {data.tukar_terlibat.map(t => (
+                    <tr key={t.id} data-tukar-riwayat-aktif={t.id}>
+                      <td>{t.tanggal}</td>
+                      <td>{t.mapel_nama || '-'}</td>
+                      <td>{t.kelas_nama || '-'}</td>
+                      <td>{t.dari_nama} ↔ {t.ke_nama}</td>
+                      <td>
+                        <span className={cx('badge', t.pembatalan_status === 'pending' ? 'badge-pantau'
+                          : t.pembatalan_status === 'ditolak' ? 'badge-siaga' : 'badge-aman')}>
+                          {t.pembatalan_status === 'pending' ? 'Menunggu persetujuan sekolah'
+                            : t.pembatalan_status === 'ditolak' ? 'Permintaan ditolak' : 'Aktif'}
+                        </span>
+                      </td>
+                      <td>
+                        {t.pembatalan_status === 'pending' ? (
+                          <span className="text-[11px] text-slate-500">Menunggu keputusan</span>
+                        ) : (
+                          <button className="btn-ghost btn-sm" disabled={tukarBusy === t.id}
+                            onClick={() => mintaBatalTukar(t)} data-tukar-ajukan-batal={t.id}>
+                            Ajukan Batal Tukar
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
