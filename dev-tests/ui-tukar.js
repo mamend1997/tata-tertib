@@ -134,6 +134,9 @@ const ok = (name, cond, extra) => {
     ok('pilihan pertukaran lintas hari tersedia pada jadwal hari ini',
       await page.locator('[data-tukar-mode="hari-berbeda"]').count() === 1);
     await page.click('[data-tukar-mode="hari-berbeda"]');
+    ok('berpindah ke pertukaran hari lain tanpa animasi loading',
+      await page.locator('[data-modal-tukar]').count() === 1
+      && await page.getByText('Mencari jadwal pasangan pada kelas ini…').count() === 0);
     await page.waitForSelector('[data-alasan-tukar-jenis="izin"]', { timeout: 15000 });
     ok('mode hari berbeda menampilkan pilihan alasan Izin/Sakit',
       await page.locator('[data-alasan-tukar-jenis]').count() === 2);
@@ -152,6 +155,9 @@ const ok = (name, cond, extra) => {
     ok('guru tujuan baru ditampilkan setelah hari tujuan dipilih',
       (await page.locator('[data-pilih-guru-tukar] option').allTextContents()).some(t => /Guru Pengganti B/.test(t)));
     await page.click('[data-tukar-mode="hari-sama"]');
+    ok('kembali ke pertukaran hari sama tanpa animasi loading',
+      await page.locator('[data-modal-tukar]').count() === 1
+      && await page.getByText('Mencari jadwal pasangan pada kelas ini…').count() === 0);
     await page.waitForSelector(`[data-pilih-guru-tukar] option[value="${setup.gB}"]`, { state: 'attached', timeout: 15000 });
     const opsiGuru = await page.locator('[data-pilih-guru-tukar] option').allTextContents();
     ok('guru yang mengampu kelas sama muncul (Guru Pengganti B)', opsiGuru.some(t => /Guru Pengganti B/.test(t)), JSON.stringify(opsiGuru));

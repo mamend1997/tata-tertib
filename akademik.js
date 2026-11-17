@@ -4139,18 +4139,31 @@ ${isi}
     const user = guard(req, res, 'monitor_kbm', 'view'); if (!user) return;
     const cfg = dbm.jadwalConfig();
     const tanggal = /^\d{4}-\d{2}-\d{2}$/.test(String(q.tanggal || '')) ? String(q.tanggal) : dbm.today();
+    const tanggalMatriks = /^\d{4}-\d{2}-\d{2}$/.test(String(q.tanggal_matriks || ''))
+      ? String(q.tanggal_matriks) : tanggal;
     if (tanggal === dbm.today()) dbm.autoAlfaGuru(tanggal);
     const hari = dbm.hariOf(tanggal);
+    const hariMatriks = dbm.hariOf(tanggalMatriks);
     const taId = taOf(q);
-    let semua = dbm.jadwalRows(taId).filter(r => Number(r.hari) === hari);
-    let taPakai = taId;
-    if (!semua.length) {
-      for (const id of semuaTaIds()) {
-        if (Number(id) === Number(taId)) continue;
-        const coba = dbm.jadwalRows(id).filter(r => Number(r.hari) === hari);
-        if (coba.length) { semua = coba; taPakai = Number(id); break; }
+    const rowsForDate = (tglTarget, hariTarget) => {
+      let rows = dbm.jadwalRows(taId).filter(r => Number(r.hari) === hariTarget);
+      let ta = taId;
+      if (!rows.length) {
+        for (const id of semuaTaIds()) {
+          if (Number(id) === Number(taId)) continue;
+          const coba = dbm.jadwalRows(id).filter(r => Number(r.hari) === hariTarget);
+          if (coba.length) { rows = coba; ta = Number(id); break; }
+        }
       }
-    }
+      return { rows, ta, tanggal: tglTarget };
+    };
+    const utama = rowsForDate(tanggal, hari);
+    const semua = utama.rows;
+    const taPakai = utama.ta;
+    const matriks = tanggalMatriks === tanggal ? utama : rowsForDate(tanggalMatriks, hariMatriks);
+    const semuaMatriks = matriks.rows;
+    const taMatriks = matriks.ta;
+    if (tanggalMatriks === dbm.today() && tanggal !== dbm.today()) dbm.autoAlfaGuru(tanggalMatriks);
     const absMap = new Map(db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?').all(tanggal, taPakai)
       .map(a => [Number(a.jadwal_id), a]));
     const izinMap = new Map(db.prepare('SELECT * FROM absensi_guru_izin WHERE tanggal=?').all(tanggal)
@@ -4159,19 +4172,21 @@ ${isi}
     const kal = dbm.kalenderOfDate(tanggal);
     const kbmLibur = !!(kal && Number(kal.nonaktif) === 1);
     const kini = dbm.nowMenit();
-    const jumlahkan = (r) => {
-      const w = dbm.absensiWindow(r, tanggal, cfg);
+    const jumlahkan = (r, tglTarget = tanggal, absensiMap = absMap, izinAbsensiMap = izinMap,
+      tukarTanggal = tukar, kiniTarget = kini) => {
+      const w = dbm.absensiWindow(r, tglTarget, cfg);
       const sesi = w.sesi || {};
       const mulai = dbm.jamMenit(sesi.mulai);
       const selesai = dbm.jamMenit(sesi.selesai);
-      const t = tukar.get(Number(r.id)) || null;
-      const a = absMap.get(Number(r.id)) || null;
-      const iz = izinMap.get(Number(r.id))
+      const t = tukarTanggal.get(Number(r.id)) || null;
+      const a = absensiMap.get(Number(r.id)) || null;
+      const iz = izinAbsensiMap.get(Number(r.id))
         || (a && ['izin', 'sakit', 'alpha'].includes(String(a.status)) ? a : null);
       const statusGuru = a ? String(a.status) : (iz ? String(iz.status) : '');
+      const sekarangTanggal = tglTarget === dbm.today() ? kiniTarget : (tglTarget < dbm.today() ? 1440 : -1);
       let fase = 'lain';                                   // lain | belum | berlangsung | selesai
       if (mulai !== null && selesai !== null) {
-        fase = kini < mulai ? 'belum' : kini > selesai ? 'selesai' : 'berlangsung';
+        fase = sekarangTanggal < mulai ? 'belum' : sekarangTanggal > selesai ? 'selesai' : 'berlangsung';
       }
       const materi = a ? String(a.materi || '').trim() : '';
       const jurnalOk = materi.length >= Math.max(4, cfg.jurnalMin);
@@ -4190,7 +4205,10 @@ ${isi}
         label_sesi: sesi.istirahat ? sesi.label : (sesi.no ? `Jam ke-${sesi.no}` : (sesi.label || `Sesi ${r.sesi}`)),
         jam: sesi.mulai ? `${sesi.mulai}–${sesi.selesai}` : '',
         mulai: sesi.mulai || '', selesai: sesi.selesai || '',
-        mapel_id: Number(r.mapel_id) || 0, mapel_nama: r.mapel_nama || '', mapel_kode: r.mapel_kode || '',
+        mapel_id: Number(t && t.mapel_id) || Number(r.mapel_id) || 0,
+        mapel_nama: t && t.mapel_nama || r.mapel_nama || '',
+        mapel_kode: t && t.mapel_kode || r.mapel_kode || '',
+        mapel_asal_nama: r.mapel_nama || '',
         kelas_ids: r.kelas_ids, kelas_nama: r.kelas_nama || '',
         guru_id: Number(r.guru_id) || 0, guru_nama: r.guru_nama || '',
         guru_efektif_id: guruEfektifId,
@@ -4209,7 +4227,17 @@ ${isi}
         diawasi: !!iz
       };
     };
-    const slot = semua.filter(r => !r.istirahat).map(jumlahkan);
+    const slot = semua.filter(r => !r.istirahat).map(r => jumlahkan(r));
+    const absMapMatriks = tanggalMatriks === tanggal ? absMap
+      : new Map(db.prepare('SELECT * FROM absensi_guru WHERE tanggal=? AND ta_id=?').all(tanggalMatriks, taMatriks)
+        .map(a => [Number(a.jadwal_id), a]));
+    const izinMapMatriks = tanggalMatriks === tanggal ? izinMap
+      : new Map(db.prepare('SELECT * FROM absensi_guru_izin WHERE tanggal=?').all(tanggalMatriks)
+        .map(a => [Number(a.jadwal_id), a]));
+    const tukarMatriks = tanggalMatriks === tanggal ? tukar : dbm.tukarMap(tanggalMatriks);
+    const kiniMatriks = tanggalMatriks === dbm.today() ? kini : (tanggalMatriks < dbm.today() ? 1440 : -1);
+    const monitorJadwal = semuaMatriks.filter(r => !r.istirahat)
+      .map(r => jumlahkan(r, tanggalMatriks, absMapMatriks, izinMapMatriks, tukarMatriks, kiniMatriks));
     const berlangsung = slot.filter(x => x.fase === 'berlangsung');
     const selesai = slot.filter(x => x.fase === 'selesai');
     const belum = slot.filter(x => x.fase === 'belum');
@@ -4287,6 +4315,8 @@ ${isi}
     json(res, 200, {
       ok: true, tanggal, tanggal_label: dbm.tanggalPanjang(tanggal), hari, hari_label: dbm.HARI_LABEL[hari] || '',
       sekarang: dbm.menitJam(kini), jam_sekarang: dbm.menitJam(kini), ta: taPakai,
+      tanggal_matriks: tanggalMatriks, tanggal_matriks_label: dbm.tanggalPanjang(tanggalMatriks),
+      hari_matriks: hariMatriks, hari_matriks_label: dbm.HARI_LABEL[hariMatriks] || '', ta_matriks: taMatriks,
       kbm_libur: kbmLibur,
       kalender: kal ? {
         id: kal.id, kategori: kal.kategori, label: dbm.KALENDER_KATEGORI_LABEL[kal.kategori] || '',
@@ -4324,7 +4354,7 @@ ${isi}
       },
       sesi: { berlangsung, selesai, belum },
       per_kelas: [...perKelas.values()].sort((a, b) => String(a.kelas_nama).localeCompare(String(b.kelas_nama))),
-      monitor_jadwal: slot,
+      monitor_jadwal: monitorJadwal,
       kelas: kelasPicker(),
       guru: guruList(),
       jurnal_min: Math.max(4, cfg.jurnalMin),

@@ -48,6 +48,9 @@ async function apiLogin(u, pw) {
 const pad = n => String(n).padStart(2, '0');
 const wib = new Date();
 const TODAY = `${wib.getFullYear()}-${pad(wib.getMonth() + 1)}-${pad(wib.getDate())}`;
+const besok = new Date(wib);
+besok.setDate(besok.getDate() + 1);
+const BESOK = `${besok.getFullYear()}-${pad(besok.getMonth() + 1)}-${pad(besok.getDate())}`;
 const HARI = wib.getDay();
 const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((((m % 1440) + 1440) % 1440) % 60)}`;
 const cur = wib.getHours() * 60 + wib.getMinutes();
@@ -229,6 +232,16 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
       && await page.locator('[data-monitor-grid-mode]').inputValue() === 'semua');
     ok('status real-time tampil pada sel matriks',
       (await page.locator('[data-monitor-grid-status]').count()) >= 1);
+    const matriksBesokResponse = page.waitForResponse(response =>
+      response.url().includes('/api/monitor-kbm')
+      && decodeURIComponent(response.url()).includes(`tanggal_matriks=${BESOK}`));
+    await page.fill('[data-monitor-grid-tanggal]', BESOK);
+    const matriksBesok = await (await matriksBesokResponse).json();
+    ok('filter matriks memuat jadwal hari berikutnya terpisah dari ringkasan',
+      matriksBesok.tanggal === TODAY && matriksBesok.tanggal_matriks === BESOK
+      && !!matriksBesok.hari_matriks_label,
+      JSON.stringify({ tanggal: matriksBesok.tanggal, tanggal_matriks: matriksBesok.tanggal_matriks }));
+    await page.fill('[data-monitor-grid-tanggal]', TODAY);
     await page.selectOption('[data-monitor-grid-mode]', 'kelas');
     ok('filter matriks per kelas tersedia', (await page.locator('[data-monitor-grid-kelas]').count()) === 1);
     await page.selectOption('[data-monitor-grid-mode]', 'guru');

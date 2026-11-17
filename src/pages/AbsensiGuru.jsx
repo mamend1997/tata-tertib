@@ -616,7 +616,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
   useEffect(() => {
     if (!open || !slot?.id) return;
     const jenis = lintasHari ? 'sakit' : 'lainnya';
-    setLoading(true); setData(null); setGuruId(''); setMapelId('');
+    setLoading(true); setGuruId(''); setMapelId('');
     let active = true;
     api(`/api/tukar-jadwal/kandidat?jadwal_id=${slot.id}&tanggal=${tanggal}&alasan_jenis=${jenis}`)
       .then(r => { if (active) setData(r); })
@@ -698,8 +698,8 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Repeat size={15} />} Kirim Permintaan Tukar Jadwal
         </button>
       </>}>
-      {loading ? <Spinner label="Mencari jadwal pasangan pada kelas ini…" /> : !data ? null : (
-        <div className="space-y-3" data-modal-tukar>
+      {loading && !data ? <Spinner label="Mencari jadwal pasangan pada kelas ini…" /> : !data ? null : (
+        <div className="space-y-3" data-modal-tukar aria-busy={loading}>
           {tanggal >= hariIni() ? (
             <Field label="Jenis Pertukaran">
               <div className="grid gap-2 sm:grid-cols-2">
@@ -751,6 +751,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
           {lintasHari ? (
             <Field label="Hari Tujuan" required hint="Pilih tanggal setelah jadwal asal; hari yang sudah lewat tidak tersedia.">
               <select className="input" value={tanggalTujuan}
+                disabled={loading}
                 onChange={e => { setTanggalTujuan(e.target.value); setGuruId(''); setMapelId(''); }}
                 data-pilih-tanggal-tukar>
                 <option value="">— pilih hari tujuan —</option>
@@ -767,7 +768,8 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
             hint={lintasHari
               ? 'Setelah memilih hari, daftar hanya menampilkan guru yang memiliki slot pasangan di tanggal tersebut.'
               : 'Guru tujuan tidak perlu Check-in, tetapi jam slot pasangannya hari ini belum boleh dimulai.'}>
-            <select className="input" value={guruId} onChange={e => setGuruId(e.target.value)} data-pilih-guru-tukar>
+            <select className="input" value={guruId} disabled={loading}
+              onChange={e => setGuruId(e.target.value)} data-pilih-guru-tukar>
               <option value="">— pilih guru —</option>
               {kandidat.map(k => (
                 <option key={k.id} value={k.id}>
@@ -786,7 +788,8 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 
           <Field label="Mapel yang dipasangkan" required
             hint="Slot pasangan harus memiliki jumlah jam mapel yang sama dan kelas yang sama.">
-            <select className="input" value={mapelId} onChange={e => setMapelId(e.target.value)} data-pilih-mapel-tukar>
+            <select className="input" value={mapelId} disabled={loading}
+              onChange={e => setMapelId(e.target.value)} data-pilih-mapel-tukar>
               {mapelOpsi.map(m => <option key={m.id + '-' + m.jadwal_id + '-' + (m.tanggal || '')}
                 value={lintasHari ? `${m.tanggal}:${m.jadwal_id}` : String(m.id)}>
                 {m.nama || m.kode} · {lintasHari ? `${m.tanggal} · ` : ''}sesi {m.sesi}{m.jam ? ` (${m.jam})` : ''}

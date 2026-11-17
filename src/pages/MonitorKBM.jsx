@@ -21,6 +21,7 @@ const REFRESH_MS = 30000;
 export default function MonitorKBM({ ctx }) {
   const { filters, toast } = ctx;
   const [tanggal, setTanggal] = useState(() => hariIni());
+  const [tanggalMatriks, setTanggalMatriks] = useState(() => hariIni());
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
   const [auto, setAuto] = useState(true);
@@ -32,11 +33,11 @@ export default function MonitorKBM({ ctx }) {
 
   const load = useCallback((silent = false) => {
     if (!silent) setLoading(true);
-    api(`/api/monitor-kbm?ta=${encodeURIComponent(ta)}&tanggal=${encodeURIComponent(tanggal)}`)
+    api(`/api/monitor-kbm?ta=${encodeURIComponent(ta)}&tanggal=${encodeURIComponent(tanggal)}&tanggal_matriks=${encodeURIComponent(tanggalMatriks)}`)
       .then(r => { setD(r); setDetik(0); })
       .catch(e => { if (!silent) toast.err(e.message); })
       .finally(() => setLoading(false));
-  }, [ta, tanggal]);
+  }, [ta, tanggal, tanggalMatriks]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -115,8 +116,8 @@ export default function MonitorKBM({ ctx }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input type="date" className="input !w-auto !py-1.5 text-[12px]" value={tanggal}
-            onChange={e => setTanggal(e.target.value)} data-monitor-tanggal />
-          <button className="btn-ghost btn-sm" onClick={() => setTanggal(hariIni())} data-monitor-hari-ini>
+            onChange={e => { setTanggal(e.target.value); setTanggalMatriks(e.target.value); }} data-monitor-tanggal />
+          <button className="btn-ghost btn-sm" onClick={() => { setTanggal(hariIni()); setTanggalMatriks(hariIni()); }} data-monitor-hari-ini>
             <CalendarClock size={14} /> Hari Ini
           </button>
           <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11.5px] font-semibold text-slate-600">
@@ -175,9 +176,12 @@ export default function MonitorKBM({ ctx }) {
         </div>
       </Card>
 
-      <Card title={`Matriks Jadwal Mengajar — ${d?.hari_label || ''}`}
-        subtitle={`Status absensi diperbarui otomatis setiap ${REFRESH_MS / 1000} detik. Tanggal: ${tgl(d?.tanggal, { long: true })}`}
+      <Card title={`Matriks Jadwal Mengajar — ${d?.hari_matriks_label || ''}`}
+        subtitle={`Status absensi diperbarui otomatis setiap ${REFRESH_MS / 1000} detik. Tanggal: ${tgl(d?.tanggal_matriks, { long: true })}`}
         right={<div className="flex flex-wrap gap-1.5">
+          <input type="date" className="input !w-auto !py-1.5 text-[11.5px]" value={tanggalMatriks}
+            onChange={e => setTanggalMatriks(e.target.value)} aria-label="Tanggal matriks jadwal"
+            title="Pilih hari untuk melihat matriks jadwal mengajar" data-monitor-grid-tanggal />
           <select className="input !w-auto !py-1.5 text-[11.5px]" value={gridMode}
             onChange={e => setGridMode(e.target.value)} data-monitor-grid-mode>
             <option value="semua">Semua kelas</option>
@@ -234,9 +238,14 @@ export default function MonitorKBM({ ctx }) {
                               {x.status_label}
                             </span>
                             {x.status_detail ? <span className="ml-1 text-[10px] capitalize text-slate-500">{x.status_detail}</span> : null}
-                            {x.pengganti ? <p className="mt-1 text-[10px] font-semibold text-violet-700">
-                              {x.pengganti.jenis === 'penugasan' ? 'Guru piket/pengganti' : 'Tukar jadwal'}
-                            </p> : null}
+                            {x.pengganti?.jenis === 'tukar' ? (
+                              <p className="mt-1 text-[10px] font-semibold text-violet-700"
+                                data-monitor-tukar={x.jadwal_id}>
+                                Ditukar: {x.mapel_asal_nama || '-'} → {x.mapel_nama}
+                              </p>
+                            ) : x.pengganti ? (
+                              <p className="mt-1 text-[10px] font-semibold text-violet-700">Guru piket/pengganti</p>
+                            ) : null}
                           </div>
                         </td>
                       );

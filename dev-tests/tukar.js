@@ -418,6 +418,22 @@ async function stopServer() {
       await login('gurub', 'guru123');
       r = await req('/api/tukar-jadwal/putus', { method: 'POST', body: { id: lintasId, aksi: 'terima' } });
       ok('guru tujuan menerima pertukaran lintas hari', r.status === 200 && r.body.status === 'diterima', r.body?.error);
+      await login('admin', 'admin123');
+      r = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${TODAY}`);
+      const mapelAsalHariIni = (r.body.monitor_jadwal || []).find(x => Number(x.jadwal_id) === Number(a1.body.id));
+      ok('matriks hari asal menampilkan mapel efektif dan penanda Ditukar',
+        Number(mapelAsalHariIni?.mapel_id) === Number(mB)
+          && mapelAsalHariIni?.mapel_nama === 'Mapel B'
+          && mapelAsalHariIni?.pengganti?.jenis === 'tukar',
+        JSON.stringify(mapelAsalHariIni));
+      r = await req(`/api/monitor-kbm?tanggal=${TODAY}&tanggal_matriks=${TGL_TUJUAN}`);
+      const mapelTujuanHariLain = (r.body.monitor_jadwal || []).find(x => Number(x.jadwal_id) === Number(b1.body.id));
+      ok('filter matriks hari tujuan menampilkan mapel asal yang tertukar',
+        r.body.tanggal === TODAY && r.body.tanggal_matriks === TGL_TUJUAN
+          && Number(mapelTujuanHariLain?.mapel_id) === Number(mC)
+          && mapelTujuanHariLain?.mapel_nama === 'Mapel C'
+          && mapelTujuanHariLain?.pengganti?.jenis === 'tukar',
+        JSON.stringify({ tanggal: r.body.tanggal, tanggal_matriks: r.body.tanggal_matriks, row: mapelTujuanHariLain }));
       const persisted = new Database(DB);
       const swapRows = persisted.prepare('SELECT jadwal_id,tanggal,alasan,alasan_jenis,status FROM jadwal_tukar WHERE COALESCE(permintaan_id,id)=?')
         .all(lintasId);
