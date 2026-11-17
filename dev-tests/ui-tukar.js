@@ -62,12 +62,14 @@ const ok = (name, cond, extra) => {
     const wib = new Date(Date.now() + 7 * 3600 * 1000);
     const TODAY = wib.toISOString().slice(0, 10);
     const HARI = wib.getUTCDay();
+    const BESOK = new Date(wib.getTime() + 86400000).toISOString().slice(0, 10);
+    const HARI_BESOK = (HARI + 1) % 7;
     const hhmm = d => `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
     const past = m => new Date(Date.now() + 7 * 3600 * 1000 - m * 60000);
     const mulai = hhmm(past(10)), selesai = hhmm(new Date(past(-25)));
 
     /* ---------------- setup data lewat API ---------------- */
-    const setup = await page.evaluate(async ({ hari, mulai, selesai, mulai2, selesai2, mulai3, selesai3 }) => {
+    const setup = await page.evaluate(async ({ hari, hariBesok, tanggalBesok, mulai, selesai, mulai2, selesai2, mulai3, selesai3 }) => {
       const post = async (p, b) => (await fetch(p, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
       const get = async (p) => (await fetch(p, { credentials: 'same-origin' })).json();
       const mk = async (nama, username) => (await post('/api/users/save', { nama, username, password: 'guru123', role: 'guru_umum', roles: ['guru'] })).id;
@@ -75,7 +77,7 @@ const ok = (name, cond, extra) => {
       const gB = await mk('Guru Pengganti B', 'gurub');
       const gC = await mk('Guru Kelas Lain C', 'guruc');
       await post('/api/jadwal/pengaturan', {
-        hari: [hari], max_jam: 8,
+        hari: [hari, hariBesok], max_jam: 8,
         sesi: [
           { label: 'Jam 1', mulai, selesai, istirahat: 0 },
           { label: 'Jam 2', mulai: mulai2, selesai: selesai2, istirahat: 0 },
@@ -93,9 +95,10 @@ const ok = (name, cond, extra) => {
       await post('/api/jadwal/slot', { hari, sesi: 3, mapel_id: mB, guru_id: gB, kelas_ids: [kelas[0].id], abaikan: 1 });
       await post('/api/jadwal/slot', { hari, sesi: 3, mapel_id: mC, guru_id: gC, kelas_ids: [kelas[1].id], abaikan: 1 });
       const slotHadir = (await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: mB, guru_id: gB, kelas_ids: [kelas[1].id], abaikan: 1 })).id;
-      return { gA, gB, gC, slotA, slotHadir, kelas1: kelas[0].nama };
+      const slotBesok = (await post('/api/jadwal/slot', { hari: hariBesok, sesi: 1, mapel_id: mB, guru_id: gB, kelas_ids: [kelas[0].id], abaikan: 1 })).id;
+      return { gA, gB, gC, slotA, slotHadir, slotBesok, tanggalBesok, kelas1: kelas[0].nama };
     }, {
-      hari: HARI, mulai, selesai,
+      hari: HARI, hariBesok: HARI_BESOK, tanggalBesok: BESOK, mulai, selesai,
       mulai2: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 40 * 60000)),
       selesai2: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 65 * 60000)),
       mulai3: hhmm(new Date(Date.now() + 7 * 3600 * 1000 + 80 * 60000)),
@@ -134,6 +137,20 @@ const ok = (name, cond, extra) => {
     await page.waitForSelector('[data-alasan-tukar-jenis="izin"]', { timeout: 15000 });
     ok('mode hari berbeda menampilkan pilihan alasan Izin/Sakit',
       await page.locator('[data-alasan-tukar-jenis]').count() === 2);
+    await page.click('[data-alasan-tukar-jenis="izin"]');
+    ok('memilih Izin/Sakit tidak memicu loading ulang',
+      await page.getByText('Mencari jadwal pasangan pada kelas ini…').count() === 0);
+    await page.waitForSelector(`[data-pilih-tanggal-tukar] option[value="${setup.tanggalBesok}"]`,
+      { state: 'attached', timeout: 15000 });
+    const tanggalTukar = await page.locator('[data-pilih-tanggal-tukar] option').evaluateAll(options =>
+      options.map(option => option.value).filter(Boolean));
+    ok('hari tujuan dapat dipilih dan hanya menampilkan tanggal setelah jadwal asal',
+      tanggalTukar.length === 1 && tanggalTukar[0] === setup.tanggalBesok, JSON.stringify(tanggalTukar));
+    await page.selectOption('[data-pilih-tanggal-tukar]', setup.tanggalBesok);
+    await page.waitForSelector(`[data-pilih-guru-tukar] option[value="${setup.gB}"]`,
+      { state: 'attached', timeout: 15000 });
+    ok('guru tujuan baru ditampilkan setelah hari tujuan dipilih',
+      (await page.locator('[data-pilih-guru-tukar] option').allTextContents()).some(t => /Guru Pengganti B/.test(t)));
     await page.click('[data-tukar-mode="hari-sama"]');
     await page.waitForSelector(`[data-pilih-guru-tukar] option[value="${setup.gB}"]`, { state: 'attached', timeout: 15000 });
     const opsiGuru = await page.locator('[data-pilih-guru-tukar] option').allTextContents();

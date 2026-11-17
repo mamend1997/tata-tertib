@@ -596,6 +596,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [tanggalTujuan, setTanggalTujuan] = useState('');
   const [guruId, setGuruId] = useState('');
   const [mapelId, setMapelId] = useState('');
   const [alasan, setAlasan] = useState('');
@@ -606,7 +607,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 
   useEffect(() => {
     if (!open || !slot?.id) return;
-    setLoading(true); setData(null); setGuruId(''); setMapelId(''); setAlasan('');
+    setLoading(true); setData(null); setTanggalTujuan(''); setGuruId(''); setMapelId(''); setAlasan('');
     const defaultMode = tanggal > hariIni() ? 'lintas_hari' : 'hari_sama';
     setModeTukar(defaultMode);
     setAlasanJenis(defaultMode === 'lintas_hari' ? 'sakit' : 'lainnya');
@@ -614,7 +615,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 
   useEffect(() => {
     if (!open || !slot?.id) return;
-    const jenis = lintasHari ? alasanJenis : 'lainnya';
+    const jenis = lintasHari ? 'sakit' : 'lainnya';
     setLoading(true); setData(null); setGuruId(''); setMapelId('');
     let active = true;
     api(`/api/tukar-jadwal/kandidat?jadwal_id=${slot.id}&tanggal=${tanggal}&alasan_jenis=${jenis}`)
@@ -622,16 +623,36 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
       .catch(e => { if (active) toast.err(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [open, slot?.id, tanggal, lintasHari, alasanJenis]);
+  }, [open, slot?.id, tanggal, lintasHari]);
 
-  const kandidat = data?.kandidat || [];
+  const tanggalOpsi = lintasHari
+    ? [...new Set((data?.kandidat || []).flatMap(k => (k.mapel || []).map(m => m.tanggal)).filter(Boolean))].sort()
+    : [];
+  useEffect(() => {
+    if (!lintasHari) {
+      setTanggalTujuan('');
+      return;
+    }
+    if (!tanggalOpsi.includes(tanggalTujuan)) {
+      setTanggalTujuan(tanggalOpsi[0] || '');
+      setGuruId('');
+      setMapelId('');
+    }
+  }, [data, lintasHari]);
+
+  const kandidatSemua = data?.kandidat || [];
+  const kandidat = lintasHari
+    ? kandidatSemua.filter(k => (k.mapel || []).some(m => m.tanggal === tanggalTujuan))
+    : kandidatSemua;
   const pilih = kandidat.find(k => Number(k.id) === Number(guruId)) || null;
-  const mapelOpsi = pilih?.mapel || [];
+  const mapelOpsi = lintasHari
+    ? (pilih?.mapel || []).filter(m => m.tanggal === tanggalTujuan)
+    : (pilih?.mapel || []);
   useEffect(() => {
     if (!mapelOpsi.length) { setMapelId(''); return; }
     const keyOf = m => lintasHari ? `${m.tanggal}:${m.jadwal_id}` : String(m.id);
     if (!mapelOpsi.some(m => keyOf(m) === mapelId)) setMapelId(keyOf(mapelOpsi[0]));
-  }, [guruId, data]);
+  }, [guruId, data, tanggalTujuan, lintasHari]);
   const mapelTerpilih = mapelOpsi.find(m => (lintasHari
     ? `${m.tanggal}:${m.jadwal_id}` === mapelId
     : String(m.id) === mapelId)) || null;
@@ -660,6 +681,7 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
 
   function ubahMode(mode) {
     setModeTukar(mode);
+    setTanggalTujuan('');
     setAlasanJenis(mode === 'lintas_hari' ? 'sakit' : 'lainnya');
     setGuruId('');
     setMapelId('');
@@ -726,9 +748,24 @@ function ModalTukar({ open, slot, tanggal, onClose, onSaved }) {
             </Field>
           ) : null}
 
+          {lintasHari ? (
+            <Field label="Hari Tujuan" required hint="Pilih tanggal setelah jadwal asal; hari yang sudah lewat tidak tersedia.">
+              <select className="input" value={tanggalTujuan}
+                onChange={e => { setTanggalTujuan(e.target.value); setGuruId(''); setMapelId(''); }}
+                data-pilih-tanggal-tukar>
+                <option value="">— pilih hari tujuan —</option>
+                {tanggalOpsi.map(tgl => {
+                  const hari = new Intl.DateTimeFormat('id-ID', { weekday: 'long', timeZone: 'UTC' })
+                    .format(new Date(`${tgl}T12:00:00Z`));
+                  return <option key={tgl} value={tgl}>{hari.charAt(0).toUpperCase() + hari.slice(1)} · {tgl}</option>;
+                })}
+              </select>
+            </Field>
+          ) : null}
+
           <Field label="Guru Tujuan" required
             hint={lintasHari
-              ? 'Guru tujuan harus memiliki slot pada tanggal setelah jadwal asal, di kelas yang sama dan dengan jumlah jam yang sama.'
+              ? 'Setelah memilih hari, daftar hanya menampilkan guru yang memiliki slot pasangan di tanggal tersebut.'
               : 'Guru tujuan tidak perlu Check-in, tetapi jam slot pasangannya hari ini belum boleh dimulai.'}>
             <select className="input" value={guruId} onChange={e => setGuruId(e.target.value)} data-pilih-guru-tukar>
               <option value="">— pilih guru —</option>
