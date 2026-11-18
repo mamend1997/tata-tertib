@@ -414,27 +414,25 @@ export default function Daftar({ cfg, onBatal }) {
                     <input className="input pl-9" required value={f.admin_nama || ''} onChange={e => setF(v => ({ ...v, admin_nama: e.target.value }))} />
                   </div>
                 </Field>
-                <Field label="No WhatsApp" required hint={otpEnabled
-                  ? 'Diverifikasi lewat OTP dan dipakai untuk notifikasi tagihan'
-                  : 'Dipakai untuk notifikasi tagihan'}>
-                  <div className="relative">
-                    <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <div className="flex">
-                      <span className="flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-[13px] font-semibold text-slate-600">+62</span>
-                      <input className="input min-w-0 rounded-l-none pl-3" type="tel" inputMode="numeric"
-                        autoComplete="tel-national" required minLength={8} pattern="[0-9]{8,13}"
-                        data-daftar-telp value={phoneDigits} onChange={e => {
-                          const digits = e.target.value.replace(/\D/g, '').slice(0, 13);
-                          setF(v => ({ ...v, telp: '+62' + digits }));
-                          setOtpCode(''); setOtpSentPhone(''); setOtpMessage('');
-                        }} placeholder="81234567890" />
-                    </div>
+                <Field label="No WhatsApp" required>
+                  <div className="flex">
+                    <span data-phone-prefix className="flex items-center gap-1.5 rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-[13px] font-semibold text-slate-600">
+                      <Phone size={15} className="shrink-0" />
+                      <span data-phone-country-code>+62</span>
+                    </span>
+                    <input className="input min-w-0 rounded-l-none pl-3" type="tel" inputMode="numeric"
+                      autoComplete="tel-national" required minLength={8} pattern="[0-9]{8,13}"
+                      data-daftar-telp value={phoneDigits} onChange={e => {
+                        const digits = e.target.value.replace(/\D/g, '').slice(0, 13);
+                        setF(v => ({ ...v, telp: '+62' + digits }));
+                        setOtpCode(''); setOtpSentPhone(''); setOtpMessage('');
+                      }} placeholder="81234567890" />
                   </div>
                 </Field>
               </div>
               {otpEnabled ? <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <button type="button" className="btn-secondary shrink-0" disabled={otpBusy || !phoneValid} onClick={sendOtp}>
+                  <button type="button" className="btn-primary btn-sm shrink-0" disabled={otpBusy || !phoneValid} onClick={sendOtp} data-kirim-otp>
                     {otpBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
                     {otpBusy ? 'Mengirim kode…' : otpSentForCurrent ? 'Kirim Ulang Kode OTP' : 'Kirim Kode OTP WhatsApp'}
                   </button>

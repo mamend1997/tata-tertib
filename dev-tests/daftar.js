@@ -144,6 +144,16 @@ const badan = (n) => ({
     ok('form tidak lagi meminta nama kepala sekolah', await page.getByText('Nama Kepala Sekolah', { exact: false }).count() === 0);
     ok('form hanya memiliki satu field kata sandi', await page.locator('[data-password]').count() === 1);
     ok('nomor WhatsApp menampilkan awalan +62', await page.locator('text=+62').count() === 1);
+    ok('keterangan OTP di bawah nomor WhatsApp dihapus',
+      !/Diverifikasi lewat OTP dan dipakai untuk notifikasi tagihan/i.test(await page.locator('body').innerText()));
+    const prefixLayout = await page.locator('[data-phone-prefix]').evaluate(el => {
+      const icon = el.querySelector('svg').getBoundingClientRect();
+      const code = el.querySelector('[data-phone-country-code]').getBoundingClientRect();
+      return icon.right <= code.left;
+    });
+    ok('ikon telepon tidak menumpuk dengan awalan +62', prefixLayout);
+    const otpButtonClasses = await page.locator('[data-kirim-otp]').getAttribute('class');
+    ok('tombol Kirim OTP berukuran kecil dan berwarna', /btn-sm/.test(otpButtonClasses) && /btn-primary/.test(otpButtonClasses));
 
     await page.fill('input[placeholder*="SMP Negeri"]', 'SMA Pratinjau UI');
     await page.selectOption('select', 'SMA');
