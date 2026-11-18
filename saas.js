@@ -1457,16 +1457,32 @@ async function waSend(phone, pesan, { tenantId = null, jenis = 'umum', logMessag
       !cfg.aktif ? 'Gateway belum diaktifkan' : (!cfg.url ? 'URL gateway kosong' : 'Nomor tujuan kosong'), jenis);
     return { ok: false, error: 'Gateway WhatsApp belum aktif atau nomor tidak valid.' };
   }
+  const token = clean(cfg.token).replace(/^Bearer\b\s*/i, '').trim();
+  const fonnte = /fonnte\.(com|co\.id|id)/i.test(cfg.url);
+  if (fonnte && !token) {
+    waLog(tenantId, tujuan, logMessage || pesan, 'gagal', 'Token Fonnte belum diisi', jenis);
+    return { ok: false, error: 'Token Fonnte belum diisi.' };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const body = (cfg.payload || DEFAULTS.wa_payload)
-      .split('{phone}').join(tujuan)
-      .split('{pesan}').join(pesan);
+    const headers = {};
+    let body;
+    if (fonnte) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      if (token) headers.Authorization = token;
+      body = new URLSearchParams({ target: tujuan, message: String(pesan || '') }).toString();
+    } else {
+      headers['Content-Type'] = 'application/json';
+      if (token) headers.Authorization = 'Bearer ' + token;
+      body = (cfg.payload || DEFAULTS.wa_payload)
+        .split('{phone}').join(tujuan)
+        .split('{pesan}').join(pesan);
+    }
     const r = await fetch(cfg.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(cfg.token ? { Authorization: 'Bearer ' + cfg.token } : {}) },
-      body: JSON.parse(body) ? body : body,
+      headers,
+      body,
       signal: controller.signal
     });
     const txt = await r.text();

@@ -292,6 +292,7 @@ export function SuperWa({ ctx }) {
   }, []);
   useEffect(() => { load().catch(e => toast.err(e.message)); }, [load]);
   if (!data) return <Spinner label="Memuat gateway WhatsApp…" />;
+  const fonnte = /fonnte\.(com|co\.id|id)/i.test(String(f.wa_api_url || ''));
 
   async function simpan() {
     setBusy('simpan');
@@ -314,15 +315,23 @@ export function SuperWa({ ctx }) {
               <input type="checkbox" className="h-4 w-4 accent-emerald-600" checked={!!f.wa_aktif} onChange={e => setF(v => ({ ...v, wa_aktif: e.target.checked }))} />
               Aktifkan pengiriman WhatsApp otomatis
             </label>
-            <Field label="URL API Gateway" hint="Endpoint pengiriman pesan (POST JSON) dari penyedia WA Anda">
+            <Field label="URL API Gateway" hint={fonnte
+              ? 'Fonnte memakai format khusus dan dideteksi otomatis dari URL.'
+              : 'Endpoint pengiriman pesan (POST JSON) dari penyedia WA Anda.'}>
               <input className="input" value={f.wa_api_url} onChange={e => setF(v => ({ ...v, wa_api_url: e.target.value }))} placeholder="https://api.penyedia-wa.com/send" />
             </Field>
-            <Field label="Token / API Key" hint="Dikirim sebagai header Authorization: Bearer …">
+            <Field label="Token / API Key" hint={fonnte
+              ? 'Token Fonnte dikirim apa adanya di header Authorization (tanpa awalan Bearer).'
+              : 'Dikirim sebagai header Authorization: Bearer …; awalan Bearer yang sudah dimasukkan akan dirapikan.'}>
               <input className="input" type="password" value={f.wa_api_token} onChange={e => setF(v => ({ ...v, wa_api_token: e.target.value }))} />
             </Field>
-            <Field label="Format Payload JSON" hint="Gunakan {phone} dan {pesan} sebagai variabel">
-              <textarea className="input min-h-[90px] font-mono text-[12px]" value={f.wa_payload} onChange={e => setF(v => ({ ...v, wa_payload: e.target.value }))} />
-            </Field>
+            {fonnte
+              ? <Alert tone="info" title="Format Fonnte terdeteksi">
+                Pengiriman menggunakan form-urlencoded dengan kolom target dan message.
+              </Alert>
+              : <Field label="Format Payload JSON" hint="Gunakan {phone} dan {pesan} sebagai variabel">
+                <textarea className="input min-h-[90px] font-mono text-[12px]" value={f.wa_payload} onChange={e => setF(v => ({ ...v, wa_payload: e.target.value }))} />
+              </Field>}
             <button className="btn-primary w-full py-2.5" disabled={busy === 'simpan'} onClick={simpan}>
               {busy === 'simpan' ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Simpan Konfigurasi
             </button>

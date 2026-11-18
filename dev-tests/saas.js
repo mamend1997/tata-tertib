@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 const otpTest = require('./daftar-otp-fixture');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stt-saas-'));
@@ -17,6 +18,8 @@ const PORT = 6000 + Math.floor(Math.random() * 900);
 const BASE = `http://127.0.0.1:${PORT}`;
 let pass = 0, fail = 0;
 const fails = [];
+let waMock = null;
+let waLastRequest = null;
 
 function ok(name, cond, extra) {
   if (cond) { pass++; console.log('  ✓ ' + name); }
@@ -352,6 +355,63 @@ function client() {
     ok('uji WA tanpa gateway ditolak dengan pesan jelas', r.status === 400, String(r.status));
     r = await su.req('/api/super/wa');
     ok('log pengiriman WA tercatat', (r.body.log || []).length >= 1);
+    waMock = http.createServer((request, response) => {
+      let raw = '';
+      request.setEncoding('utf8');
+      request.on('data', chunk => { raw += chunk; });
+      request.on('end', () => {
+        waLastRequest = {
+          authorization: request.headers.authorization || '',
+          contentType: request.headers['content-type'] || '',
+          body: raw
+        };
+        let accepted = false;
+        if (waLastRequest.authorization === 'TOKEN-FONNTE'
+          && /application\/x-www-form-urlencoded/i.test(waLastRequest.contentType)) {
+          const form = new URLSearchParams(raw);
+          accepted = form.get('target') === '6281200000003' && form.get('message') === 'uji Fonnte';
+        } else if (waLastRequest.authorization === 'Bearer TOKEN-GENERIK'
+          && /application\/json/i.test(waLastRequest.contentType)) {
+          try {
+            const json = JSON.parse(raw);
+            accepted = json.target === '6281200000003' && json.message === 'uji generik';
+          } catch (e) { accepted = false; }
+        }
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify(accepted ? { status: true } : { status: false, reason: 'Invalid token or request format' }));
+      });
+    });
+    await new Promise((resolve, reject) => {
+      waMock.once('error', reject);
+      waMock.listen(0, '127.0.0.1', resolve);
+    });
+    const waMockUrl = `http://127.0.0.1:${waMock.address().port}`;
+    r = await su.req('/api/super/wa', { method: 'POST', body: {
+      wa_aktif: true, wa_api_url: waMockUrl + '/api.fonnte.com/send',
+      wa_api_token: 'Bearer TOKEN-FONNTE', wa_payload: '{"target":"{phone}","message":"{pesan}"}'
+    } });
+    ok('gateway Super Admin menerima konfigurasi Fonnte', r.status === 200);
+    r = await su.req('/api/super/wa/uji', {
+      method: 'POST', body: { telp: '081200000003', pesan: 'uji Fonnte' }
+    });
+    ok('gateway Super Admin mengirim token Fonnte tanpa Bearer dan form-urlencoded',
+      r.status === 200 && waLastRequest.authorization === 'TOKEN-FONNTE'
+        && /application\/x-www-form-urlencoded/i.test(waLastRequest.contentType),
+      JSON.stringify({ response: r.body, request: waLastRequest }));
+    r = await su.req('/api/super/wa', { method: 'POST', body: {
+      wa_aktif: true, wa_api_url: waMockUrl + '/generic/send',
+      wa_api_token: 'Bearer TOKEN-GENERIK', wa_payload: '{"target":"{phone}","message":"{pesan}"}'
+    } });
+    ok('gateway generik Super Admin tetap tersimpan', r.status === 200);
+    r = await su.req('/api/super/wa/uji', {
+      method: 'POST', body: { telp: '081200000003', pesan: 'uji generik' }
+    });
+    ok('gateway generik tidak menggandakan awalan Bearer',
+      r.status === 200 && waLastRequest.authorization === 'Bearer TOKEN-GENERIK',
+      JSON.stringify({ response: r.body, authorization: waLastRequest.authorization }));
+    await su.req('/api/super/wa', { method: 'POST', body: {
+      wa_aktif: false, wa_api_url: '', wa_api_token: ''
+    } });
 
     /* ================= 10. BACKUP & DATABASE MANAGER ================= */
     console.log('\n== BACKUP & DATABASE MANAGER ==');
@@ -511,6 +571,7 @@ function client() {
   } finally {
     srv.kill('SIGKILL');
     await gateway.close().catch(() => {});
+    if (waMock) await new Promise(resolve => waMock.close(resolve)).catch(() => {});
     await new Promise(r => setTimeout(r, 300));
     try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) { /* abaikan */ }
     console.log(`\n=== HASIL SAAS: ${pass} lulus, ${fail} gagal ===`);

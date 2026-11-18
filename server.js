@@ -2254,6 +2254,28 @@ get('/api/setup-checklist', (req, res) => {
   if (!adminOnly(req, res)) return;
   const count = sql => Number(db.prepare(sql).get().jumlah) || 0;
   const schoolName = String(dbm.getSetting('sekolah_nama', '') || '').trim();
+  const profileFields = [
+    ['sekolah_nama', 'Nama sekolah'],
+    ['sekolah_npsn', 'NPSN'],
+    ['sekolah_bentuk', 'Bentuk pendidikan'],
+    ['sekolah_status', 'Status sekolah'],
+    ['print_tempat', 'Tempat pada tanggal cetak'],
+    ['sekolah_telp', 'No. telepon'],
+    ['sekolah_email', 'Email'],
+    ['sekolah_website', 'Website'],
+    ['sekolah_alamat', 'Alamat lengkap'],
+    ['logo', 'Logo sekolah'],
+    ['kepala_nama', 'Nama kepala sekolah'],
+    ['kepala_nip', 'NIP kepala sekolah'],
+    ['bendahara_nama', 'Nama bendahara'],
+    ['bendahara_nip', 'NIP bendahara'],
+    ['wakasek_jabatan', 'Jabatan wakasek'],
+    ['wakasek_nama', 'Nama wakasek'],
+    ['wakasek_nip', 'NIP wakasek']
+  ];
+  const profileMissing = profileFields
+    .filter(([key]) => !String(dbm.getSetting(key, '') || '').trim())
+    .map(([, label]) => label);
   const activeYear = db.prepare('SELECT id,nama FROM tahun_ajaran WHERE aktif=1 ORDER BY id DESC LIMIT 1').get() || null;
   const staff = db.prepare('SELECT role,roles FROM users WHERE aktif=1').all()
     .filter(u => dbm.userRoleList(u).some(role => role !== 'admin')).length;
@@ -2263,18 +2285,19 @@ get('/api/setup-checklist', (req, res) => {
   const slots = activeYear
     ? Number((db.prepare('SELECT COUNT(*) AS jumlah FROM jadwal WHERE ta_id=?').get(activeYear.id) || {}).jumlah) || 0
     : 0;
-  const telegramReady = String(dbm.getSetting('backup_telegram_auto', '0')) === '1'
-    && !!String(dbm.getSetting('backup_telegram_bot_token', '') || '').trim()
-    && !!String(dbm.getSetting('backup_telegram_chat_id', '') || '').trim();
   const stages = {
-    profile: { complete: !!schoolName, detail: schoolName ? `Nama sekolah: ${schoolName}` : 'Nama sekolah belum diisi.' },
+    profile: {
+      complete: profileMissing.length === 0,
+      detail: profileMissing.length
+        ? `Belum lengkap: ${profileMissing.join(', ')}.`
+        : `Semua ${profileFields.length} field profil sekolah sudah dilengkapi (${schoolName}).`
+    },
     year: { complete: !!activeYear, detail: activeYear ? `Tahun aktif: ${activeYear.nama}` : 'Belum ada tahun pelajaran aktif.' },
     classes: { complete: classes > 0, detail: classes ? `${classes} kelas sudah dibuat.` : 'Belum ada kelas.' },
     staff: { complete: staff > 0, detail: staff ? `${staff} akun guru/pegawai aktif.` : 'Belum ada akun guru/pegawai selain administrator.' },
     students: { complete: students > 0, detail: students ? `${students} siswa aktif terdaftar.` : 'Belum ada siswa aktif.' },
     categories: { complete: categories > 0, detail: categories ? `${categories} kategori poin aktif tersedia.` : 'Belum ada kategori poin aktif.' },
-    schedule: { complete: slots > 0, detail: slots ? `${slots} slot jadwal pada tahun aktif.` : 'Belum ada slot jadwal pada tahun aktif.' },
-    backup: { complete: telegramReady, detail: telegramReady ? 'Backup otomatis Telegram aktif.' : 'Bot Token, Chat ID, dan backup otomatis perlu disiapkan.' }
+    schedule: { complete: slots > 0, detail: slots ? `${slots} slot jadwal pada tahun aktif.` : 'Belum ada slot jadwal pada tahun aktif.' }
   };
   const total = Object.keys(stages).length;
   const completed = Object.values(stages).filter(stage => stage.complete).length;

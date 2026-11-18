@@ -51,6 +51,7 @@ export default function Daftar({ cfg, onBatal }) {
   const platform = (cfg && cfg.platform) || {};
   const otpEnabled = platform.daftar_otp_aktif !== false;
   const [f, setF] = useState({ jenjang: 'SMK', telp: '+62' });
+  const [emailTouched, setEmailTouched] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [otpBusy, setOtpBusy] = useState(false);
@@ -136,6 +137,15 @@ export default function Daftar({ cfg, onBatal }) {
     { key: 'symbol', label: 'Simbol', valid: /[^A-Za-z0-9\s]/.test(password) }
   ];
   const passwordValid = passwordChecks.every(check => check.valid);
+  const emailValue = String(f.email || '').trim();
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue);
+  const emailError = !emailValue
+    ? 'Email wajib diisi.'
+    : !emailValue.includes('@')
+      ? 'Tambahkan tanda @ pada alamat email.'
+      : !emailValue.slice(emailValue.lastIndexOf('@') + 1).includes('.')
+        ? 'Tambahkan titik pada domain email, contoh: nama@sekolah.sch.id.'
+        : 'Format email belum valid. Periksa kembali alamat email.';
   const phoneDigits = String(f.telp || '').replace(/\D/g, '').replace(/^62/, '');
   const phoneValid = /^\d{8,13}$/.test(phoneDigits);
 
@@ -455,8 +465,15 @@ export default function Daftar({ cfg, onBatal }) {
               <Field label="Email Admin" required hint="Dipakai sebagai username untuk masuk">
                 <div className="relative">
                   <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input className="input pl-9" type="email" required value={f.email || ''} onChange={e => setF(v => ({ ...v, email: e.target.value }))} placeholder="admin@sekolah.sch.id" />
+                  <input className="input pl-9" type="email" required value={f.email || ''}
+                    aria-invalid={emailTouched && !emailValid}
+                    aria-describedby={emailTouched && !emailValid ? 'daftar-email-error' : undefined}
+                    data-daftar-email onBlur={() => setEmailTouched(true)}
+                    onChange={e => setF(v => ({ ...v, email: e.target.value }))} placeholder="admin@sekolah.sch.id" />
                 </div>
+                {emailTouched && !emailValid
+                  ? <p id="daftar-email-error" data-email-error className="mt-1.5 text-[11.5px] text-rose-600" role="alert">{emailError}</p>
+                  : null}
               </Field>
               <Field label="Password Admin" required hint="Penuhi semua kriteria kata sandi berikut">
                 <div className="relative">
@@ -483,12 +500,8 @@ export default function Daftar({ cfg, onBatal }) {
                   ))}
                 </ul>
               </Field>
-              <Alert tone="info" title="Kelas otomatis">
-                Sistem membuat daftar kelas default sesuai jenjang yang dipilih. Kelas tetap dapat diubah/ditambah
-                melalui menu <b>Data Kelas</b> di dashboard sekolah.
-              </Alert>
               {siteKey ? <div ref={captchaBox} className="flex justify-center py-1" /> : null}
-              <button className="btn-primary w-full py-2.5" disabled={busy || !otpReady || !passwordValid || !phoneValid}>
+              <button className="btn-primary w-full py-2.5" disabled={busy || !otpReady || !passwordValid || !phoneValid || !emailValid}>
                 {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                 Coba Gratis {platform.trial_hari || 7} Hari
               </button>

@@ -149,7 +149,17 @@ const badan = (n) => ({
     await page.selectOption('select', 'SMA');
     await page.fill('textarea', 'Jl. Pratinjau UI No. 7, Ciamis');
     await page.locator('label:has-text("Nama Admin") + div input, label:has-text("Nama Admin") ~ div input').first().fill('Admin UI').catch(() => {});
+    await page.fill('input[placeholder="admin@sekolah.sch.id"]', 'adminpratinjauui.sch.id');
+    await page.locator('[data-daftar-telp]').click();
+    ok('email tanpa @ memberi peringatan setelah pindah field',
+      await page.locator('[data-email-error]').isVisible()
+        && /@/.test(await page.locator('[data-email-error]').innerText()));
+    await page.fill('input[placeholder="admin@sekolah.sch.id"]', 'admin@pratinjauui');
+    ok('email tanpa titik memberi peringatan',
+      await page.locator('[data-email-error]').isVisible()
+        && /titik/i.test(await page.locator('[data-email-error]').innerText()));
     await page.fill('input[placeholder="admin@sekolah.sch.id"]', 'admin@pratinjauui.sch.id');
+    ok('peringatan email hilang setelah alamat valid', await page.locator('[data-email-error]').count() === 0);
     await page.locator('[data-daftar-telp]').fill('812abc34500077');
     await page.waitForFunction(() => document.querySelector('[data-daftar-telp]').value === '81234500077', null, { timeout: 1000 }).catch(() => {});
     const phoneValue = await page.locator('[data-daftar-telp]').inputValue();

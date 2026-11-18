@@ -91,11 +91,32 @@ async function req(method, url, body, opt = {}) {
   });
   ok('konfigurasi Telegram sekolah tersimpan tanpa mengembalikan token', r.status === 200
     && r.json.telegram.token_set && !JSON.stringify(r.json).includes(tgToken), JSON.stringify(r.json.telegram));
+  r = await req('GET', '/api/settings');
+  const profilAwal = r.json.settings;
+  const profilLengkap = {
+    sekolah_nama: 'SMK Profil Lengkap', sekolah_npsn: '12345678', sekolah_bentuk: 'SMK',
+    sekolah_status: 'Swasta', print_tempat: 'Ciamis', sekolah_telp: '0265123456',
+    sekolah_email: 'info@profil.sch.id', sekolah_website: 'www.profil.sch.id',
+    sekolah_alamat: 'Jalan Profil No. 1', logo: 'https://profil.sch.id/logo.png',
+    kepala_nama: 'Kepala Sekolah', kepala_nip: '123456789012345678',
+    bendahara_nama: 'Bendahara', bendahara_nip: '234567890123456789',
+    wakasek_jabatan: 'Wakasek Kesiswaan', wakasek_nama: 'Wakasek', wakasek_nip: '345678901234567890'
+  };
+  r = await req('POST', '/api/settings/save', { data: profilLengkap });
+  ok('semua field profil sekolah dapat disimpan', r.status === 200, String(r.status));
   r = await req('GET', '/api/setup-checklist');
-  ok('checklist setup administrator memuat delapan tahap', r.status === 200
-    && r.json.total === 8 && Object.keys(r.json.stages || {}).length === 8, JSON.stringify(r.json && Object.keys(r.json.stages || {})));
-  ok('backup checklist belum selesai saat jadwal otomatis nonaktif', r.status === 200
-    && r.json.stages.backup.complete === false && Number.isInteger(r.json.percent));
+  ok('checklist setup memuat tujuh tahap tanpa panduan Telegram', r.status === 200
+    && r.json.total === 7 && Object.keys(r.json.stages || {}).length === 7 && !r.json.stages.backup,
+    JSON.stringify(r.json && Object.keys(r.json.stages || {})));
+  ok('profil sekolah selesai hanya setelah seluruh 17 field terisi',
+    r.status === 200 && r.json.stages.profile.complete === true && /17 field profil/.test(r.json.stages.profile.detail));
+  await req('POST', '/api/settings/save', { data: { sekolah_npsn: '' } });
+  r = await req('GET', '/api/setup-checklist');
+  ok('profil kembali belum selesai saat satu field dikosongkan',
+    r.status === 200 && r.json.stages.profile.complete === false && /NPSN/.test(r.json.stages.profile.detail));
+  await req('POST', '/api/settings/save', {
+    data: Object.fromEntries(Object.keys(profilLengkap).map(key => [key, profilAwal[key] || '']))
+  });
   r = await req('POST', '/api/backup/telegram', { jam: '25:00', auto: false });
   ok('jam backup dengan format salah ditolak', r.status === 400, String(r.status));
   r = await req('GET', '/api/backup/info');

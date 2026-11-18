@@ -6,7 +6,7 @@ import { Card, cx, useToast } from '../ui';
 const STEPS = [
   {
     id: 'profile', title: 'Profil Sekolah', page: 'pengaturan', tab: 'identitas', target: 'setup-profile-save',
-    description: 'Lengkapi nama sekolah. Identitas ini dipakai pada header aplikasi, portal, dan dokumen resmi.'
+    description: 'Lengkapi semua informasi sekolah, kontak, logo, dan data pejabat.'
   },
   {
     id: 'year', title: 'Tahun Pelajaran', page: 'pengaturan', tab: 'tahun', target: 'setup-year-add',
@@ -31,10 +31,6 @@ const STEPS = [
   {
     id: 'schedule', title: 'Jadwal & Absensi', page: 'jadwal', target: 'setup-schedule-add',
     description: 'Susun minimal satu slot jadwal. Jadwal menjadi dasar absensi guru dan siswa per mata pelajaran.'
-  },
-  {
-    id: 'backup', title: 'Backup Telegram', page: 'pengaturan', tab: 'backup', target: 'setup-backup-save',
-    description: 'Masukkan Bot Token dan Chat ID, atur satu atau lebih jam, lalu aktifkan backup otomatis.'
   }
 ];
 
