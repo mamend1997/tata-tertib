@@ -46,6 +46,10 @@ module.exports = function mount(apiCtx) {
   };
   /* pembatas percobaan login portal Super Admin (per IP) */
   const superHits = new Map();
+  const superRecoveryOtp = new Map();
+  const superRecoveryHits = new Map();
+  const superRecoveryIpHits = new Map();
+  const superRecoverySecret = crypto.randomBytes(32);
   /* pembatas pendaftaran mandiri (anti-spam, per IP) */
   const daftarHits = new Map();
   const daftarOtp = new Map();
@@ -111,6 +115,28 @@ module.exports = function mount(apiCtx) {
     }
     daftarOtp.delete(phone);
     return { ok: true };
+  };
+  const recoveryHash = (adminId, code) => crypto.createHmac('sha256', superRecoverySecret)
+    .update(`${adminId}:${code}`).digest();
+  const recoveryIpAllowed = (ip, now) => {
+    const hits = (superRecoveryIpHits.get(ip) || []).filter(t => now - t < 15 * 60 * 1000);
+    if (hits.length >= 10) {
+      superRecoveryIpHits.set(ip, hits);
+      return false;
+    }
+    hits.push(now);
+    superRecoveryIpHits.set(ip, hits);
+    return true;
+  };
+  const recoveryAdminAllowed = (id, now) => {
+    const hits = (superRecoveryHits.get(id) || []).filter(t => now - t < 60 * 60 * 1000);
+    if (hits.length >= 3) {
+      superRecoveryHits.set(id, hits);
+      return false;
+    }
+    hits.push(now);
+    superRecoveryHits.set(id, hits);
+    return true;
   };
 
   /* =================================================================
@@ -917,7 +943,7 @@ module.exports = function mount(apiCtx) {
     const admins = saas.sdb.prepare('SELECT id,nama,username,email,aktif,terakhir_masuk,created_at FROM saas_admins ORDER BY id').all();
     json(res, 200, {
       ok: true,
-      user: { id: me.id, nama: me.nama, username: me.username, email: me.email || '', terakhir_masuk: me.terakhir_masuk || '' },
+      user: { id: me.id, nama: me.nama, username: me.username, email: me.email || '', phone: me.phone || '', terakhir_masuk: me.terakhir_masuk || '' },
       admins: admins.length, jumlah_admin: admins.length
     });
   });
@@ -930,11 +956,77 @@ module.exports = function mount(apiCtx) {
       saas.logAudit(r.nama, 'UBAH PROFIL', 'auth',
         `Profil Super Admin diperbarui (username ${r.username}${r.password_diubah ? ', kata sandi diubah' : ''})`, ipOf(req));
       json(res, 200, {
-        ok: true, user: { id: r.id, nama: r.nama, username: r.username, email: r.email },
+        ok: true, user: { id: r.id, nama: r.nama, username: r.username, email: r.email, phone: r.phone },
         pesan: r.password_diubah ? 'Profil & kata sandi Super Admin diperbarui.' : 'Profil Super Admin diperbarui.'
       });
     } catch (e) { fail(res, 400, e.message); }
   });
+
+  /* ---------- pemulihan sandi Super Admin via OTP WhatsApp ---------- */
+  post('/api/super/password/otp', async (req, res) => {
+    const b = await readBody(req);
+    const ip = ipOf(req);
+    const now = Date.now();
+    if (!recoveryIpAllowed(ip, now)) return fail(res, 429, 'Terlalu banyak permintaan pemulihan. Coba lagi dalam 15 menit.');
+    const identifier = String(b.identifier || '').trim();
+    if (!identifier) return fail(res, 400, 'Masukkan username atau email Super Admin.');
+    const generic = 'Jika akun aktif dengan nomor WhatsApp terdaftar ditemukan, OTP telah dikirim. Periksa WhatsApp atau hubungi administrator bila tidak menerimanya.';
+    const admin = saas.adminByUsername(identifier) || saas.adminByEmail(identifier);
+    if (!admin || !admin.aktif || !admin.phone) {
+      json(res, 200, { ok: true, pesan: generic });
+      return;
+    }
+    const previous = superRecoveryOtp.get(Number(admin.id));
+    if ((previous && now - previous.sentAt < 60 * 1000) || !recoveryAdminAllowed(Number(admin.id), now)) {
+      json(res, 200, { ok: true, pesan: generic });
+      return;
+    }
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const result = await saas.waSend(admin.phone,
+      `Kode OTP pemulihan kata sandi Super Admin: ${code}. Berlaku 10 menit. Jangan bagikan kode ini kepada siapa pun.`,
+      { jenis: 'pemulihan-sandi', logMessage: 'OTP pemulihan kata sandi Super Admin', hideError: true });
+    if (result.ok) {
+      superRecoveryOtp.set(Number(admin.id), {
+        hash: recoveryHash(admin.id, code), expiresAt: now + 10 * 60 * 1000, sentAt: now, attempts: 0
+      });
+      saas.logAudit(admin.nama, 'OTP PEMULIHAN DIMINTA', 'auth', 'Permintaan OTP pemulihan sandi Super Admin', ip);
+    } else {
+      saas.logAudit(admin.nama, 'OTP PEMULIHAN GAGAL', 'auth', 'Gateway WhatsApp gagal mengirim OTP pemulihan sandi', ip);
+    }
+    json(res, 200, { ok: true, pesan: generic });
+  }, SAAS);
+  post('/api/super/password/reset', async (req, res) => {
+    const b = await readBody(req);
+    const identifier = String(b.identifier || '').trim();
+    const otp = String(b.otp || '');
+    const password = String(b.password || '');
+    if (password.length < 8) return fail(res, 400, 'Kata sandi baru minimal 8 karakter.');
+    if (String(b.password_ulang || '') !== password) return fail(res, 400, 'Ulangi kata sandi baru tidak sama.');
+    const admin = saas.adminByUsername(identifier) || saas.adminByEmail(identifier);
+    const row = admin && superRecoveryOtp.get(Number(admin.id));
+    if (!admin || !admin.aktif || !admin.phone || !row || row.expiresAt <= Date.now()) {
+      if (admin) superRecoveryOtp.delete(Number(admin.id));
+      return fail(res, 400, 'OTP tidak valid atau sudah kedaluwarsa. Minta kode baru.');
+    }
+    if (row.attempts >= 5) {
+      superRecoveryOtp.delete(Number(admin.id));
+      return fail(res, 400, 'OTP tidak valid atau sudah kedaluwarsa. Minta kode baru.');
+    }
+    if (!/^\d{6}$/.test(otp) || !crypto.timingSafeEqual(row.hash, recoveryHash(admin.id, otp))) {
+      row.attempts++;
+      if (row.attempts >= 5) superRecoveryOtp.delete(Number(admin.id));
+      return fail(res, 400, 'OTP tidak valid atau sudah kedaluwarsa. Minta kode baru.');
+    }
+    if (lib.verifyPassword(password, admin.pass_hash)) {
+      return fail(res, 400, 'Kata sandi baru tidak boleh sama dengan kata sandi lama.');
+    }
+    saas.sdb.prepare('UPDATE saas_admins SET pass_hash=? WHERE id=?')
+      .run(lib.hashPassword(password), Number(admin.id));
+    saas.sdb.prepare("DELETE FROM saas_sesi WHERE scope='super' AND user_id=?").run(Number(admin.id));
+    superRecoveryOtp.delete(Number(admin.id));
+    saas.logAudit(admin.nama, 'RESET KATA SANDI', 'auth', 'Kata sandi Super Admin direset melalui OTP WhatsApp', ipOf(req));
+    json(res, 200, { ok: true, pesan: 'Kata sandi berhasil direset. Silakan masuk dengan kata sandi baru.' });
+  }, SAAS);
 
   /* ---------- login khusus Super Admin (portal terpisah) ---------- */
   post('/api/super/login', async (req, res) => {

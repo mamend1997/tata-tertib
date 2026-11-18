@@ -80,7 +80,8 @@ Satu pemasangan aplikasi melayani banyak sekolah:
 * **Super Admin platform** — buka `#/saas` (mis. `/tata-tertib/#/saas`) atau klik tautan
   **Panel Super Admin** di bawah form login. Akun bawaan `superadmin` / `superadmin123`
   (ubah lewat env `SAAS_ADMIN_USER` / `SAAS_ADMIN_PASS`). Akun Super Admin yang dimasukkan pada
-  form login sekolah otomatis diarahkan ke panel platform (tidak memakai panel sekolah).
+  form login sekolah otomatis diarahkan ke panel platform (tidak memakai panel sekolah). Lupa sandi
+  dapat dipulihkan dengan OTP WhatsApp ke nomor akun yang terdaftar; gateway WhatsApp platform harus aktif.
   15 menu: Dashboard, Daftar Sekolah, Pembayaran & Penagihan, Paket Langganan, Default Menu,
   Branding, QRIS & Harga, Syarat & SLA, Pusat Tiket, Pengumuman & Maintenance, Petunjuk Pengguna,
   Audit Logs, WhatsApp Gateway, Backup & Restore, Database Manager.
@@ -92,7 +93,10 @@ Satu pemasangan aplikasi melayani banyak sekolah:
   tombol Perpanjang + QRIS/instruksi), **Pusat Bantuan** (tiket dua arah), **Petunjuk Pengguna**, **Legal & SLA**.
 
 Variabel lingkungan baru: `SAAS_DB_PATH` (control plane), `SAAS_ADMIN_USER`, `SAAS_ADMIN_PASS`,
-`SAAS_ADMIN_EMAIL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `WA_API_URL`, `WA_API_TOKEN`, `APP_BASE_URL`.
+`SAAS_ADMIN_EMAIL`, `SAAS_ADMIN_PHONE` (mendaftarkan nomor pemulihan untuk akun awal; untuk akun lama,
+isi variabel `SAAS_ADMIN_PHONE` dan pastikan `SAAS_ADMIN_USER` cocok dengan username akun, lalu restart aplikasi),
+`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `WA_API_URL`,
+`WA_API_TOKEN`, `APP_BASE_URL`.
 Bila `DB_PATH` diarahkan ke tempat lain (mis. saat pengujian), control plane & folder database sekolah
 otomatis ikut ke folder tersebut supaya data produksi tidak tersentuh.
 

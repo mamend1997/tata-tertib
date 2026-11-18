@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS saas_admins (
   nama TEXT NOT NULL,
   username TEXT NOT NULL UNIQUE,
   email TEXT,
+  phone TEXT,
   pass_hash TEXT NOT NULL,
   aktif INTEGER NOT NULL DEFAULT 1,
   terakhir_masuk TEXT,
@@ -242,6 +243,9 @@ CREATE TABLE IF NOT EXISTS kasera_event (
 );
 CREATE INDEX IF NOT EXISTS idx_kasera_event_waktu ON kasera_event(diterima_at);
 `);
+if (!sdb.prepare("PRAGMA table_info('saas_admins')").all().some(column => column.name === 'phone')) {
+  sdb.exec('ALTER TABLE saas_admins ADD COLUMN phone TEXT');
+}
 
 /* ============================ SETTINGS ============================ */
 const DEFAULTS = {
@@ -1617,23 +1621,28 @@ function adminSave(b) {
   const nama = clean(b.nama), username = clean(b.username).toLowerCase();
   if (!nama || !username) throw new Error('Nama & username wajib diisi.');
   const pass = clean(b.password);
+  const current = b.id ? adminById(b.id) : null;
+  const phone = b.phone === undefined
+    ? lib.normPhone((current && current.phone) || '')
+    : (clean(b.phone) ? lib.normPhone(b.phone) : '');
+  if (clean(b.phone) && !phone) throw new Error('Nomor WhatsApp tidak valid.');
   if (pass && pass.length < 6) throw new Error('Kata sandi minimal 6 karakter.');
   const ada = adminByUsername(username);
   if (b.id) {
-    if (pass) sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,pass_hash=?,aktif=? WHERE id=?')
-      .run(nama, username, clean(b.email), lib.hashPassword(pass), b.aktif ? 1 : 0, Number(b.id));
-    else sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,aktif=? WHERE id=?')
-      .run(nama, username, clean(b.email), b.aktif ? 1 : 0, Number(b.id));
+    if (pass) sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,phone=?,pass_hash=?,aktif=? WHERE id=?')
+      .run(nama, username, clean(b.email), phone, lib.hashPassword(pass), b.aktif ? 1 : 0, Number(b.id));
+    else sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,phone=?,aktif=? WHERE id=?')
+      .run(nama, username, clean(b.email), phone, b.aktif ? 1 : 0, Number(b.id));
     return { id: Number(b.id) };
   }
   if (ada) throw new Error('Username sudah dipakai.');
-  const info = sdb.prepare('INSERT INTO saas_admins(nama,username,email,pass_hash,aktif,created_at) VALUES(?,?,?,?,1,?)')
-    .run(nama, username, clean(b.email), lib.hashPassword(pass || randomPassword(12)), now());
+  const info = sdb.prepare('INSERT INTO saas_admins(nama,username,email,phone,pass_hash,aktif,created_at) VALUES(?,?,?,?,?,1,?)')
+    .run(nama, username, clean(b.email), phone, lib.hashPassword(pass || randomPassword(12)), now());
   return { id: Number(info.lastInsertRowid) };
 }
 
 /**
- * Ubah profil Super Admin yang sedang masuk (nama, username, email, kata sandi).
+ * Ubah profil Super Admin yang sedang masuk (nama, username, email, nomor HP, kata sandi).
  * Mengganti kata sandi WAJIB menyertakan kata sandi lama yang benar.
  */
 function adminUpdateSelf(id, b = {}) {
@@ -1642,11 +1651,15 @@ function adminUpdateSelf(id, b = {}) {
   const nama = clean(b.nama);
   const username = clean(b.username).toLowerCase();
   const email = clean(b.email);
+  const phone = b.phone === undefined
+    ? lib.normPhone(admin.phone || '')
+    : (clean(b.phone) ? lib.normPhone(b.phone) : '');
   if (nama.length < 3) throw new Error('Nama akun minimal 3 karakter.');
   if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) {
     throw new Error('Username 3–32 karakter: huruf kecil, angka, titik, garis bawah, atau strip.');
   }
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Format email tidak valid.');
+  if (clean(b.phone) && !phone) throw new Error('Nomor WhatsApp tidak valid.');
   const kembar = adminByUsername(username);
   if (kembar && Number(kembar.id) !== Number(admin.id)) throw new Error('Username sudah dipakai akun lain.');
   const emailKembar = email ? adminByEmail(email) : null;
@@ -1659,14 +1672,14 @@ function adminUpdateSelf(id, b = {}) {
     if (baru.length < 8) throw new Error('Kata sandi baru minimal 8 karakter.');
     if (baru === lama) throw new Error('Kata sandi baru tidak boleh sama dengan kata sandi lama.');
     if (String(b.password_ulang || baru) !== baru) throw new Error('Ulangi kata sandi baru tidak sama.');
-    sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,pass_hash=? WHERE id=?')
-      .run(nama, username, email, lib.hashPassword(baru), Number(admin.id));
+    sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,phone=?,pass_hash=? WHERE id=?')
+      .run(nama, username, email, phone, lib.hashPassword(baru), Number(admin.id));
   } else {
-    sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=? WHERE id=?')
-      .run(nama, username, email, Number(admin.id));
+    sdb.prepare('UPDATE saas_admins SET nama=?,username=?,email=?,phone=? WHERE id=?')
+      .run(nama, username, email, phone, Number(admin.id));
   }
   return {
-    id: Number(admin.id), nama, username, email,
+    id: Number(admin.id), nama, username, email, phone,
     password_diubah: !!baru
   };
 }
@@ -1908,8 +1921,17 @@ function init() {
   if (!sdb.prepare('SELECT COUNT(*) c FROM saas_admins').get().c) {
     const user = clean(process.env.SAAS_ADMIN_USER) || 'superadmin';
     const pass = clean(process.env.SAAS_ADMIN_PASS) || 'superadmin123';
-    sdb.prepare('INSERT INTO saas_admins(nama,username,email,pass_hash,aktif,created_at) VALUES(?,?,?,?,1,?)')
-      .run('Super Admin', user, clean(process.env.SAAS_ADMIN_EMAIL), lib.hashPassword(pass), now());
+    const phone = lib.normPhone(process.env.SAAS_ADMIN_PHONE || '');
+    sdb.prepare('INSERT INTO saas_admins(nama,username,email,phone,pass_hash,aktif,created_at) VALUES(?,?,?,?,?,1,?)')
+      .run('Super Admin', user, clean(process.env.SAAS_ADMIN_EMAIL), phone || null, lib.hashPassword(pass), now());
+  }
+  const adminPhone = lib.normPhone(process.env.SAAS_ADMIN_PHONE || '');
+  if (clean(process.env.SAAS_ADMIN_PHONE) && !adminPhone) {
+    console.error('[saas] SAAS_ADMIN_PHONE tidak valid; nomor pemulihan tidak disimpan.');
+  } else if (adminPhone) {
+    const username = clean(process.env.SAAS_ADMIN_USER) || 'superadmin';
+    sdb.prepare("UPDATE saas_admins SET phone=? WHERE lower(username)=lower(?) AND COALESCE(phone,'')=''")
+      .run(adminPhone, username);
   }
   /* ---- normalisasi sakelar boolean lama ----
      Versi sebelumnya menyimpan nilai formulir apa adanya ("true"/"false"),

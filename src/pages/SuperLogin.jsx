@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, Fingerprint, Loader2, Lock, Server, ShieldCheck, User } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Fingerprint, KeyRound, Loader2, Lock, MessageCircle, Server, ShieldCheck, User } from 'lucide-react';
 import { api } from '../api';
 import { applyBrandingHead, watchBranding } from '../branding';
 
@@ -16,6 +16,12 @@ export default function SuperLogin() {
   const [busy, setBusy] = useState(false);
   const [cek, setCek] = useState(true);
   const [err, setErr] = useState('');
+  const [recover, setRecover] = useState(false);
+  const [otpRequested, setOtpRequested] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoverMessage, setRecoverMessage] = useState('');
   const BASE = (typeof window !== 'undefined' && window.__BASE__) || '';
 
   const lanjut = () => window.location.replace(BASE + '/#/saas/dashboard');
@@ -38,6 +44,36 @@ export default function SuperLogin() {
     try {
       await api('/api/super/login', { method: 'POST', body: form });
       lanjut();
+    } catch (e2) {
+      setErr(e2.message);
+    } finally { setBusy(false); }
+  }
+
+  async function requestOtp(e) {
+    e.preventDefault();
+    setErr(''); setRecoverMessage(''); setBusy(true);
+    try {
+      const d = await api('/api/super/password/otp', {
+        method: 'POST', body: { identifier: form.username }
+      });
+      setRecoverMessage(d.pesan || 'Jika akun cocok, OTP akan dikirim ke WhatsApp terdaftar.');
+      setOtpRequested(true);
+    } catch (e2) {
+      setErr(e2.message);
+    } finally { setBusy(false); }
+  }
+
+  async function resetPassword(e) {
+    e.preventDefault();
+    setErr(''); setBusy(true);
+    try {
+      const d = await api('/api/super/password/reset', {
+        method: 'POST',
+        body: { identifier: form.username, otp, password: newPassword, password_ulang: confirmPassword }
+      });
+      setRecover(false); setOtpRequested(false); setOtp(''); setNewPassword(''); setConfirmPassword('');
+      setForm(f => ({ ...f, password: '' }));
+      setRecoverMessage(d.pesan || '');
     } catch (e2) {
       setErr(e2.message);
     } finally { setBusy(false); }
@@ -86,40 +122,84 @@ export default function SuperLogin() {
                   <Loader2 size={16} className="animate-spin" /> Memeriksa sesi…
                 </div>
               ) : (
-                <form onSubmit={submit} className="space-y-4">
+                <form onSubmit={recover ? (otpRequested ? resetPassword : requestOtp) : submit} className="space-y-4">
                   <div>
                     <label className="mb-1 block text-[11.5px] font-bold uppercase tracking-wider text-slate-400">Username / Email Super Admin</label>
                     <div className="relative">
                       <User size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                       <input className="w-full rounded-xl border border-white/10 bg-slate-950/60 py-2.5 pl-9 pr-3 text-[13.5px] text-white outline-none transition placeholder:text-slate-600 focus:border-teal-400/60 focus:ring-2 focus:ring-teal-500/20"
-                        autoFocus autoComplete="username" value={form.username} placeholder="superadmin"
+                        autoFocus autoComplete="username" required value={form.username} placeholder="superadmin"
                         onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
                     </div>
                   </div>
-                  <div>
-                    <label className="mb-1 block text-[11.5px] font-bold uppercase tracking-wider text-slate-400">Kata Sandi</label>
-                    <div className="relative">
-                      <Lock size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                      <input type={show ? 'text' : 'password'} autoComplete="current-password"
-                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 py-2.5 pl-9 pr-10 text-[13.5px] text-white outline-none transition placeholder:text-slate-600 focus:border-teal-400/60 focus:ring-2 focus:ring-teal-500/20"
-                        value={form.password} placeholder="••••••••"
-                        onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
-                      <button type="button" onClick={() => setShow(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
-                        {show ? <EyeOff size={15} /> : <Eye size={15} />}
-                      </button>
+                  {!recover ? (
+                    <div>
+                      <label className="mb-1 block text-[11.5px] font-bold uppercase tracking-wider text-slate-400">Kata Sandi</label>
+                      <div className="relative">
+                        <Lock size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input type={show ? 'text' : 'password'} autoComplete="current-password" required
+                          className="w-full rounded-xl border border-white/10 bg-slate-950/60 py-2.5 pl-9 pr-10 text-[13.5px] text-white outline-none transition placeholder:text-slate-600 focus:border-teal-400/60 focus:ring-2 focus:ring-teal-500/20"
+                          value={form.password} placeholder="••••••••"
+                          onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+                        <button type="button" onClick={() => setShow(v => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300">
+                          {show ? <EyeOff size={15} /> : <Eye size={15} />}
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
+                  {recover && otpRequested ? (
+                    <>
+                      <div className="rounded-xl border border-teal-400/20 bg-teal-400/10 px-3 py-2 text-[12px] leading-relaxed text-teal-100">
+                        <MessageCircle size={14} className="mr-1 inline" />{recoverMessage}
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11.5px] font-bold uppercase tracking-wider text-slate-400">OTP WhatsApp (6 digit)</label>
+                        <input data-super-otp className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-[13.5px] tracking-[.3em] text-white outline-none focus:border-teal-400/60"
+                          inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={otp}
+                          onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11.5px] font-bold uppercase tracking-wider text-slate-400">Kata Sandi Baru</label>
+                        <input className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-[13.5px] text-white outline-none focus:border-teal-400/60"
+                          type="password" autoComplete="new-password" minLength={8} required value={newPassword}
+                          onChange={e => setNewPassword(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[11.5px] font-bold uppercase tracking-wider text-slate-400">Ulangi Kata Sandi Baru</label>
+                        <input className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2.5 text-[13.5px] text-white outline-none focus:border-teal-400/60"
+                          type="password" autoComplete="new-password" minLength={8} required value={confirmPassword}
+                          onChange={e => setConfirmPassword(e.target.value)} />
+                      </div>
+                    </>
+                  ) : recover ? (
+                    <p className="text-[12px] leading-relaxed text-slate-400">
+                      Kode OTP akan dikirim melalui WhatsApp ke nomor yang terdaftar pada akun Super Admin.
+                    </p>
+                  ) : null}
 
                   {err ? <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[12.5px] font-medium text-rose-200">{err}</div> : null}
 
                   <button type="submit" disabled={busy}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-teal-500 py-2.5 text-[14px] font-bold text-slate-950 transition hover:bg-teal-400 disabled:opacity-60">
-                    {busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}{busy ? 'Memverifikasi…' : 'Masuk Panel Platform'}
+                    {busy ? <Loader2 size={16} className="animate-spin" /> : recover ? <KeyRound size={16} /> : <ShieldCheck size={16} />}
+                    {busy ? 'Memproses…' : recover ? (otpRequested ? 'Atur Kata Sandi Baru' : 'Kirim OTP WhatsApp') : 'Masuk Panel Platform'}
                   </button>
+                  {recover ? (
+                    <button type="button" onClick={() => { setRecover(false); setOtpRequested(false); setErr(''); setRecoverMessage(''); }}
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 py-2 text-[12.5px] font-semibold text-slate-300 hover:bg-white/5">
+                      <ArrowLeft size={14} /> Kembali ke login
+                    </button>
+                  ) : (
+                    <button type="button" data-super-forgot onClick={() => { setRecover(true); setErr(''); setRecoverMessage(''); }}
+                      className="w-full py-1 text-[12px] font-semibold text-teal-300 hover:text-teal-200">
+                      Lupa kata sandi?
+                    </button>
+                  )}
                 </form>
               )}
             </div>
 
+            {recoverMessage && !otpRequested ? <p className="mt-3 text-center text-[12px] text-emerald-300">{recoverMessage}</p> : null}
             <p className="mt-5 text-center text-[11.5px] leading-relaxed text-slate-500">
               Portal ini terpisah dari login sekolah. Pengguna sekolah masuk melalui halaman utama aplikasi.
             </p>

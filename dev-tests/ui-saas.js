@@ -160,6 +160,14 @@ function apiClient() {
     ok('panel tanpa sesi mengarahkan ke portal Super Admin eksklusif', perluLogin);
     await page.goto(BASE + '/super-admin', { waitUntil: 'networkidle' });
     await page.waitForTimeout(800);
+    await page.click('[data-super-forgot]');
+    ok('tautan lupa kata sandi membuka alur pemulihan OTP', await page.locator('text=Kirim OTP WhatsApp').count() === 1);
+    await page.fill('input[autocomplete="username"]', 'superadmin');
+    await page.click('button[type="submit"]');
+    await page.waitForSelector('[data-super-otp]');
+    ok('form OTP dan kata sandi baru muncul setelah permintaan', await page.locator('[data-super-otp]').count() === 1);
+    await page.click('button:has-text("Kembali ke login")');
+    ok('alur pemulihan dapat kembali ke form login', await page.locator('input[autocomplete="current-password"]').count() === 1);
     await page.fill('input[autocomplete="username"]', 'superadmin');
     await page.fill('input[autocomplete="current-password"]', 'superadmin123');
     await Promise.all([

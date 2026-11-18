@@ -92,12 +92,13 @@ function readRaw(req, limit = 2 * 1024 * 1024) {
 }
 
 /**
- * Rute yang DIKECUALIKAN dari proteksi CSRF: dipanggil server pihak ketiga
- * (payment gateway) tanpa cookie sesi & tanpa form, jadi tidak mungkin
- * membawa token CSRF. Aplikasi ini memakai cookie sesi, dan daftar ini juga
- * dipakai bila proteksi CSRF diaktifkan di reverse proxy.
+ * Rute publik yang tidak membawa sesi/token CSRF: callback gateway dan alur
+ * autentikasi sebelum login. Daftar ini juga dipakai reverse proxy.
  */
-const CSRF_EXEMPT = new Set(['/api/webhook/kasera', '/api/pay/callback', '/api/super/login', '/api/login']);
+const CSRF_EXEMPT = new Set([
+  '/api/webhook/kasera', '/api/pay/callback', '/api/super/login',
+  '/api/super/password/otp', '/api/super/password/reset', '/api/login'
+]);
 const isCsrfExempt = p => CSRF_EXEMPT.has(String(p || ''));
 
 /* ---------- sesi (PERSISTEN di database → tidak logout saat server restart) ----------

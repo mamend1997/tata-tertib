@@ -1,17 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AtSign, CheckCircle2, KeyRound, Loader2, Save, ShieldCheck, User, UserCog } from 'lucide-react';
+import { AtSign, CheckCircle2, KeyRound, Loader2, Phone, Save, ShieldCheck, User, UserCog } from 'lucide-react';
 import { api } from '../../api';
 import { Alert, Card, Field, Spinner, useToast } from '../../ui';
 
 /* =====================================================================
    PENGATURAN PROFIL SUPER ADMIN
-   - ubah Nama Akun, username, dan email
+   - ubah Nama Akun, username, email, dan nomor WhatsApp pemulihan
    - perbarui kata sandi (wajib kata sandi lama)
    ===================================================================== */
 export default function SuperProfil({ ctx }) {
   const toast = useToast();
   const [data, setData] = useState(null);
-  const [f, setF] = useState({ nama: '', username: '', email: '' });
+  const [f, setF] = useState({ nama: '', username: '', email: '', phone: '' });
   const [pw, setPw] = useState({ password_lama: '', password_baru: '', password_ulang: '' });
   const [busy, setBusy] = useState(false);
   const [busyPw, setBusyPw] = useState(false);
@@ -21,7 +21,7 @@ export default function SuperProfil({ ctx }) {
   const load = useCallback(async () => {
     const r = await api('/api/super/profil');
     setData(r);
-    setF({ nama: r.user.nama || '', username: r.user.username || '', email: r.user.email || '' });
+    setF({ nama: r.user.nama || '', username: r.user.username || '', email: r.user.email || '', phone: r.user.phone || '' });
   }, []);
   useEffect(() => { load().catch(e => toast.err(e.message)); }, [load]);
   if (!data) return <Spinner label="Memuat profil Super Admin…" />;
@@ -60,7 +60,7 @@ export default function SuperProfil({ ctx }) {
           <UserCog size={19} className="text-slate-500" /> Pengaturan Profil Super Admin
         </h2>
         <p className="text-[12.5px] text-slate-500">
-          Ubah nama akun, username, email, dan kata sandi akun Super Admin yang sedang dipakai. Perubahan berlaku
+          Ubah nama akun, username, email, nomor WhatsApp pemulihan, dan kata sandi akun Super Admin yang sedang dipakai. Perubahan berlaku
           pada login berikutnya & seluruh perangkat yang memakai akun ini.
         </p>
       </div>
@@ -84,6 +84,13 @@ export default function SuperProfil({ ctx }) {
               <div className="relative">
                 <AtSign size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input className="input pl-9" type="email" value={f.email} onChange={e => setF(v => ({ ...v, email: e.target.value }))} />
+              </div>
+            </Field>
+            <Field label="Nomor WhatsApp Pemulihan" hint="OTP lupa kata sandi dikirim ke nomor ini melalui WhatsApp Gateway.">
+              <div className="relative">
+                <Phone size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input className="input pl-9" type="tel" autoComplete="tel" value={f.phone}
+                  onChange={e => setF(v => ({ ...v, phone: e.target.value }))} placeholder="0812xxxxxxx" />
               </div>
             </Field>
             {err ? <Alert tone="danger" title="Belum dapat disimpan">{err}</Alert> : null}
@@ -132,6 +139,7 @@ export default function SuperProfil({ ctx }) {
           <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2"><span className="text-slate-500">Username aktif</span><b className="font-mono">{data.user.username}</b></div>
           <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2"><span className="text-slate-500">Terakhir masuk</span><b>{data.user.terakhir_masuk || '—'}</b></div>
           <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2"><span className="text-slate-500">Email</span><b>{data.user.email || '—'}</b></div>
+          <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2"><span className="text-slate-500">WhatsApp pemulihan</span><b>{data.user.phone || '—'}</b></div>
           <div className="flex justify-between rounded-lg bg-slate-50 px-3 py-2"><span className="text-slate-500">Jumlah akun Super Admin</span><b>{data.jumlah_admin || 1}</b></div>
         </div>
       </Card>
