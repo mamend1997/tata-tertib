@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft, ArrowRight, BadgeCheck, Building2, Check, CheckCircle2, Copy, ExternalLink,
-  GraduationCap, KeyRound, LayoutDashboard, ListChecks, Loader2, Lock, Mail, MapPin, Phone,
+  Eye, EyeOff, KeyRound, LayoutDashboard, ListChecks, Loader2, Lock, Mail, MapPin, Phone,
   School, ShieldCheck, Sparkles, User
 } from 'lucide-react';
 import { api } from '../api';
@@ -50,7 +50,8 @@ const JENJANG = [
 export default function Daftar({ cfg, onBatal }) {
   const platform = (cfg && cfg.platform) || {};
   const otpEnabled = platform.daftar_otp_aktif !== false;
-  const [f, setF] = useState({ jenjang: 'SMK' });
+  const [f, setF] = useState({ jenjang: 'SMK', telp: '+62' });
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [otpBusy, setOtpBusy] = useState(false);
   const [otpCode, setOtpCode] = useState('');
@@ -127,6 +128,16 @@ export default function Daftar({ cfg, onBatal }) {
   const copyright = platform.login_copyright || `© ${new Date().getFullYear()} ${namaApp}`;
   const otpSentForCurrent = Boolean(otpSentPhone && otpSentPhone === (f.telp || ''));
   const otpReady = !otpEnabled || (otpSentForCurrent && /^\d{6}$/.test(otpCode));
+  const password = f.password || '';
+  const passwordChecks = [
+    { key: 'length', label: 'Minimal 8 karakter', valid: password.length >= 8 },
+    { key: 'uppercase', label: 'Huruf besar', valid: /[A-Z]/.test(password) },
+    { key: 'number', label: 'Angka', valid: /\d/.test(password) },
+    { key: 'symbol', label: 'Simbol', valid: /[^A-Za-z0-9\s]/.test(password) }
+  ];
+  const passwordValid = passwordChecks.every(check => check.valid);
+  const phoneDigits = String(f.telp || '').replace(/\D/g, '').replace(/^62/, '');
+  const phoneValid = /^\d{8,13}$/.test(phoneDigits);
 
   /* ---------------- PRATINJAU HASIL PENDAFTARAN ----------------
      Setelah pendaftaran berhasil, pendaftar TIDAK langsung dilempar ke
@@ -227,7 +238,6 @@ export default function Daftar({ cfg, onBatal }) {
                   </h3>
                   <InfoRow label="Nama Sekolah" value={s.nama} />
                   <InfoRow label="Jenjang" value={s.jenjang_label || s.jenjang} />
-                  <InfoRow label="Kepala Sekolah" value={s.kepala || '—'} />
                   <InfoRow label="Alamat" value={s.alamat} />
                   <InfoRow label="WhatsApp" value={s.telp} />
                   <InfoRow label="Email" value={s.email} />
@@ -376,19 +386,11 @@ export default function Daftar({ cfg, onBatal }) {
                   <input className="input pl-9" required value={f.nama_sekolah || ''} onChange={e => setF(v => ({ ...v, nama_sekolah: e.target.value }))} placeholder="contoh: SMP Negeri 2 Ciamis" />
                 </div>
               </Field>
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                <Field label="Jenjang Pendidikan" required>
-                  <select className="input" value={f.jenjang} onChange={e => setF(v => ({ ...v, jenjang: e.target.value }))}>
-                    {JENJANG.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
-                </Field>
-                <Field label="Nama Kepala Sekolah (opsional)">
-                  <div className="relative">
-                    <GraduationCap size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input className="input pl-9" value={f.kepala || ''} onChange={e => setF(v => ({ ...v, kepala: e.target.value }))} />
-                  </div>
-                </Field>
-              </div>
+              <Field label="Jenjang Pendidikan" required>
+                <select className="input" value={f.jenjang} onChange={e => setF(v => ({ ...v, jenjang: e.target.value }))}>
+                  {JENJANG.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              </Field>
               <Field label="Alamat Sekolah" required>
                 <div className="relative">
                   <MapPin size={15} className="absolute left-3 top-3 text-slate-400" />
@@ -407,16 +409,22 @@ export default function Daftar({ cfg, onBatal }) {
                   : 'Dipakai untuk notifikasi tagihan'}>
                   <div className="relative">
                     <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input className="input pl-9" required value={f.telp || ''} onChange={e => {
-                      setF(v => ({ ...v, telp: e.target.value }));
-                      setOtpCode(''); setOtpSentPhone(''); setOtpMessage('');
-                    }} placeholder="0812xxxxxxx" />
+                    <div className="flex">
+                      <span className="flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-[13px] font-semibold text-slate-600">+62</span>
+                      <input className="input min-w-0 rounded-l-none pl-3" type="tel" inputMode="numeric"
+                        autoComplete="tel-national" required minLength={8} pattern="[0-9]{8,13}"
+                        data-daftar-telp value={phoneDigits} onChange={e => {
+                          const digits = e.target.value.replace(/\D/g, '').slice(0, 13);
+                          setF(v => ({ ...v, telp: '+62' + digits }));
+                          setOtpCode(''); setOtpSentPhone(''); setOtpMessage('');
+                        }} placeholder="81234567890" />
+                    </div>
                   </div>
                 </Field>
               </div>
               {otpEnabled ? <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <button type="button" className="btn-secondary shrink-0" disabled={otpBusy || !f.telp} onClick={sendOtp}>
+                  <button type="button" className="btn-secondary shrink-0" disabled={otpBusy || !phoneValid} onClick={sendOtp}>
                     {otpBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
                     {otpBusy ? 'Mengirim kode…' : otpSentForCurrent ? 'Kirim Ulang Kode OTP' : 'Kirim Kode OTP WhatsApp'}
                   </button>
@@ -450,26 +458,37 @@ export default function Daftar({ cfg, onBatal }) {
                   <input className="input pl-9" type="email" required value={f.email || ''} onChange={e => setF(v => ({ ...v, email: e.target.value }))} placeholder="admin@sekolah.sch.id" />
                 </div>
               </Field>
-              <div className="grid gap-2.5 sm:grid-cols-2">
-                <Field label="Password Admin" required hint="Minimal 6 karakter">
-                  <div className="relative">
-                    <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input className="input pl-9" type="password" required value={f.password || ''} onChange={e => setF(v => ({ ...v, password: e.target.value }))} />
-                  </div>
-                </Field>
-                <Field label="Ulangi Password" required>
-                  <div className="relative">
-                    <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input className="input pl-9" type="password" required value={f.password2 || ''} onChange={e => setF(v => ({ ...v, password2: e.target.value }))} />
-                  </div>
-                </Field>
-              </div>
+              <Field label="Password Admin" required hint="Penuhi semua kriteria kata sandi berikut">
+                <div className="relative">
+                  <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input className="input pl-9 pr-10" type={showPassword ? 'text' : 'password'} required
+                    autoComplete="new-password" data-password value={password}
+                    onChange={e => setF(v => ({ ...v, password: e.target.value }))} />
+                  <button type="button" onClick={() => setShowPassword(value => !value)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                    aria-label={showPassword ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'}
+                    aria-pressed={showPassword} data-toggle-password>
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <ul className="mt-2 grid grid-cols-2 gap-1.5 text-[11.5px]" aria-live="polite">
+                  {passwordChecks.map(check => (
+                    <li key={check.key} data-password-check={check.key}
+                      className={cx('flex items-center gap-1.5 transition-colors', check.valid ? 'text-emerald-600' : 'text-slate-400')}>
+                      <span className={cx('grid h-4 w-4 place-items-center rounded-full border', check.valid ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300')}>
+                        {check.valid ? <Check size={10} /> : null}
+                      </span>
+                      {check.label}
+                    </li>
+                  ))}
+                </ul>
+              </Field>
               <Alert tone="info" title="Kelas otomatis">
                 Sistem membuat daftar kelas default sesuai jenjang yang dipilih. Kelas tetap dapat diubah/ditambah
                 melalui menu <b>Data Kelas</b> di dashboard sekolah.
               </Alert>
               {siteKey ? <div ref={captchaBox} className="flex justify-center py-1" /> : null}
-              <button className="btn-primary w-full py-2.5" disabled={busy || !otpReady}>
+              <button className="btn-primary w-full py-2.5" disabled={busy || !otpReady || !passwordValid || !phoneValid}>
                 {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                 Coba Gratis {platform.trial_hari || 7} Hari
               </button>

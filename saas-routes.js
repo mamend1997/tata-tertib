@@ -249,7 +249,6 @@ module.exports = function mount(apiCtx) {
     const adminNama = String(b.admin_nama || '').trim();
     const email = String(b.email || b.email_admin || '').trim().toLowerCase();
     const password = String(b.password || '');
-    const password2 = String(b.password2 || b.ulangi_password || '');
     const telp = String(b.telp || b.whatsapp || b.no_wa || '').trim();
     const trial = b.trial === undefined ? true : bool(b.trial);
 
@@ -259,8 +258,10 @@ module.exports = function mount(apiCtx) {
     if (!alamat) errs.push('Alamat sekolah wajib diisi');
     if (adminNama.length < 3) errs.push('Nama admin minimal 3 karakter');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.push('Email admin tidak valid');
-    if (password.length < 6) errs.push('Kata sandi minimal 6 karakter');
-    if (password !== password2) errs.push('Ulangi kata sandi tidak sama');
+    if (password.length < 8) errs.push('Kata sandi minimal 8 karakter');
+    if (!/[A-Z]/.test(password)) errs.push('Kata sandi harus memiliki huruf besar');
+    if (!/\d/.test(password)) errs.push('Kata sandi harus memiliki angka');
+    if (!/[^A-Za-z0-9\s]/.test(password)) errs.push('Kata sandi harus memiliki simbol');
     const phone = lib.normPhone(telp);
     if (!phone) errs.push('Nomor WhatsApp tidak valid (contoh 0812xxxxxxx)');
     if (!errs.length) {

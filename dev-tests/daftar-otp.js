@@ -58,6 +58,7 @@ function client() {
     }
     const admin = client();
     await otpTest.configure(admin, gateway.url);
+    await admin.req('/api/super/branding', { method: 'POST', body: { daftar_limit_jam: 10 } });
     const applicant = client();
     const phone = '081234567801';
     const invalid = await applicant.req('/api/daftar/otp', { method: 'POST', body: { telp: 'nomor-salah' } });
@@ -77,14 +78,22 @@ function client() {
       alamat: 'Jl. Uji OTP 1',
       admin_nama: 'Admin OTP',
       email: 'admin-otp@uji.sch.id',
-      password: 'Rahasia123',
-      password2: 'Rahasia123',
+      password: 'Rahasia123!',
       telp: phone,
       t0: Date.now() - 10000
     };
     const wrongCode = code === '000000' ? '000001' : '000000';
     const wrong = await applicant.req('/api/daftar', { method: 'POST', body: { ...form, otp: wrongCode } });
     ok('kode OTP salah tidak membuat sekolah', wrong.status === 400 && /OTP salah/i.test(wrong.body.error || ''));
+    const weakPassword = await applicant.req('/api/daftar', {
+      method: 'POST', body: { ...form, password: 'abc', otp: code }
+    });
+    ok('kata sandi tanpa kapital, angka, simbol dan 8 karakter ditolak',
+      weakPassword.status === 400 && /8 karakter/i.test(weakPassword.body.error || '')
+        && /huruf besar/i.test(weakPassword.body.error || '')
+        && /angka/i.test(weakPassword.body.error || '')
+        && /simbol/i.test(weakPassword.body.error || ''),
+      JSON.stringify(weakPassword.body));
     const registered = await applicant.req('/api/daftar', { method: 'POST', body: { ...form, otp: code } });
     ok('kode OTP benar mengizinkan pendaftaran', registered.status === 200 && /^\d{4}$/.test(String(registered.body.kode)),
       JSON.stringify(registered.body).slice(0, 120));

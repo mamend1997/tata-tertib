@@ -437,7 +437,7 @@ function client() {
     await otpTest.configure(su, gateway.url);
     r = await t6.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(t6, gateway, {
       nama_sekolah: 'SMA Negeri 1 Contoh', jenjang: 'SMA', alamat: 'Jl. Merdeka 1', kepala: 'Drs. Kepala',
-      admin_nama: 'Bapak Admin', email: 'admin@sman1contoh.sch.id', password: 'Rahasia123', password2: 'Rahasia123',
+      admin_nama: 'Bapak Admin', email: 'admin@sman1contoh.sch.id', password: 'Rahasia123!',
       telp: '081377788899', trial: true, t0: Date.now() - 10000
     }) });
     ok('pendaftaran mandiri berhasil', r.status === 200 && r.body.ok, JSON.stringify(r.body).slice(0, 200));
@@ -464,7 +464,7 @@ function client() {
       ['langganan', 'tiket', 'panduan', 'legal'].every(k => navBaru.includes(k)), navBaru.join(','));
     r = await pub.req('/api/daftar', { method: 'POST', body: {
       nama_sekolah: 'SMA Negeri 1 Contoh', jenjang: 'SMA', alamat: 'Jl. Merdeka 1',
-      admin_nama: 'Bapak Admin', email: 'lain@sman1contoh.sch.id', password: 'Rahasia123', password2: 'Rahasia123', telp: '081377788890',
+      admin_nama: 'Bapak Admin', email: 'lain@sman1contoh.sch.id', password: 'Rahasia123!', telp: '081377788890',
       t0: Date.now() - 10000
     } });
     ok('nama sekolah ganda ditolak', r.status === 400, String(r.status));

@@ -155,11 +155,11 @@ function client() {
     r = await pub.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(pub, gateway, {
       nama_sekolah: 'SMP Negeri 9 Uji Portal', jenjang: 'SMP', alamat: 'Jl. Portal Uji 9',
       kepala: 'Kepala Uji', admin_nama: 'Admin Portal', email: 'admin@smpn9uji.sch.id',
-      password: 'Rahasia123', password2: 'Rahasia123', telp: '081277770009', t0: Date.now() - 10000
+      password: 'Rahasia123!', telp: '081277770009', t0: Date.now() - 10000
     }) });
     ok('sekolah kedua terdaftar', r.status === 200 && /^\d{4}$/.test(String(r.body.kode)), JSON.stringify(r.body).slice(0, 120));
     const kode2 = r.body.kode;
-    await pub.req('/api/login', { method: 'POST', body: { username: r.body.admin_username, password: 'Rahasia123', kode: kode2 } });
+    await pub.req('/api/login', { method: 'POST', body: { username: r.body.admin_username, password: 'Rahasia123!', kode: kode2 } });
 
     r = await pub.req('/api/public/sekolah');
     const sek2 = (r.body.rows || []).find(x => x.kode === kode2) || {};

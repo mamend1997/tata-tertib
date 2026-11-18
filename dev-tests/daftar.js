@@ -56,7 +56,7 @@ const badan = (n) => ({
   kepala: 'Drs. Kepala ' + n,
   admin_nama: 'Admin Pratinjau ' + n,
   email: `admin${n}@pratinjau.sch.id`,
-  password: 'Rahasia123', password2: 'Rahasia123',
+  password: 'Rahasia123!',
   telp: '0812345000' + String(10 + n),
   trial: true,
   t0: Date.now() - 10000
@@ -141,15 +141,24 @@ const badan = (n) => ({
 
     await page.goto(BASE + '/daftar', { waitUntil: 'networkidle' });
     ok('halaman /daftar menampilkan formulir', /Form Pendaftaran Sekolah/i.test(await page.locator('body').innerText()));
+    ok('form tidak lagi meminta nama kepala sekolah', await page.getByText('Nama Kepala Sekolah', { exact: false }).count() === 0);
+    ok('form hanya memiliki satu field kata sandi', await page.locator('[data-password]').count() === 1);
+    ok('nomor WhatsApp menampilkan awalan +62', await page.locator('text=+62').count() === 1);
 
     await page.fill('input[placeholder*="SMP Negeri"]', 'SMA Pratinjau UI');
     await page.selectOption('select', 'SMA');
     await page.fill('textarea', 'Jl. Pratinjau UI No. 7, Ciamis');
     await page.locator('label:has-text("Nama Admin") + div input, label:has-text("Nama Admin") ~ div input').first().fill('Admin UI').catch(() => {});
     await page.fill('input[placeholder="admin@sekolah.sch.id"]', 'admin@pratinjauui.sch.id');
-    await page.fill('input[placeholder="0812xxxxxxx"]', '081234500077');
-    await page.locator('input[type="password"]').nth(0).fill('Rahasia123');
-    await page.locator('input[type="password"]').nth(1).fill('Rahasia123');
+    await page.locator('[data-daftar-telp]').fill('812abc34500077');
+    await page.waitForFunction(() => document.querySelector('[data-daftar-telp]').value === '81234500077', null, { timeout: 1000 }).catch(() => {});
+    const phoneValue = await page.locator('[data-daftar-telp]').inputValue();
+    ok('field WhatsApp otomatis membuang huruf', phoneValue === '81234500077', phoneValue);
+    await page.locator('[data-password]').fill('Rahasia123!');
+    ok('kriteria sandi berubah hijau setelah dipenuhi',
+      await page.locator('[data-password-check].text-emerald-600').count() === 4);
+    await page.locator('[data-toggle-password]').click();
+    ok('tombol mata menampilkan kata sandi', await page.locator('[data-password]').getAttribute('type') === 'text');
     await page.waitForTimeout(4600);   /* anti-spam: minimal 4 detik */
     gateway.clearCode();
     await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
@@ -210,9 +219,8 @@ const badan = (n) => ({
     await page.fill('textarea', 'Jl. Mobile No. 9');
     await page.locator('label:has-text("Nama Admin") + div input, label:has-text("Nama Admin") ~ div input').first().fill('Admin Mobile').catch(() => {});
     await page.fill('input[placeholder="admin@sekolah.sch.id"]', 'admin@pratinjaumobile.sch.id');
-    await page.fill('input[placeholder="0812xxxxxxx"]', '081234500088');
-    await page.locator('input[type="password"]').nth(0).fill('Rahasia123');
-    await page.locator('input[type="password"]').nth(1).fill('Rahasia123');
+    await page.locator('[data-daftar-telp]').fill('81234500088');
+    await page.locator('[data-password]').fill('Rahasia123!');
     await page.waitForTimeout(4600);
     gateway.clearCode();
     await page.click('button:has-text("Kirim Kode OTP WhatsApp")');

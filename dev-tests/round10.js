@@ -73,13 +73,13 @@ function client() {
     r = await pub.req('/api/daftar', { method: 'POST', body: await otpTest.bodyWithOtp(pub, gateway, {
       nama_sekolah: 'SMP Negeri 5 Contoh', jenjang: 'SMP', alamat: 'Jl. Melati No. 7, Bandung',
       kepala: 'Drs. Kepala Contoh', admin_nama: 'Admin Contoh', email: 'admin@smpn5contoh.sch.id',
-      password: 'Rahasia123', password2: 'Rahasia123', telp: '081255550001', t0: Date.now() - 10000
+      password: 'Rahasia123!', telp: '081255550001', t0: Date.now() - 10000
     }) });
     ok('sekolah baru terdaftar', r.status === 200 && /^\d{4}$/.test(String(r.body.kode)), JSON.stringify(r.body).slice(0, 120));
     const kodeBaru = r.body.kode;
 
     const tBaru = client();
-    r = await tBaru.req('/api/login', { method: 'POST', body: { username: r.body.admin_username, password: 'Rahasia123', kode: kodeBaru } });
+    r = await tBaru.req('/api/login', { method: 'POST', body: { username: r.body.admin_username, password: 'Rahasia123!', kode: kodeBaru } });
     ok('admin sekolah baru dapat masuk dengan kode sekolahnya', r.status === 200 && r.body.scope === 'tenant');
     /* paket uji coba hanya membuka sebagian menu → pengaturan dibaca dari bootstrap */
     r = await tBaru.req('/api/bootstrap');

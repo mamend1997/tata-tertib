@@ -134,7 +134,7 @@ function client() {
     console.log('\n== ANTI-SPAM PENDAFTARAN MANDIRI ==');
     const badan = (i) => ({
       nama_sekolah: 'Sekolah Uji Anti Spam ' + i, jenjang: 'SMA', alamat: 'Jl. Uji ' + i,
-      admin_nama: 'Admin Uji ' + i, email: `admin${i}@uji.sch.id`, password: 'Rahasia123', password2: 'Rahasia123',
+      admin_nama: 'Admin Uji ' + i, email: `admin${i}@uji.sch.id`, password: 'Rahasia123!',
       telp: '08120000001' + i, trial: true
     });
     r = await pub.req('/api/daftar', { method: 'POST', body: { ...badan(1), t0: Date.now() - 10000, website: 'http://bot.example' } });
@@ -205,7 +205,7 @@ function client() {
     ok('config publik: pendaftaran tertutup', r.body.platform.pendaftaran_aktif === false);
     r = await pub.req('/api/daftar', { method: 'POST', body: {
       nama_sekolah: 'Sekolah Saat Ditutup', jenjang: 'SMA', alamat: 'x', admin_nama: 'Admin Tutup',
-      email: 'tutup@uji.sch.id', password: 'Rahasia123', password2: 'Rahasia123', telp: '081200000099',
+      email: 'tutup@uji.sch.id', password: 'Rahasia123!', telp: '081200000099',
       t0: Date.now() - 10000
     } });
     ok('pendaftaran ditolak saat sakelar ditutup', r.status === 403, String(r.status));
