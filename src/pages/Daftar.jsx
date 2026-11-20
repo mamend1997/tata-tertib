@@ -128,7 +128,6 @@ export default function Daftar({ cfg, onBatal }) {
   const subApp = platform.login_subjudul || platform.app_subtitle || '';
   const copyright = platform.login_copyright || `© ${new Date().getFullYear()} ${namaApp}`;
   const otpSentForCurrent = Boolean(otpSentPhone && otpSentPhone === (f.telp || ''));
-  const otpReady = !otpEnabled || (otpSentForCurrent && /^\d{6}$/.test(otpCode));
   const password = f.password || '';
   const passwordChecks = [
     { key: 'length', label: 'Minimal 8 karakter', valid: password.length >= 8 },
@@ -148,6 +147,16 @@ export default function Daftar({ cfg, onBatal }) {
         : 'Format email belum valid. Periksa kembali alamat email.';
   const phoneDigits = String(f.telp || '').replace(/\D/g, '').replace(/^62/, '');
   const phoneValid = /^\d{8,13}$/.test(phoneDigits);
+  const submitBlockers = [];
+  if (String(f.nama_sekolah || '').trim().length < 3) submitBlockers.push('Isi nama sekolah (minimal 3 karakter).');
+  if (!String(f.alamat || '').trim()) submitBlockers.push('Isi alamat sekolah.');
+  if (String(f.admin_nama || '').trim().length < 3) submitBlockers.push('Isi nama admin (minimal 3 karakter).');
+  if (!phoneValid) submitBlockers.push('Isi nomor WhatsApp yang valid.');
+  if (!emailValid) submitBlockers.push('Isi email admin yang valid.');
+  if (!passwordValid) submitBlockers.push('Lengkapi semua kriteria kata sandi.');
+  if (otpEnabled && !otpSentForCurrent) submitBlockers.push('Kirim kode verifikasi WhatsApp terlebih dahulu.');
+  else if (otpEnabled && !/^\d{6}$/.test(otpCode)) submitBlockers.push('Masukkan kode verifikasi 6 digit.');
+  if (siteKey && !captcha) submitBlockers.push('Selesaikan verifikasi keamanan.');
 
   /* ---------------- PRATINJAU HASIL PENDAFTARAN ----------------
      Setelah pendaftaran berhasil, pendaftar TIDAK langsung dilempar ke
@@ -228,7 +237,7 @@ export default function Daftar({ cfg, onBatal }) {
                     </p>
                     <p data-preview-kode className="mt-1 font-mono text-[36px] font-extrabold leading-none tracking-[0.16em] text-orange-900">{kode}</p>
                     <p className="mt-1.5 text-[12px] leading-snug text-orange-900/75">
-                      Wajib diketik saat masuk aplikasi, bersama username <b>{hasil.admin_username}</b> dan kata sandi admin yang Anda buat.
+                      Saat masuk, gunakan kode ini, username <b>{hasil.admin_username}</b>, dan kata sandi yang Anda buat.
                     </p>
                   </div>
                   <button type="button" onClick={() => salin(kode, 'kode')}
@@ -240,8 +249,10 @@ export default function Daftar({ cfg, onBatal }) {
                 </div>
               </div>
 
-              {/* rincian: identitas sekolah + akun & layanan */}
-              <div className="grid gap-4 sm:grid-cols-2">
+              <details data-preview-details className="rounded-xl border border-slate-200 bg-white/80 p-3">
+                <summary className="cursor-pointer text-[12.5px] font-bold text-slate-700">Lihat rincian sekolah dan yang disiapkan</summary>
+                <div className="mt-3 space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
                 <section className="rounded-2xl border border-slate-100 bg-white/80 p-3.5">
                   <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-extrabold text-slate-800">
                     <Building2 size={14} className="text-orange-500" /> Identitas Sekolah
@@ -300,9 +311,11 @@ export default function Daftar({ cfg, onBatal }) {
                   </div>
                 ) : null}
               </section>
+                </div>
+              </details>
 
               <Alert tone="warn" title="Simpan informasi ini">
-                Kode sekolah <b>{kode}</b> dan kata sandi admin diperlukan untuk masuk kembali. Catat atau salin sekarang —
+                Simpan kode sekolah <b>{kode}</b>, username <b>{hasil.admin_username}</b>, dan kata sandi admin —
                 kode juga sudah dikirim ke WhatsApp {s.telp || 'Anda'} bila notifikasi aktif.
               </Alert>
 
@@ -320,7 +333,7 @@ export default function Daftar({ cfg, onBatal }) {
                 </button>
               </div>
               <p className="text-center text-[11.5px] leading-snug text-slate-400">
-                Anda tidak dialihkan otomatis — periksa dulu data di atas, lalu buka dashboard saat sudah siap.
+                Pendaftaran selesai. Klik tombol di atas untuk mulai menggunakan aplikasi.
               </p>
             </div>
           </div>
@@ -372,7 +385,10 @@ export default function Daftar({ cfg, onBatal }) {
           </button>
           <div className="card p-5 sm:p-6">
             <h2 className="text-[18px] font-extrabold text-slate-800">Form Pendaftaran Sekolah</h2>
-            <p className="text-[12.5px] text-slate-500">Isi data sekolah & akun admin. Tombol <b>Coba Gratis {platform.trial_hari || 7} Hari</b> langsung mengaktifkan akun.</p>
+            <p className="text-[12.5px] text-slate-500">Isi data sekolah dan admin, verifikasi WhatsApp, lalu akun uji coba langsung aktif.</p>
+            <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-[12px] font-semibold text-emerald-800">
+              Uji coba gratis {platform.trial_hari || 7} hari · tanpa kartu kredit
+            </p>
 
             {err ? (
               <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-[12.5px] text-rose-700">
@@ -390,6 +406,7 @@ export default function Daftar({ cfg, onBatal }) {
                   <input tabIndex={-1} autoComplete="off" name="website" value={honeypot} onChange={e => setHoneypot(e.target.value)} />
                 </label>
               </div>
+              <p className="text-[12px] font-bold text-slate-700">Langkah 1 — Data sekolah dan admin</p>
               <Field label="Nama Sekolah" required>
                 <div className="relative">
                   <Building2 size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -430,37 +447,7 @@ export default function Daftar({ cfg, onBatal }) {
                   </div>
                 </Field>
               </div>
-              {otpEnabled ? <div className="rounded-xl border border-sky-100 bg-sky-50/70 p-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <button type="button" className="btn-primary btn-sm shrink-0" disabled={otpBusy || !phoneValid} onClick={sendOtp} data-kirim-otp>
-                    {otpBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
-                    {otpBusy ? 'Mengirim kode…' : otpSentForCurrent ? 'Kirim Ulang Kode OTP' : 'Kirim Kode OTP WhatsApp'}
-                  </button>
-                  {otpSentForCurrent && (
-                    <Field label="Kode OTP" required hint="Masukkan 6 digit kode yang diterima">
-                      <input
-                        className="input font-mono tracking-[0.3em]"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        pattern="[0-9]{6}"
-                        required
-                        value={otpCode}
-                        onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                        placeholder="000000"
-                      />
-                    </Field>
-                  )}
-                </div>
-                <p className="mt-2 text-[11.5px] text-slate-600">
-                  {otpMessage || 'Verifikasi nomor WhatsApp wajib sebelum pendaftaran dapat dikirim.'}
-                </p>
-              </div> : (
-                <p className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-[11.5px] text-amber-800" data-daftar-otp-disabled>
-                  Verifikasi OTP dinonaktifkan oleh administrator; nomor WhatsApp tetap diperlukan untuk pendaftaran.
-                </p>
-              )}
-              <Field label="Email Admin" required hint="Dipakai sebagai username untuk masuk">
+              <Field label="Email Admin" required hint="Email kontak admin. Username login diambil dari awalan email (sebelum @) dan ditampilkan setelah pendaftaran.">
                 <div className="relative">
                   <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input className="input pl-9" type="email" required value={f.email || ''}
@@ -498,14 +485,59 @@ export default function Daftar({ cfg, onBatal }) {
                   ))}
                 </ul>
               </Field>
+              {otpEnabled ? <section className="rounded-xl border border-sky-100 bg-sky-50/70 p-3" aria-labelledby="daftar-verifikasi-title">
+                <h3 id="daftar-verifikasi-title" className="mb-1 text-[12.5px] font-bold text-slate-800">Langkah 2 — Verifikasi WhatsApp</h3>
+                <p className="mb-2 text-[11.5px] leading-relaxed text-slate-600">Pastikan nomor di atas benar, lalu kirim kode. Kode berlaku 5 menit.</p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <button type="button" className="btn-primary btn-sm shrink-0" disabled={otpBusy || !phoneValid} onClick={sendOtp} data-kirim-otp>
+                    {otpBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+                    {otpBusy ? 'Mengirim kode…' : otpSentForCurrent ? 'Kirim ulang kode' : 'Kirim kode verifikasi'}
+                  </button>
+                  {otpSentForCurrent && (
+                    <Field label="Kode verifikasi 6 digit" required hint="Periksa pesan WhatsApp Anda">
+                      <input
+                        className="input font-mono tracking-[0.3em]"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        pattern="[0-9]{6}"
+                        required
+                        value={otpCode}
+                        onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="000000"
+                      />
+                    </Field>
+                  )}
+                </div>
+                <p className="mt-2 text-[11.5px] text-slate-600" aria-live="polite">
+                  {otpMessage || (otpSentForCurrent ? 'Masukkan kode yang dikirim ke WhatsApp.' : 'Kode akan dikirim ke nomor WhatsApp yang Anda masukkan.')}
+                </p>
+              </section> : (
+                <p className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-[11.5px] text-amber-800" data-daftar-otp-disabled>
+                  Verifikasi WhatsApp tidak digunakan saat ini. Nomor tetap diperlukan untuk pendaftaran.
+                </p>
+              )}
+              <details className="rounded-xl border border-slate-200 px-3 py-2.5" data-daftar-legal>
+                <summary className="cursor-pointer text-[12px] font-semibold text-slate-700">
+                  Baca {platform.tos_judul || 'Syarat & Ketentuan Layanan'}
+                </summary>
+                <div className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-slate-600">
+                  {platform.tos_isi || 'Syarat & Ketentuan belum disediakan oleh pengelola layanan.'}
+                  {platform.legal_updated ? <p className="mt-2 text-[10.5px] text-slate-400">Diperbarui: {platform.legal_updated}</p> : null}
+                </div>
+              </details>
               {siteKey ? <div ref={captchaBox} className="flex justify-center py-1" /> : null}
-              <button className="btn-primary w-full py-2.5" disabled={busy || !otpReady || !passwordValid || !phoneValid || !emailValid}>
+              <button className="btn-primary w-full py-2.5" disabled={busy || submitBlockers.length > 0} data-daftar-submit>
                 {busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                Coba Gratis {platform.trial_hari || 7} Hari
+                Buat Akun &amp; Mulai Uji Coba
               </button>
+              {submitBlockers.length ? (
+                <p className="text-center text-[11.5px] leading-relaxed text-slate-500" data-daftar-blockers>
+                  Langkah berikutnya: {submitBlockers[0]}
+                </p>
+              ) : null}
               <p className="text-center text-[11.5px] text-slate-400">
-                Dengan mendaftar Anda menyetujui Syarat &amp; Ketentuan layanan yang dapat dibaca pada menu Legal &amp; SLA setelah masuk.
-                Formulir ini dilindungi verifikasi anti-bot.
+                Dengan membuat akun, Anda menyetujui Syarat &amp; Ketentuan di atas. Formulir ini dilindungi verifikasi anti-bot.
               </p>
             </form>
           </div>

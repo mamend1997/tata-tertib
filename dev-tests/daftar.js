@@ -141,6 +141,9 @@ const badan = (n) => ({
 
     await page.goto(BASE + '/daftar', { waitUntil: 'networkidle' });
     ok('halaman /daftar menampilkan formulir', /Form Pendaftaran Sekolah/i.test(await page.locator('body').innerText()));
+    ok('masa uji coba dan urutan langkah dijelaskan', /Uji coba gratis 7 hari · tanpa kartu kredit/.test(await page.locator('body').innerText())
+      && /Langkah 1 — Data sekolah dan admin/.test(await page.locator('body').innerText())
+      && /Langkah 2 — Verifikasi WhatsApp/.test(await page.locator('body').innerText()));
     ok('form tidak lagi meminta nama kepala sekolah', await page.getByText('Nama Kepala Sekolah', { exact: false }).count() === 0);
     ok('form hanya memiliki satu field kata sandi', await page.locator('[data-password]').count() === 1);
     ok('nomor WhatsApp menampilkan awalan +62', await page.locator('text=+62').count() === 1);
@@ -154,6 +157,11 @@ const badan = (n) => ({
     ok('ikon telepon tidak menumpuk dengan awalan +62', prefixLayout);
     const otpButtonClasses = await page.locator('[data-kirim-otp]').getAttribute('class');
     ok('tombol Kirim OTP berukuran kecil dan berwarna', /btn-sm/.test(otpButtonClasses) && /btn-primary/.test(otpButtonClasses));
+    ok('form menjelaskan username login berasal dari awalan email', /Username login diambil dari awalan email/.test(await page.locator('body').innerText()));
+    ok('syarat layanan dapat dibuka sebelum mendaftar', await page.locator('[data-daftar-legal]').count() === 1);
+    await page.locator('[data-daftar-legal] summary').click();
+    ok('syarat layanan dapat dibuka dan isi/keterangan tersedia',
+      await page.locator('[data-daftar-legal]').evaluate(el => el.open && /Syarat & Ketentuan/.test(el.textContent)));
 
     await page.fill('input[placeholder*="SMP Negeri"]', 'SMA Pratinjau UI');
     await page.selectOption('select', 'SMA');
@@ -177,14 +185,16 @@ const badan = (n) => ({
     await page.locator('[data-password]').fill('Rahasia123!');
     ok('kriteria sandi berubah hijau setelah dipenuhi',
       await page.locator('[data-password-check].text-emerald-600').count() === 4);
+    ok('alasan tombol daftar belum aktif ditampilkan',
+      /Kirim kode verifikasi WhatsApp terlebih dahulu/.test(await page.locator('[data-daftar-blockers]').innerText()));
     await page.locator('[data-toggle-password]').click();
     ok('tombol mata menampilkan kata sandi', await page.locator('[data-password]').getAttribute('type') === 'text');
     await page.waitForTimeout(4600);   /* anti-spam: minimal 4 detik */
     gateway.clearCode();
-    await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
+    await page.click('[data-kirim-otp]');
     const codeUi = await gateway.waitForCode();
     await page.fill('input[placeholder="000000"]', codeUi);
-    await page.click('button:has-text("Coba Gratis")');
+    await page.click('[data-daftar-submit]');
     await page.waitForTimeout(1500);
 
     const txt = await page.locator('body').innerText();
@@ -192,11 +202,15 @@ const badan = (n) => ({
     const kodeUi = (await page.locator('[data-preview-kode]').innerText().catch(() => '')).trim();
     ok('kode sekolah ditampilkan besar & 4 digit', /^\d{4}$/.test(kodeUi), kodeUi);
     ok('kode sekolah juga tertulis sebagai label "Kode Sekolah"', /Kode Sekolah/i.test(txt));
+    ok('rincian tambahan tersembunyi sampai diminta', await page.locator('[data-preview-details]').count() === 1
+      && !(await page.locator('[data-preview-details]').evaluate(el => el.open)));
+    await page.locator('[data-preview-details] summary').click();
+    const detailTxt = await page.locator('body').innerText();
     for (const label of ['Identitas Sekolah', 'Akun & Layanan', 'Sudah Disiapkan Otomatis', 'Kelas X', 'kategori poin', 'Portal Cek Poin Siswa']) {
-      ok(`pratinjau memuat bagian "${label}"`, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(txt), txt.slice(0, 200));
+      ok(`pratinjau memuat bagian "${label}"`, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(detailTxt), detailTxt.slice(0, 200));
     }
-    ok('username admin hasil daftar tampil di pratinjau', /admin/i.test(txt) && txt.includes(kodeUi));
-    ok('alamat portal siswa ditampilkan', /\/portal-siswa/.test(txt));
+    ok('username admin hasil daftar tampil di pratinjau', /admin/i.test(detailTxt) && detailTxt.includes(kodeUi));
+    ok('alamat portal siswa ditampilkan', /\/portal-siswa/.test(detailTxt));
 
     /* tombol lanjut TIDAK langsung ditekan: tunggu > 3 detik, harus tetap di pratinjau */
     await page.waitForTimeout(3500);
@@ -243,10 +257,10 @@ const badan = (n) => ({
     await page.locator('[data-password]').fill('Rahasia123!');
     await page.waitForTimeout(4600);
     gateway.clearCode();
-    await page.click('button:has-text("Kirim Kode OTP WhatsApp")');
+    await page.click('[data-kirim-otp]');
     const codeMobile = await gateway.waitForCode();
     await page.fill('input[placeholder="000000"]', codeMobile);
-    await page.click('button:has-text("Coba Gratis")');
+    await page.click('[data-daftar-submit]');
     await page.waitForTimeout(1500);
     ok('pratinjau tampil di layar 390px', /Pendaftaran Berhasil/i.test(await page.locator('body').innerText()));
     const overflow = await page.evaluate(() => ({

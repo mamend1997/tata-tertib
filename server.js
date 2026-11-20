@@ -856,6 +856,8 @@ get('/api/public/config', (req, res, q) => {
       recaptcha_site: platform.recaptcha_site, daftar_min_detik: platform.daftar_min_detik,
       daftar_otp_aktif: platform.daftar_otp_aktif,
       pendaftaran_aktif: platform.pendaftaran_aktif, trial_hari: platform.trial_hari,
+      tos_judul: saas.setting('tos_judul'), tos_isi: saas.setting('tos_isi'),
+      legal_updated: saas.setting('legal_updated'),
       maintenance: platform.maintenance, maintenance_pesan: platform.maintenance_pesan,
       harga_bulanan: platform.harga_bulanan, harga_tahunan: platform.harga_tahunan
     },
