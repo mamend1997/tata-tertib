@@ -2014,6 +2014,8 @@ ${isi}
     json(res, 200, {
       ok: true, mulai, sampai: isoAddDays(mulai, jumlahHari - 1), jumlah_hari: jumlahHari, ta: taPakai,
       hari_ini: dbm.today(), sekarang: dbm.menitJam(dbm.nowMenit()),
+      tautan_jadwal_publik: cfg.publik.aktif && cfg.publik.token
+        ? absUrl(req, `/jadwal-publik/${cfg.publik.token}`) : '',
       saya: { id: user.id, nama: user.nama, role_label: dbm.roleLabelOf(user) },
       lihat_semua: lihatSemua, guru: lihatSemua ? guruList() : [], target_guru: guruTarget,
       hari: hasil,

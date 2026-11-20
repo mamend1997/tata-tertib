@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowLeft, CalendarClock, CalendarDays, Camera, CheckCircle2, Circle, Clock, Loader2, Lock, RefreshCw, Repeat,
+  AlertTriangle, ArrowLeft, CalendarClock, CalendarDays, CalendarRange, Camera, CheckCircle2, Circle, Clock, Loader2, Lock, RefreshCw, Repeat,
   Send, ShieldCheck, Stethoscope, Timer, UserCheck, UserRoundX, Users, XCircle
 } from 'lucide-react';
 import { api, compressImage, hariIni } from '../api';
@@ -107,6 +107,7 @@ export default function AbsensiGuru({ ctx }) {
   const sudah = jadwalTampil.filter(j => j.absensi).length;
   const belum = jadwalTampil.length - sudah;
   const autoAktif = !!(data?.auto_alpha && data.auto_alpha.aktif);
+  const jadwalPublikUrl = agenda?.tautan_jadwal_publik || '';
 
   async function checkin(slot, status, catatan) {
     setBusyId(slot.id);
@@ -174,6 +175,18 @@ export default function AbsensiGuru({ ctx }) {
         <div className="flex flex-wrap items-center gap-2">
           <input type="date" className="input !w-auto" value={tanggal} max={hariIni()}
             onChange={e => setTanggal(e.target.value)} data-tanggal-absensi />
+          {jadwalPublikUrl ? (
+            <a className="btn-ghost" href={jadwalPublikUrl} target="_blank" rel="noreferrer"
+              data-jadwal-pelajaran-publik>
+              <CalendarRange size={15} /> Jadwal Pelajaran
+            </a>
+          ) : (
+            <button type="button" className="btn-ghost" disabled
+              title="Tautan jadwal publik belum dibuat atau sedang tidak aktif."
+              data-jadwal-pelajaran-publik>
+              <CalendarRange size={15} /> Jadwal Pelajaran
+            </button>
+          )}
           {data?.lihat_semua ? (
             <select className="input !w-auto min-w-[190px]" value={guruId} onChange={e => setGuruId(e.target.value)}>
               <option value="">Semua guru (rekap)</option>

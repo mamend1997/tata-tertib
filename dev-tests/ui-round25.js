@@ -100,13 +100,14 @@ const ok = (name, cond, extra) => {
         hari, sesi: 1, mapel_id: m2, guru_id: gB, kelas_ids: [Number(kelasLain?.id) || Number(kelas)], abaikan: 1
       })).id;
       const slotBesok = (await post('/api/jadwal/slot', { hari: (hari + 1) % 7, sesi: 2, mapel_id: m, guru_id: gA, kelas_ids: [kelas], abaikan: 1 })).id;
+      const jadwalPublik = await post('/api/jadwal/publik', { aktif: 1 });
       /* presensi untuk diuji hapus */
       const sesiRow = await post('/api/absensi-siswa/sesi', { jadwal_id: slotKini, tanggal: '' });
       const s1 = siswa[0];
       if (sesiRow.sesi) {
         await post('/api/absensi-siswa/simpan', { sesi_id: sesiRow.sesi.id, items: [{ siswa_id: s1.id, status: 'A' }] });
       }
-      return { gA, gB, kelas, slotLalu, slotKini, slotNanti, slotLewat, slotBesok, siswa: s1.nama };
+      return { gA, gB, kelas, slotLalu, slotKini, slotNanti, slotLewat, slotBesok, siswa: s1.nama, tokenJadwal: jadwalPublik.token };
     }, {
       hari: HARI,
       sesi: [
@@ -125,6 +126,12 @@ const ok = (name, cond, extra) => {
     await page.waitForSelector('[data-agenda-jadwal]', { timeout: 20000 });
     await page.waitForTimeout(600);
     ok('daftar jadwal mengajar tampil', await page.locator('[data-agenda-jadwal]').count() === 1);
+    const urlJadwalAwal = await page.getAttribute('[data-jadwal-pelajaran-publik]', 'href');
+    ok('tombol Jadwal Pelajaran membuka tautan publik aktif',
+      !!setup.tokenJadwal && !!urlJadwalAwal
+        && urlJadwalAwal.includes(`/jadwal-publik/${setup.tokenJadwal}`)
+        && await page.getAttribute('[data-jadwal-pelajaran-publik]', 'target') === '_blank',
+      urlJadwalAwal || 'tautan tidak tersedia');
     const agendaSlot = await page.locator('[data-agenda-slot]').count();
     ok('rentang sesi berurutan tampil sebagai satu kartu, ditambah jadwal besok', agendaSlot === 2, String(agendaSlot));
     ok('check-in rentang tersedia satu kali pada kartu gabungan',
@@ -142,6 +149,22 @@ const ok = (name, cond, extra) => {
     ok('hitung mundur tampil untuk sesi yang belum dibuka',
       /dibuka dalam|berakhir dalam/i.test(await page.locator('[data-agenda-jadwal]').innerText()),
       (await page.locator('[data-agenda-jadwal]').innerText()).slice(0, 200).replace(/\n/g, ' | '));
+    await login('admin', 'admin123');
+    const tokenJadwalBaru = await page.evaluate(async () => {
+      const r = await fetch('/api/jadwal/publik', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aktif: 1, rotate: 1 })
+      });
+      return (await r.json()).token || '';
+    });
+    await login('gurua', 'guru123');
+    await page.goto(BASE + '/#/absensi_guru', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('[data-agenda-jadwal]', { timeout: 20000 });
+    const urlJadwalTerbaru = await page.getAttribute('[data-jadwal-pelajaran-publik]', 'href');
+    ok('tombol mengikuti token terbaru setelah tautan publik digenerate ulang',
+      !!tokenJadwalBaru && tokenJadwalBaru !== setup.tokenJadwal
+        && !!urlJadwalTerbaru && urlJadwalTerbaru.includes(`/jadwal-publik/${tokenJadwalBaru}`),
+      urlJadwalTerbaru || 'tautan terbaru tidak tersedia');
 
     /* check-in sesi berlangsung (agar ada baris absensi guru untuk diuji hapus) */
     const chk = await page.evaluate(async ({ jadwal, tgl }) => {
