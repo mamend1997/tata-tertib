@@ -79,9 +79,11 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
       const kelas = jadwal.kelas || [];
       const slot = await post('/api/jadwal/slot', { hari, sesi: 1, mapel_id: mapel.id, kelas_ids: [kelas[0].id], abaikan: 1 });
       await post('/api/jadwal/slot', { hari, sesi: 3, mapel_id: mapel2.id, kelas_ids: [kelas[1].id], abaikan: 1 });
+      const slotSemuaKelas = await post('/api/jadwal/slot', { hari, sesi: 4, mapel_id: mapel.id, kelas_ids: [kelas[1].id], abaikan: 1 });
       return {
         guruId: guru.id, guruNama: guru.nama, guru2Id: guru2.id, guru2Nama: guru2.nama,
-        mapelId: mapel.id, mapel2Id: mapel2.id, slotId: slot.id, kelasNama: kelas[0].nama, kelas2Nama: kelas[1].nama,
+        mapelId: mapel.id, mapel2Id: mapel2.id, slotId: slot.id, slotSemuaKelasId: slotSemuaKelas.id,
+        kelasNama: kelas[0].nama, kelas2Nama: kelas[1].nama,
         jumlahKelas: kelas.length
       };
     }, {
@@ -90,7 +92,7 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
       mulai2: hhmm(base + 26), selesai2: hhmm(base + 60),
       mulai3: hhmm(base + 61), selesai3: hhmm(base + 95)
     });
-    ok('data uji siap (mapel + guru pengampu + slot)', !!setup.slotId, JSON.stringify(setup).slice(0, 160));
+    ok('data uji siap (mapel + guru pengampu + slot)', !!setup.slotId && !!setup.slotSemuaKelasId, JSON.stringify(setup).slice(0, 160));
 
     /* ---------------- 1. FORM SLOT: GURU TERKUNCI ---------------- */
     console.log('\n== 1. FORM SLOT: GURU TERKUNCI ==');
@@ -195,6 +197,14 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     ok('matriks per guru hanya menampilkan slot guru terpilih',
       kartuGuruTerpilih.length > 0 && kartuGuruTerpilih.every(teks => teks.includes(setup.guruNama)),
       kartuGuruTerpilih.map(teks => teks.slice(-50)).join(' | '));
+    await page.selectOption('[data-pilih-kelas]', '__all__');
+    await page.waitForTimeout(600);
+    const kartuGuruSemuaKelas = await page.locator('[data-grid-semua] [data-slot]').allTextContents();
+    ok('filter per guru dapat menampilkan seluruh kelas guru secara vertikal',
+      kartuGuruSemuaKelas.length >= 2
+        && kartuGuruSemuaKelas.every(teks => teks.includes(setup.guruNama))
+        && await page.locator('[data-grid-semua] thead th').count() >= 3,
+      kartuGuruSemuaKelas.map(teks => teks.slice(-50)).join(' | '));
     await page.click('[data-view="semua"]');
     await page.waitForTimeout(800);
     ok('tampilan semua kelas dalam satu grid', await page.locator('[data-grid-semua]').count() === 1);

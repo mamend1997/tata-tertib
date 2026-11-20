@@ -233,10 +233,18 @@ function Matriks({
   const [slotTerpilih, setSlotTerpilih] = useState([]);
   const [hapusBusy, setHapusBusy] = useState(false);
   const [guruSemuaId, setGuruSemuaId] = useState('');
+  const [kelasGuruId, setKelasGuruId] = useState('');
   const headerScrollRef = useRef(null);
   const bodyScrollRef = useRef(null);
   const k = kelas.find(x => String(x.id) === String(kelasId));
+  const kelasGuruAktif = kelas.find(x =>
+    String(x.id) === String(kelasGuruId && kelasGuruId !== '__all__' ? kelasGuruId : kelasId)) || kelas[0] || null;
   const guruFilterId = view === 'guru' ? guruId : view === 'semua' ? guruSemuaId : '';
+  const kelasKolomGuru = useMemo(() => {
+    const ids = new Set(rows.filter(r => Number(r.guru_id) === Number(guruId))
+      .flatMap(r => (r.kelas_ids || []).map(Number)));
+    return kelas.filter(x => ids.has(Number(x.id)));
+  }, [rows, kelas, guruId]);
   const sesiUntuk = (hari) => (sesiHari && sesiHari[Number(hari)]) || sesi || [];
   const rowOf = (hari, sesiIdx, kelasTerpilih) => rows.find(r => Number(r.hari) === Number(hari)
     && Number(r.sesi) === Number(sesiIdx) && kelasTerpilih && r.kelas_ids.includes(Number(kelasTerpilih.id))
@@ -246,10 +254,12 @@ function Matriks({
     if (!hariAktif.includes(Number(r.hari))) return false;
     const sesiHariIni = sesiUntuk(r.hari).find(s => Number(s.idx) === Number(r.sesi));
     if (!sesiHariIni || sesiHariIni.istirahat) return false;
-    if ((view === 'kelas' || view === 'guru') && (!k || !r.kelas_ids.includes(Number(k.id)))) return false;
+    if (view === 'kelas' && (!k || !r.kelas_ids.includes(Number(k.id)))) return false;
+    if (view === 'guru' && kelasGuruId !== '__all__'
+      && (!kelasGuruAktif || !r.kelas_ids.includes(Number(kelasGuruAktif.id)))) return false;
     if (guruFilterId && Number(r.guru_id) !== Number(guruFilterId)) return false;
     return true;
-  }).map(r => Number(r.id)))], [rows, view, k?.id, guruFilterId, hariAktif.join(','), JSON.stringify(sesiHari || {}), JSON.stringify(sesi || [])]);
+  }).map(r => Number(r.id)))], [rows, view, k?.id, kelasGuruId, kelasGuruAktif?.id, guruFilterId, hariAktif.join(','), JSON.stringify(sesiHari || {}), JSON.stringify(sesi || [])]);
   const allVisibleSelected = slotTerlihatIds.length > 0 && slotTerlihatIds.every(id => slotTerpilih.includes(id));
   const toggleSlot = (id) => setSlotTerpilih(selected => selected.includes(Number(id))
     ? selected.filter(x => x !== Number(id)) : [...selected, Number(id)]);
@@ -490,8 +500,8 @@ function Matriks({
   };
 
   /* ---------- grid semua kelas: kolom = kelas, baris = hari + jam ---------- */
-  const gridSemua = () => {
-    const kolom = kelas;
+  const gridSemua = (kolomKhusus = null) => {
+    const kolom = kolomKhusus || kelas;
     const dipakai = kolom.length ? kolom : kelas;
     /* selalu ada minimal satu kolom agar colspan baris hari konsisten dengan <thead> */
     const daftarKolom = dipakai.length ? dipakai : [{ id: 0, nama: '(belum ada kelas)' }];
@@ -596,7 +606,7 @@ function Matriks({
             );
           })}
         </div>
-        {view === 'kelas' || view === 'guru' ? (
+        {view === 'kelas' ? (
           <select className="input !w-auto min-w-[180px]" value={kelasId}
             onChange={e => { setSlotTerpilih([]); setKelasId(e.target.value); }} data-pilih-kelas>
             {kelas.length ? kelas.map(x => (
@@ -605,6 +615,13 @@ function Matriks({
                   : x.status_target === 'lebih' ? ` — lebih ${x.terisi}/${x.target} jam` : ''}
               </option>
             )) : <option value="">Belum ada kelas</option>}
+          </select>
+        ) : null}
+        {view === 'guru' ? (
+          <select className="input !w-auto min-w-[180px]" value={kelasGuruId || kelasId}
+            onChange={e => { setSlotTerpilih([]); setKelasGuruId(e.target.value); }} data-pilih-kelas>
+            <option value="__all__">Semua kelas untuk guru</option>
+            {kelas.map(x => <option key={x.id} value={x.id}>{x.nama}</option>)}
           </select>
         ) : null}
         {view === 'guru' ? (
@@ -702,7 +719,10 @@ function Matriks({
                       {guruTerpilih.jabatan ? ` · ${guruTerpilih.jabatan}` : ''}
                     </p>
                   </div>
-                  {gridHorizontal([k || kelas[0]])}
+                  {kelasGuruId === '__all__'
+                    ? (kelasKolomGuru.length ? gridSemua(kelasKolomGuru)
+                      : <Empty icon={Users} title="Belum ada jadwal guru" desc="Guru ini belum memiliki slot mengajar pada tahun pelajaran terpilih." />)
+                    : gridHorizontal([kelasGuruAktif])}
                 </div>
               )
             ) : gridHorizontal([k || kelas[0]])}
