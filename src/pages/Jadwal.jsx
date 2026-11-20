@@ -232,21 +232,24 @@ function Matriks({
 }) {
   const [slotTerpilih, setSlotTerpilih] = useState([]);
   const [hapusBusy, setHapusBusy] = useState(false);
+  const [guruSemuaId, setGuruSemuaId] = useState('');
   const headerScrollRef = useRef(null);
   const bodyScrollRef = useRef(null);
   const k = kelas.find(x => String(x.id) === String(kelasId));
+  const guruFilterId = view === 'guru' ? guruId : view === 'semua' ? guruSemuaId : '';
   const sesiUntuk = (hari) => (sesiHari && sesiHari[Number(hari)]) || sesi || [];
   const rowOf = (hari, sesiIdx, kelasTerpilih) => rows.find(r => Number(r.hari) === Number(hari)
-    && Number(r.sesi) === Number(sesiIdx) && kelasTerpilih && r.kelas_ids.includes(Number(kelasTerpilih.id)));
+    && Number(r.sesi) === Number(sesiIdx) && kelasTerpilih && r.kelas_ids.includes(Number(kelasTerpilih.id))
+    && (!guruFilterId || Number(r.guru_id) === Number(guruFilterId)));
   const jumlahJam = (sesi || []).filter(s => !s.istirahat).length;
   const slotTerlihatIds = useMemo(() => [...new Set(rows.filter(r => {
     if (!hariAktif.includes(Number(r.hari))) return false;
     const sesiHariIni = sesiUntuk(r.hari).find(s => Number(s.idx) === Number(r.sesi));
     if (!sesiHariIni || sesiHariIni.istirahat) return false;
     if ((view === 'kelas' || view === 'guru') && (!k || !r.kelas_ids.includes(Number(k.id)))) return false;
-    if (view === 'guru' && (!guruId || Number(r.guru_id) !== Number(guruId))) return false;
+    if (guruFilterId && Number(r.guru_id) !== Number(guruFilterId)) return false;
     return true;
-  }).map(r => Number(r.id)))], [rows, view, k?.id, guruId, hariAktif.join(','), JSON.stringify(sesiHari || {}), JSON.stringify(sesi || [])]);
+  }).map(r => Number(r.id)))], [rows, view, k?.id, guruFilterId, hariAktif.join(','), JSON.stringify(sesiHari || {}), JSON.stringify(sesi || [])]);
   const allVisibleSelected = slotTerlihatIds.length > 0 && slotTerlihatIds.every(id => slotTerpilih.includes(id));
   const toggleSlot = (id) => setSlotTerpilih(selected => selected.includes(Number(id))
     ? selected.filter(x => x !== Number(id)) : [...selected, Number(id)]);
@@ -611,6 +614,13 @@ function Matriks({
             {(data?.guru || []).map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
           </select>
         ) : null}
+        {view === 'semua' ? (
+          <select className="input !w-auto min-w-[190px]" value={guruSemuaId}
+            onChange={e => { setSlotTerpilih([]); setGuruSemuaId(e.target.value); }} data-filter-guru-semua>
+            <option value="">Semua guru</option>
+            {(data?.guru || []).map(g => <option key={g.id} value={g.id}>{g.nama}</option>)}
+          </select>
+        ) : null}
         <span className="chip"><CalendarDays size={12} /> {hariAktif.length} hari aktif</span>
         <span className="chip"><Repeat size={12} /> {jumlahJam} jam/hari</span>
         <span className={cx('chip', data.ringkas?.bentrok ? '!border-rose-200 !bg-rose-50 !text-rose-700' : '')}>
@@ -712,7 +722,10 @@ function Matriks({
                   if (r.mapel_nama) o.mapel.add(r.mapel_nama);
                   map.set(key, o);
                 }
-                const list = [...map.values()].sort((a, b) => b.jam - a.jam);
+                const list = [...map.entries()]
+                  .filter(([id]) => !guruFilterId || Number(id) === Number(guruFilterId))
+                  .map(([, row]) => row)
+                  .sort((a, b) => b.jam - a.jam);
                 if (!list.length) return <tr><td colSpan={3} className="py-6 text-center text-slate-400">Belum ada slot jadwal.</td></tr>;
                 return list.map((g, i) => (
                   <tr key={i}><td className="font-semibold">{g.nama}</td><td className="text-center">{g.jam}</td>

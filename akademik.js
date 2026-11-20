@@ -1729,11 +1729,13 @@ ${isi}
   const alurKelompok = (items, tanggal) => {
     const list = items.map(x => dbm.absensiAlur(x.id, tanggal));
     if (list.length < 2) return list[0] || null;
+    /* Satu mapel beruntun memakai satu sesi presensi kanonis; tiap slot grup
+       mengembalikan hitungan siswa yang sama, jadi jangan dijumlahkan berulang. */
     return {
       ...list[0],
       absensi_siswa: {
-        total: list.reduce((n, a) => n + a.absensi_siswa.total, 0),
-        terisi: list.reduce((n, a) => n + a.absensi_siswa.terisi, 0),
+        total: list[0].absensi_siswa.total,
+        terisi: list[0].absensi_siswa.terisi,
         lengkap: list.every(a => a.absensi_siswa.lengkap),
         sebagian: list.some(a => a.absensi_siswa.sebagian),
         sesi_id: list[0].absensi_siswa.sesi_id

@@ -235,6 +235,12 @@ const S1 = Math.max(1, Math.min(cur - 10, 1400));
       urutanMatriks && (await page.locator('[data-tbl="monitor-jadwal"]').count()) === 1
       && await page.locator('[data-monitor-jadwal]').count() >= 3
       && await page.locator('[data-monitor-grid-mode]').inputValue() === 'semua');
+    const urutanSesiMonitor = await page.locator('[data-monitor-sesi]').evaluateAll(rows =>
+      rows.map(row => Number(row.getAttribute('data-monitor-sesi'))));
+    ok('matriks monitoring menggabungkan sesi duplikat dan mengikuti urutan jadwal',
+      urutanSesiMonitor.length === new Set(urutanSesiMonitor).size
+        && urutanSesiMonitor.every((sesi, i) => i === 0 || urutanSesiMonitor[i - 1] < sesi),
+      JSON.stringify(urutanSesiMonitor));
     ok('status real-time tampil pada sel matriks',
       (await page.locator('[data-monitor-grid-status]').count()) >= 1);
     const matriksBesokResponse = page.waitForResponse(response =>

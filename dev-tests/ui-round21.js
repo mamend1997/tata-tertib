@@ -191,9 +191,18 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     await page.selectOption('[data-pilih-guru]', String(setup.guruId));
     await page.waitForTimeout(800);
     ok('tampilan per guru merender grid jadwal guru', await page.locator('[data-grid-jadwal]').count() === 1);
+    const kartuGuruTerpilih = await page.locator('[data-grid-jadwal] [data-slot]').allTextContents();
+    ok('matriks per guru hanya menampilkan slot guru terpilih',
+      kartuGuruTerpilih.length > 0 && kartuGuruTerpilih.every(teks => teks.includes(setup.guruNama)),
+      kartuGuruTerpilih.map(teks => teks.slice(-50)).join(' | '));
     await page.click('[data-view="semua"]');
     await page.waitForTimeout(800);
     ok('tampilan semua kelas dalam satu grid', await page.locator('[data-grid-semua]').count() === 1);
+    await page.selectOption('[data-filter-guru-semua]', String(setup.guruId));
+    const kartuGuruVertikal = await page.locator('[data-grid-semua] [data-slot]').allTextContents();
+    ok('filter guru pada tampilan baris hanya menampilkan slot guru terpilih',
+      kartuGuruVertikal.length > 0 && kartuGuruVertikal.every(teks => teks.includes(setup.guruNama)),
+      kartuGuruVertikal.map(teks => teks.slice(-50)).join(' | '));
     ok('tanpa error JS pada semua tampilan', errors.length === 0, errors.slice(0, 2).join(' | '));
 
     /* ---------------- 4. SESI JAM KHUSUS PER HARI ---------------- */

@@ -84,8 +84,19 @@ export default function MonitorKBM({ ctx }) {
   const barisGrid = useMemo(() => jadwalMonitor
     .filter(x => gridMode !== 'kelas' || !gridKelas || (x.kelas_ids || []).some(id => Number(id) === Number(gridKelas)))
     .filter(x => gridMode !== 'guru' || !gridGuru || Number(x.guru_efektif_id) === Number(gridGuru))
-    .sort((a, b) => String(a.mulai).localeCompare(String(b.mulai)) || Number(a.jadwal_id) - Number(b.jadwal_id)),
+    .sort((a, b) => Number(a.sesi) - Number(b.sesi)
+      || String(a.mulai).localeCompare(String(b.mulai))
+      || Number(a.jadwal_id) - Number(b.jadwal_id)),
   [jadwalMonitor, gridMode, gridKelas, gridGuru]);
+  const kelompokSesiGrid = useMemo(() => {
+    const groups = new Map();
+    for (const slot of barisGrid) {
+      const sesi = Number(slot.sesi);
+      if (!groups.has(sesi)) groups.set(sesi, []);
+      groups.get(sesi).push(slot);
+    }
+    return [...groups.entries()].map(([sesi, slots]) => ({ sesi, slots }));
+  }, [barisGrid]);
   const tanggalGrid = d?.tanggal_matriks || tanggalMatriks;
   const dapatPilihNonaktif = !!d?.boleh_nonaktifkan && tanggalGrid >= hariIni();
   const slotNonaktifMendatang = useMemo(() => barisGrid.filter(x =>
@@ -317,77 +328,90 @@ export default function MonitorKBM({ ctx }) {
                 </tr>
               </thead>
               <tbody>
-                {barisGrid.map(x => (
-                  <tr key={x.jadwal_id} data-monitor-jadwal={x.jadwal_id}>
+                {kelompokSesiGrid.map(({ sesi, slots }) => {
+                  const x = slots[0];
+                  return (
+                  <tr key={sesi} data-monitor-sesi={sesi}>
                     <td className="sticky left-0 z-[1] whitespace-nowrap bg-white text-center">
                       <b>{x.label_sesi}</b><span className="block text-[10.5px] text-slate-500">{x.jam}</span>
                     </td>
                     {kolomKelas.map(k => {
-                      if (!(x.kelas_ids || []).some(id => Number(id) === Number(k.id))) {
+                      const slotsKelas = slots.filter(slot =>
+                        (slot.kelas_ids || []).some(id => Number(id) === Number(k.id)));
+                      if (!slotsKelas.length) {
                         return <td key={k.id} className="text-center text-slate-300">—</td>;
                       }
-                      const statusTone = ['hadir', 'sedang berlangsung'].includes(String(x.status_label).toLowerCase())
-                        || String(x.status_label).toLowerCase() === 'selesai' ? 'badge-aman'
-                        : ['sakit'].includes(String(x.status_label).toLowerCase()) ? 'badge-perhatian'
-                          : ['izin', 'akan datang'].includes(String(x.status_label).toLowerCase()) ? 'badge-pantau'
-                            : ['alpha', 'belum check-in'].includes(String(x.status_label).toLowerCase()) ? 'badge-siaga'
-                              : 'badge-netral';
-                      const bolehPilihNonaktif = dapatPilihNonaktif && !x.nonaktif && x.preview_primary
-                        && x.fase === 'belum' && Number((x.kelas_ids || [])[0]) === Number(k.id);
                       return (
                         <td key={k.id} className="text-center align-middle">
-                          <div className="mx-auto max-w-[220px] rounded-lg border border-slate-200 bg-white p-2 text-center">
-                            <p className="text-[11.5px] font-extrabold text-slate-800">{x.mapel_kode ? `${x.mapel_kode} · ` : ''}{x.mapel_nama}</p>
-                            <p className="mt-0.5 truncate text-[10.5px] text-slate-500">{x.guru_efektif_nama || x.guru_nama || '-'}</p>
-                            <span className={cx('badge mt-1', statusTone)} data-monitor-grid-status={x.jadwal_id}>
-                              {x.status_label}
-                            </span>
-                            {x.status_detail ? <span className="ml-1 text-[10px] capitalize text-slate-500">{x.status_detail}</span> : null}
-                            {x.nonaktif ? (
-                              <p className="mt-1 text-[10px] font-semibold text-amber-800"
-                                data-monitor-nonaktif-alasan={x.jadwal_id}>
-                                Alasan: {x.nonaktif_alasan || 'KBM reguler tidak berlaku pada tanggal ini.'}
-                              </p>
-                            ) : null}
-                            {bolehPilihNonaktif ? (
-                              <label className="mt-2 flex cursor-pointer items-center justify-center gap-1.5 text-[10.5px] font-semibold text-amber-800">
-                                <input type="checkbox" className="h-4 w-4 accent-amber-600"
-                                  checked={selectedIds.has(Number(x.jadwal_id))}
-                                  onChange={e => setNonaktifTerpilih(previous => e.target.checked
-                                    ? [...new Set([...previous, Number(x.jadwal_id)])]
-                                    : previous.filter(id => Number(id) !== Number(x.jadwal_id)))}
-                                  data-monitor-nonaktif-pilih={x.jadwal_id} />
-                                Pilih untuk nonaktif massal
-                              </label>
-                            ) : null}
-                            {x.pengganti?.jenis === 'tukar' ? (
-                              <p className="mt-1 text-[10px] font-semibold text-violet-700"
-                                data-monitor-tukar={x.jadwal_id}>
-                                Ditukar: {x.mapel_asal_nama || '-'} → {x.mapel_nama}
-                              </p>
-                            ) : x.pengganti ? (
-                              <p className="mt-1 text-[10px] font-semibold text-violet-700">Guru piket/pengganti</p>
-                            ) : null}
-                            {d?.boleh_nonaktifkan && !x.nonaktif && x.preview_primary && x.fase === 'belum'
-                              && Number((x.kelas_ids || [])[0]) === Number(k.id) ? (
-                              <button type="button" className="btn-ghost btn-sm mt-2 text-amber-800"
-                                onClick={() => bukaNonaktifkan(x)} data-monitor-nonaktif={x.jadwal_id}>
-                                <UserX size={13} /> Nonaktifkan KBM
-                              </button>
-                            ) : null}
-                            {x.alur_selesai && x.preview_primary && !x.nonaktif ? (
-                              <button type="button" className="btn-ghost btn-sm mt-2"
-                                onClick={() => bukaPratinjau(x)} data-monitor-preview={x.jadwal_id}
-                                data-monitor-preview-group={(x.group_ids || [x.jadwal_id]).join(',')}>
-                                <Eye size={13} /> Pratinjau
-                              </button>
-                            ) : null}
+                          <div className="space-y-2">
+                            {slotsKelas.map(x => {
+                              const statusTone = ['hadir', 'sedang berlangsung'].includes(String(x.status_label).toLowerCase())
+                                || String(x.status_label).toLowerCase() === 'selesai' ? 'badge-aman'
+                                : ['sakit'].includes(String(x.status_label).toLowerCase()) ? 'badge-perhatian'
+                                  : ['izin', 'akan datang'].includes(String(x.status_label).toLowerCase()) ? 'badge-pantau'
+                                    : ['alpha', 'belum check-in'].includes(String(x.status_label).toLowerCase()) ? 'badge-siaga'
+                                      : 'badge-netral';
+                              const bolehPilihNonaktif = dapatPilihNonaktif && !x.nonaktif && x.preview_primary
+                                && x.fase === 'belum' && Number((x.kelas_ids || [])[0]) === Number(k.id);
+                              return (
+                                <div key={x.jadwal_id}
+                                  className="mx-auto max-w-[220px] rounded-lg border border-slate-200 bg-white p-2 text-center"
+                                  data-monitor-jadwal={x.jadwal_id}>
+                                  <p className="text-[11.5px] font-extrabold text-slate-800">{x.mapel_kode ? `${x.mapel_kode} · ` : ''}{x.mapel_nama}</p>
+                                  <p className="mt-0.5 truncate text-[10.5px] text-slate-500">{x.guru_efektif_nama || x.guru_nama || '-'}</p>
+                                  <span className={cx('badge mt-1', statusTone)} data-monitor-grid-status={x.jadwal_id}>
+                                    {x.status_label}
+                                  </span>
+                                  {x.status_detail ? <span className="ml-1 text-[10px] capitalize text-slate-500">{x.status_detail}</span> : null}
+                                  {x.nonaktif ? (
+                                    <p className="mt-1 text-[10px] font-semibold text-amber-800"
+                                      data-monitor-nonaktif-alasan={x.jadwal_id}>
+                                      Alasan: {x.nonaktif_alasan || 'KBM reguler tidak berlaku pada tanggal ini.'}
+                                    </p>
+                                  ) : null}
+                                  {bolehPilihNonaktif ? (
+                                    <label className="mt-2 flex cursor-pointer items-center justify-center gap-1.5 text-[10.5px] font-semibold text-amber-800">
+                                      <input type="checkbox" className="h-4 w-4 accent-amber-600"
+                                        checked={selectedIds.has(Number(x.jadwal_id))}
+                                        onChange={e => setNonaktifTerpilih(previous => e.target.checked
+                                          ? [...new Set([...previous, Number(x.jadwal_id)])]
+                                          : previous.filter(id => Number(id) !== Number(x.jadwal_id)))}
+                                        data-monitor-nonaktif-pilih={x.jadwal_id} />
+                                      Pilih untuk nonaktif massal
+                                    </label>
+                                  ) : null}
+                                  {x.pengganti?.jenis === 'tukar' ? (
+                                    <p className="mt-1 text-[10px] font-semibold text-violet-700"
+                                      data-monitor-tukar={x.jadwal_id}>
+                                      Ditukar: {x.mapel_asal_nama || '-'} → {x.mapel_nama}
+                                    </p>
+                                  ) : x.pengganti ? (
+                                    <p className="mt-1 text-[10px] font-semibold text-violet-700">Guru piket/pengganti</p>
+                                  ) : null}
+                                  {d?.boleh_nonaktifkan && !x.nonaktif && x.preview_primary && x.fase === 'belum'
+                                    && Number((x.kelas_ids || [])[0]) === Number(k.id) ? (
+                                    <button type="button" className="btn-ghost btn-sm mt-2 text-amber-800"
+                                      onClick={() => bukaNonaktifkan(x)} data-monitor-nonaktif={x.jadwal_id}>
+                                      <UserX size={13} /> Nonaktifkan KBM
+                                    </button>
+                                  ) : null}
+                                  {x.alur_selesai && x.preview_primary && !x.nonaktif ? (
+                                    <button type="button" className="btn-ghost btn-sm mt-2"
+                                      onClick={() => bukaPratinjau(x)} data-monitor-preview={x.jadwal_id}
+                                      data-monitor-preview-group={(x.group_ids || [x.jadwal_id]).join(',')}>
+                                      <Eye size={13} /> Pratinjau
+                                    </button>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                       );
                     })}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

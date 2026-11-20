@@ -231,11 +231,23 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     /* ================= 5. ALUR ABSENSI GURU ================= */
     console.log('\n== 5. ALUR ABSENSI GURU (ABSENSI SISWA → JURNAL → FOTO) ==');
     await login('admin', 'admin123');
-    await req('/api/jadwal/pengaturan', { method: 'POST', body: cfgBody() });
+    await req('/api/jadwal/pengaturan', {
+      method: 'POST', body: cfgBody({ sesi: [
+        { label: 'Jam ke-1', mulai: hhmm(base - 15), selesai: hhmm(base + 25), istirahat: 0 },
+        { label: 'Jam ke-2', mulai: hhmm(base + 26), selesai: hhmm(base + 70), istirahat: 0 },
+        { label: 'Jam ke-3', mulai: hhmm(base + 71), selesai: hhmm(base + 105), istirahat: 0 }
+      ] })
+    });
     const mapelAlur = await req('/api/mapel/save', { method: 'POST', body: { nama: 'Mapel Alur', kode: 'ALR', guru_ids: [gHendra.id] } });
-    r = await req('/api/jadwal/slot', { method: 'POST', body: { hari: HARI, sesi: 1, mapel_id: mapelAlur.body.id, kelas_ids: [kelas[0].id], abaikan: 1 } });
-    const slotAlur = r.body.id;
-    ok('slot uji alur dibuat', r.status === 200, r.body?.error);
+    const slotAlurIds = [];
+    for (let sesi = 1; sesi <= 3; sesi++) {
+      r = await req('/api/jadwal/slot', {
+        method: 'POST', body: { hari: HARI, sesi, mapel_id: mapelAlur.body.id, kelas_ids: [kelas[0].id], abaikan: 1 }
+      });
+      if (r.status === 200) slotAlurIds.push(Number(r.body.id));
+    }
+    const slotAlur = slotAlurIds[0];
+    ok('tiga slot berurutan pada mapel yang sama dibuat', slotAlurIds.length === 3, JSON.stringify(slotAlurIds));
     await login('guru', 'guru123');
     r = await req('/api/absensi-guru/checkin', { method: 'POST', body: { jadwal_id: slotAlur, tanggal: TODAY, status: 'hadir' } });
     ok('check-in hadir berhasil', r.status === 200, r.body?.error);
@@ -243,17 +255,28 @@ const hhmm = m => `${pad(Math.floor((((m % 1440) + 1440) % 1440) / 60))}:${pad((
     r = await req('/api/absensi-guru/jurnal', { method: 'POST', body: { jadwal_id: slotAlur, tanggal: TODAY, materi: 'Materi jurnal yang cukup panjang untuk uji alur' } });
     ok('jurnal DITOLAK sebelum absensi siswa lengkap', r.status === 400 && r.body.butuh_absensi_siswa === true, JSON.stringify(r.body).slice(0, 160));
     r = await req('/api/absensi-guru/alur?jadwal_id=' + slotAlur + '&tanggal=' + TODAY);
-    ok('status alur menunjukkan absensi siswa belum lengkap', r.status === 200 && r.body.alur.absensi_siswa.lengkap === false, JSON.stringify(r.body.alur.absensi_siswa));
+    ok('status alur menunjukkan absensi siswa belum lengkap',
+      r.status === 200 && r.body.alur.absensi_siswa.lengkap === false
+        && r.body.alur.absensi_siswa.terisi === 0,
+      JSON.stringify(r.body.alur.absensi_siswa));
     /* lengkapi absensi siswa */
     r = await req('/api/absensi-siswa/sesi', { method: 'POST', body: { jadwal_id: slotAlur, tanggal: TODAY } });
     const sesiAlur = r.body?.sesi?.id;
     const siswaAlur = r.body?.siswa || [];
     ok('sesi presensi dibuat', !!sesiAlur && siswaAlur.length > 0, r.body?.error);
+    r = await req('/api/absensi-guru/alur?jadwal_id=' + slotAlur + '&tanggal=' + TODAY);
+    ok('alur mapel tiga jam menghitung jumlah siswa satu kali',
+      r.status === 200 && r.body.group_ids.length === 3
+        && r.body.alur.absensi_siswa.total === siswaAlur.length,
+      JSON.stringify(r.body.alur.absensi_siswa));
     await req('/api/absensi-siswa/simpan', {
       method: 'POST', body: { sesi_id: sesiAlur, items: siswaAlur.map(s => ({ siswa_id: s.id, status: 'H', keterangan: '' })) }
     });
     r = await req('/api/absensi-guru/alur?jadwal_id=' + slotAlur + '&tanggal=' + TODAY);
-    ok('absensi siswa tercatat lengkap', r.body.alur.absensi_siswa.lengkap === true,
+    ok('26 siswa pada mapel tiga jam dihitung satu kali (bukan 78)',
+      r.body.alur.absensi_siswa.lengkap === true
+        && r.body.alur.absensi_siswa.total === siswaAlur.length
+        && r.body.alur.absensi_siswa.terisi === siswaAlur.length,
       JSON.stringify(r.body.alur.absensi_siswa));
     r = await req('/api/absensi-guru/jurnal', { method: 'POST', body: { jadwal_id: slotAlur, tanggal: TODAY, materi: 'Menjelaskan materi alur kerja absensi lengkap' } });
     ok('jurnal tersimpan setelah absensi siswa lengkap', r.status === 200, r.body?.error);
