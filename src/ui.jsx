@@ -58,7 +58,7 @@ export function StatusBadge({ label, size = 'md' }) {
 }
 
 /* ---------------- Modal ---------------- */
-export function Modal({ open, onClose, title, subtitle, children, footer, size = 'md', closeOnBackdrop = true }) {
+export function Modal({ open, onClose, title, subtitle, children, footer, size = 'md', closeOnBackdrop = false }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };

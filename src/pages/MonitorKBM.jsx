@@ -629,7 +629,7 @@ export default function MonitorKBM({ ctx }) {
           ? Array.isArray(nonaktifTarget.jadwal_ids)
             ? `${nonaktifTarget.jadwal_ids.length} rentang mapel · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`
             : `${nonaktifTarget.mapel_nama || ''} · ${nonaktifTarget.kelas_nama || ''} · ${nonaktifTarget.jam || ''} · ${tgl(d?.tanggal_matriks || tanggalMatriks, { long: true })}`
-          : ''} closeOnBackdrop={!nonaktifBusy}
+          : ''}
         footer={
           <>
             <button type="button" className="btn-ghost" onClick={tutupNonaktifkan} disabled={nonaktifBusy}>Batal</button>

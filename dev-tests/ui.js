@@ -113,6 +113,8 @@ const ok = (name, cond, extra) => {
     ok('tabel siswa berisi data', rowsSiswa > 20, String(rowsSiswa));
     await page.click('button:has-text("Tambah Siswa")');
     await page.waitForSelector('#fSiswa');
+    await page.mouse.click(10, 450);
+    ok('modal tambah siswa tetap terbuka setelah klik di luar', await page.locator('#fSiswa').isVisible());
     await page.fill('#fSiswa input[required]', 'Siswa Uji UI');
     await page.fill('#fSiswa input[type="date"]', '2010-05-06');
     await page.click('button[form="fSiswa"]');

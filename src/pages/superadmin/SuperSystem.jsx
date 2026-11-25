@@ -299,7 +299,7 @@ export function SuperDatabase() {
       </Card>
 
       {edit ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4">
           <div className="max-h-[85vh] w-full max-w-[560px] overflow-auto rounded-2xl bg-white p-4 shadow-2xl" onClick={e => e.stopPropagation()}>
             <h3 className="text-[15px] font-extrabold text-slate-800">Edit Baris — {data.aktif}</h3>
             <p className="text-[11.5px] text-slate-500">rowid {edit.__rowid}</p>
