@@ -201,7 +201,7 @@ export function SuperPanduan({ ctx }) {
                 </select>
               </Field>
             </div>
-            <Field label="URL / Tautan" hint="Contoh: https://youtu.be/xxxx atau https://…/panduan.pdf">
+            <Field label="URL / Tautan" hint="PDF Google Drive dapat dipratinjau di halaman sekolah. Pastikan pengguna memiliki akses lihat ke file.">
               <input className="input" value={edit.url || ''} onChange={e => setEdit(v => ({ ...v, url: e.target.value }))} />
             </Field>
             <Field label="Deskripsi singkat"><textarea className="input min-h-[80px]" value={edit.deskripsi || ''} onChange={e => setEdit(v => ({ ...v, deskripsi: e.target.value }))} /></Field>

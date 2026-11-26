@@ -8,6 +8,27 @@ import { Alert, Card, Empty, Field, Modal, Spinner, cx, useToast } from '../ui';
 
 const rupiah = n => 'Rp ' + angka(n || 0);
 const Badge = ({ children, tone = 'netral' }) => <span className={cx('badge', `badge-${tone}`)}>{children}</span>;
+const pdfPreviewUrl = raw => {
+  try {
+    const url = new URL(String(raw || ''));
+    if (url.protocol !== 'https:') return '';
+    const host = url.hostname.toLowerCase();
+    if (host === 'drive.google.com') {
+      const pathId = /^\/file\/d\/([^/]+)/.exec(url.pathname);
+      const id = pathId ? pathId[1] : url.searchParams.get('id');
+      return id ? `https://drive.google.com/file/d/${encodeURIComponent(id)}/preview` : '';
+    }
+    if (host === 'docs.google.com') {
+      const match = /^\/(document|spreadsheets|presentation)\/d\/([^/]+)/.exec(url.pathname);
+      return match
+        ? `https://docs.google.com/${match[1]}/d/${encodeURIComponent(match[2])}/preview`
+        : '';
+    }
+    return url.href;
+  } catch (e) {
+    return '';
+  }
+};
 
 /* =====================================================================
    INFO & LAYANAN LANGGANAN (panel sekolah)
@@ -503,12 +524,23 @@ export function Panduan() {
       <div className="grid gap-3 sm:grid-cols-2">
         {semua.map(p => {
           const m = /(?:youtu\.be\/|v=|embed\/|shorts\/)([A-Za-z0-9_-]{6,})/.exec(String(p.url || ''));
+          const youtubeEmbed = p.tipe === 'youtube' && m ? `https://www.youtube.com/embed/${m[1]}` : '';
+          const preview = p.tipe === 'pdf' ? pdfPreviewUrl(p.url) : '';
           return (
-            <Card key={p.id} title={p.judul} subtitle={p.tipe === 'youtube' ? 'Video YouTube' : p.tipe === 'pdf' ? 'Dokumen PDF' : 'Tautan'}>
-              {m ? <iframe title={p.judul} src={`https://www.youtube.com/embed/${m[1]}`} className="aspect-video w-full rounded-xl" allowFullScreen /> :
+            <Card key={p.id} title={p.judul} subtitle={p.tipe === 'youtube' ? 'Video YouTube' : p.tipe === 'pdf' ? 'Dokumen PDF' : p.tipe === 'teks' ? 'Catatan' : 'Tautan'}>
+              {youtubeEmbed ? <iframe title={p.judul} src={youtubeEmbed} className="aspect-video w-full rounded-xl" allowFullScreen /> :
+                preview ? <div data-panduan-card={p.id}>
+                  <iframe title={`Pratinjau ${p.judul}`} src={preview}
+                    className="h-[520px] max-h-[75vh] min-h-[360px] w-full rounded-xl border border-slate-200 bg-white"
+                    loading="lazy" allowFullScreen data-panduan-preview={p.id} />
+                  <p className="mt-1 text-[11px] text-slate-500">Jika pratinjau tidak tampil, pastikan file dapat diakses oleh akun yang membuka aplikasi.</p>
+                </div> :
                 <div className="grid h-28 place-items-center rounded-xl bg-slate-50 text-slate-300"><FileText size={30} /></div>}
               {p.deskripsi ? <p className="mt-2 text-[12px] leading-relaxed text-slate-600">{p.deskripsi}</p> : null}
-              {p.url ? <a href={p.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[11.5px] font-bold text-orange-600 hover:underline">Buka tautan</a> : null}
+              {p.url && !youtubeEmbed ? <a href={p.url} target="_blank" rel="noreferrer"
+                className="mt-1 inline-block text-[11.5px] font-bold text-orange-600 hover:underline">
+                {preview ? 'Buka di tab baru bila pratinjau gagal' : 'Buka tautan'}
+              </a> : null}
             </Card>
           );
         })}
